@@ -1,0 +1,24 @@
+{
+  "model": "gemini-3.1-flash-lite-preview",
+  "temperature": 0.0,
+  "max_output_tokens": 512,
+  "media_resolution": "MEDIA_RESOLUTION_LOW",
+  "thinking_level": "MINIMAL",
+  "timeout_seconds": 120,
+  "stream_to_terminal": true,
+  "copy_to_clipboard": true,
+  "prompt_accessibility_permissions": true,
+  "capture_mode": "window",
+  "window_capture_fallback_to_region": true,
+  "preprocess_request_images": true,
+  "request_image_format": "jpeg",
+  "request_image_max_dimension": 1600,
+  "request_image_jpeg_quality": 80,
+  "log_dir": "runs",
+  "hotkeys": {
+    "set_source": "ctrl+shift+c",
+    "run_target": "ctrl+shift+v",
+    "reset_source": "ctrl+option+r",
+    "quit": "ctrl+option+q"
+  }
+}
