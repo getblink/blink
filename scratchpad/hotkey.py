@@ -163,6 +163,15 @@ class HotkeyListener:
         if self._thread and self._thread.is_alive() and threading.current_thread() is not self._thread:
             self._thread.join(timeout=2)
 
+    def status_snapshot(self) -> dict[str, object]:
+        return {
+            "started": self._started,
+            "tap_active": self._tap is not None,
+            "run_loop_active": self._run_loop is not None,
+            "binding_count": len(self._bindings),
+            "last_error": str(self._error) if self._error else None,
+        }
+
     def _run_event_loop(self) -> None:
         mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
         tap = Quartz.CGEventTapCreate(

@@ -1,0 +1,7 @@
+{
+  "name": "flash-lite-low-minimal",
+  "model": "gemini-3.1-flash-lite-preview",
+  "temperature": 0,
+  "media_resolution": "MEDIA_RESOLUTION_LOW",
+  "thinking_level": "MINIMAL"
+}

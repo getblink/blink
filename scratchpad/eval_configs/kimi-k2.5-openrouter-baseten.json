@@ -1,0 +1,24 @@
+{
+  "name": "kimi-k2.5-openrouter-baseten",
+  "provider": "openai_sdk",
+  "model": "moonshotai/kimi-k2.5",
+  "temperature": 0,
+  "max_output_tokens": 512,
+  "provider_options": {
+    "api_style": "chat_completions",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "default_headers": {
+      "HTTP-Referer": "https://github.com/henryz2004/blink",
+      "X-Title": "Blink sweep"
+    },
+    "extra_body": {
+      "provider": {
+        "only": [
+          "baseten"
+        ],
+        "allow_fallbacks": false
+      }
+    }
+  }
+}

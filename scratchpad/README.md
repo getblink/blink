@@ -1,5 +1,13 @@
 # Scratchpad
 
+See also:
+
+- `README.md` for the repo entrypoint and quickstart
+- `CLAUDE.md` for the current repo layout and implementation guidance
+- `docs/PROJECT_BRIEF.md` for scope and success criteria
+- `docs/EXPERIMENT_LOG.md` for recording experiment outcomes
+- `scratchpad/eval_configs/README.md` for sweep config file conventions
+
 This folder is for fast, disposable experiment work.
 
 The primary workflow is now a resident hotkey runner for profiling the real screenshot-to-completion pipeline.
@@ -21,6 +29,14 @@ Use a real `python3.11` binary here, not macOS's default `/usr/bin/python3`, whi
 export GEMINI_API_KEY=your_key_here
 ```
 
+Or put it once in the workspace root `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set `GEMINI_API_KEY=...`. Both `./capture` and `./sweep` will load it automatically.
+
 3. Grant macOS permissions to the interpreter you will run:
 
 - Input Monitoring for the global hotkeys
@@ -32,10 +48,12 @@ export GEMINI_API_KEY=your_key_here
 - `scratchpad/prompt.txt`
 - `scratchpad/settings.json`
 
+Keep `fixtures_dir` set to the default `"fixtures"` if you want to participate in the shared Conductor fixture pool.
+
 5. Run:
 
 ```bash
-python3 scratchpad/run_gemini_trial.py
+./capture
 ```
 
 If you are already inside `scratchpad/`, run:
@@ -48,17 +66,22 @@ If `scratchpad/.venv/` exists, the script will automatically re-exec itself insi
 
 The runner stays resident and listens for these defaults:
 
-- `ctrl+shift+c` - capture and store the reusable source screenshot
-- `ctrl+shift+v` - capture target metadata, capture target screenshot, stream Gemini output
-- `ctrl+option+r` - reset the stored source
-- `ctrl+option+q` - quit the runner
+- `ctrl+shift+c` - capture and store a new reusable source screenshot
+- `ctrl+shift+v` - capture a target fixture, then optionally stream Gemini output
+
+There is no separate reset hotkey now. Capturing a new source with `ctrl+shift+c` replaces the previous one and starts the next fixture batch from that source. Quit with `ctrl+c` in the terminal.
 
 The default capture mode is `window`, which now starts in macOS window selection mode but automatically retries with a region capture if the selected window cannot be snapshotted.
 
-By default, the runner also preprocesses screenshots before upload by converting them into smaller request images. The original captures are preserved on disk, but the Gemini request now uses compressed copies to reduce upload latency.
+By default, the runner also preprocesses screenshots before upload by converting them into smaller request images. The original captures are preserved on disk, but the Gemini request now uses compressed copies to reduce upload latency. With `fixture_mode: true`, those original screenshots and the request-image siblings are saved together as reusable fixture bundles under `scratchpad/fixtures/`.
+
+Inside Conductor, `scratchpad/fixtures` is normally a symlink to the shared pool at `~/conductor/shared/blink/fixtures/`, so any fixture you capture in one workspace is immediately available in the others. If a workspace already has a populated local `scratchpad/fixtures/` directory from before shared-pool setup, run `bash .conductor/migrate_fixtures.sh` once to move it into the pool and replace it with the symlink.
+
+If you want to confirm Conductor actually ran the repo setup hook in this workspace, check `.context/conductor/setup-receipt.json`.
 
 The script prints:
 
+- timestamped status lines for screenshot, AX, OCR, fixture save, and Gemini phases
 - streamed model output
 - end-to-end latency summary
 - TTFT, model latency, and output TPS when usage metadata is present
@@ -69,8 +92,51 @@ It also writes:
 - `scratchpad/last_run.json`
 - `scratchpad/runs/<timestamp>/run.json`
 - `scratchpad/runs/<timestamp>/output.txt`
-- `scratchpad/runs/<timestamp>/source.png`
-- `scratchpad/runs/<timestamp>/target.png`
+- `scratchpad/fixtures/<timestamp>-<slug>/fixture.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/source.png`
+- `scratchpad/fixtures/<timestamp>-<slug>/target.png`
+- `scratchpad/fixtures/<timestamp>-<slug>/source.request.jpg`
+- `scratchpad/fixtures/<timestamp>-<slug>/target.request.jpg`
+- `scratchpad/fixtures/<timestamp>-<slug>/ax_focused.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/ax_nearby.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/caret.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/geometry.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/clipboard.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/ocr.json`
+- `scratchpad/fixtures/<timestamp>-<slug>/capture.json`
+
+Target metadata now records both:
+
+- the resolved focused-element owner app used for fixture naming, geometry, and downstream target context
+- the workspace-frontmost app observed at hotkey time
+
+If those differ, the runner logs a metadata warning instead of silently folding them together.
+
+## Offline sweeps
+
+Run a serial fixture x config sweep with:
+
+```bash
+./sweep --fixtures 'scratchpad/fixtures/*' --configs 'scratchpad/eval_configs/*.json' --out scratchpad/sweeps/{auto-timestamp}
+```
+
+Each sweep writes:
+
+- `scratchpad/sweeps/<timestamp>/sweep.json`
+- `scratchpad/sweeps/<timestamp>/summary.md`
+- `scratchpad/sweeps/<timestamp>/compare.html`
+- `scratchpad/sweeps/<timestamp>/<fixture_id>/<config_name>/run.json`
+- `scratchpad/sweeps/<timestamp>/<fixture_id>/<config_name>/output.txt`
+
+Starter config variants live in `scratchpad/eval_configs/`.
+
+The sweep runner is intentionally serial and file-based. It should complete even when individual cells fail, with per-cell `run.json` artifacts preserved for inspection.
+
+The rendered sweep outputs surface the three model timings that matter most for interaction feel:
+
+- `model_latency_ms`
+- `ttft_ms`
+- `stream_duration_ms`
 
 ## What `run_gemini_trial.py` profiles
 
@@ -91,6 +157,10 @@ It also writes:
 This is intended to separate local workflow overhead from model latency as much as possible without building a full benchmark harness.
 
 ## Capture behavior
+
+- `target_metadata.frontmost_app` now prefers the owning app of the resolved focused AX element when available.
+- `target_metadata.workspace_frontmost_app` preserves the `NSWorkspace` frontmost app seen at hotkey time for debugging.
+- `geometry.json` uses AX top-left display coordinates for both window and screen frames.
 
 - `capture_mode: "window"` starts interactive capture in window mode.
 - If macOS returns `could not create image from window`, the runner immediately retries with a freeform region selection.
@@ -125,6 +195,21 @@ Each run folder contains:
 - `trial.md` - human-readable packet
 - `preview.html` - local side-by-side viewer for sources, targets, and prompt
 - copied source/target image assets
+
+## Archived experiment artifacts
+
+When a Conductor workspace is archived, `.conductor/archive.sh` always copies `scratchpad/sweeps/` and `scratchpad/runs/` to `~/conductor/archive/blink/<workspace>-<timestamp>/`. If the workspace is using the shared fixture-pool symlink, the archive step dereferences it and copies the fixture contents alongside any referenced sweeps so archived `compare.html` and `summary.md` links still work. If the workspace intentionally forked `scratchpad/fixtures/` into a real directory, that local copy is preserved as-is.
+
+Every archive run also appends a receipt to `~/conductor/archive/blink/_archive_runs.jsonl`, and any preserved archive bundle contains `archive-receipt.json` at its root.
+
+If you need to fork the shared corpus for a schema-incompatible experiment, replace the symlink with a real directory copy:
+
+```bash
+rm scratchpad/fixtures
+cp -R ~/conductor/shared/blink/fixtures/ scratchpad/fixtures/
+```
+
+After that, captures and sweeps in that workspace use the forked local directory until you switch it back or migrate manually.
 
 ## Why this exists
 

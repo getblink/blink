@@ -1,5 +1,12 @@
 # Manual Intelligent Copy-Paste Playbook (v1)
 
+See also:
+
+- `README.md` for the repo entrypoint
+- `docs/PROJECT_BRIEF.md` for scope and success criteria
+- `docs/EXPERIMENT_LOG.md` for logging actual trial outcomes
+- `scratchpad/README.md` for the current fixture capture and sweep tooling
+
 This playbook is for validating whether a vision model + prompt can reliably suggest the right text for a currently focused field across different apps and content types.
 
 ## Core loop (single field)
@@ -9,6 +16,14 @@ This playbook is for validating whether a vision model + prompt can reliably sug
 3. Send both images + structured prompt to Gemini.
 4. Paste model output.
 5. Record whether it was correct, partially correct, or wrong.
+
+Current repo workflow:
+
+1. Start `./capture`.
+2. Press `ctrl+shift+c` for the source window.
+3. Press `ctrl+shift+v` for the target field/window.
+4. Review the saved fixture in `scratchpad/fixtures/`.
+5. Run `./sweep` when you want to compare prompt/config variants offline.
 
 ---
 

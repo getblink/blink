@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-import mimetypes
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -31,6 +31,7 @@ if (
 try:
     import AppKit
     import ApplicationServices as AS
+    import Quartz
     from google import genai
     from google.genai import types
 except ImportError as exc:
@@ -42,7 +43,11 @@ except ImportError as exc:
     )
     raise SystemExit(1) from exc
 
+from gemini_runner import duration_ms, generate_completion, now_iso, plain_data, prepare_request_image
+from env_loader import load_workspace_env
 from hotkey import HotkeyListener
+from make_trial import slugify
+from ocr import recognize_text
 
 
 PROMPT_PATH = BASE_DIR / "prompt.txt"
@@ -52,6 +57,7 @@ LAST_RUN_PATH = BASE_DIR / "last_run.json"
 STATE_DIR = BASE_DIR / "state"
 SOURCE_IMAGE_PATH = STATE_DIR / "current_source.png"
 SOURCE_STATE_PATH = STATE_DIR / "current_source.json"
+PENDING_TARGET_PATH = STATE_DIR / "pending_target.png"
 
 DEFAULT_PROMPT = """You are a precise clipboard assistant.
 
@@ -80,11 +86,20 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "request_image_max_dimension": 1600,
     "request_image_jpeg_quality": 80,
     "log_dir": "runs",
+    "fixture_mode": True,
+    "fixtures_dir": "fixtures",
+    "run_live_gemini_on_capture": True,
+    "enable_ocr": True,
+    "ocr_language_correction": True,
+    "nearby_ax_ancestor_depth": 3,
+    "nearby_ax_max_siblings": 12,
+    "nearby_ax_value_preview_chars": 120,
+    "clipboard_max_chars": 8000,
+    "caret_capture": True,
+    "notify_on_capture": True,
     "hotkeys": {
         "set_source": "ctrl+shift+c",
         "run_target": "ctrl+shift+v",
-        "reset_source": "ctrl+option+r",
-        "quit": "ctrl+option+q",
     },
 }
 
@@ -107,21 +122,14 @@ AX_ERROR_NAMES = {
     AS.kAXErrorNotEnoughPrecision: "not_enough_precision",
 }
 
+FIXTURE_SCHEMA_VERSION = 1
+
 
 @dataclass
 class QueuedAction:
     name: str
     hotkey_detected_perf: float
     hotkey_detected_at: str
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
-
-
-def duration_ms(start_perf: float, end_perf: float | None = None) -> float:
-    final = end_perf if end_perf is not None else time.perf_counter()
-    return round((final - start_perf) * 1000, 2)
 
 
 def load_json_file(path: Path, default: Any) -> Any:
@@ -153,41 +161,8 @@ def read_prompt() -> str:
     return DEFAULT_PROMPT.strip()
 
 
-def guess_mime_type(path: Path) -> str:
-    mime_type, _ = mimetypes.guess_type(path.name)
-    if mime_type and mime_type.startswith("image/"):
-        return mime_type
-    return "image/png"
-
-
 def ax_error_name(code: int) -> str:
     return AX_ERROR_NAMES.get(code, f"ax_error_{code}")
-
-
-def plain_data(value: Any) -> Any:
-    if value is None:
-        return None
-    if hasattr(value, "model_dump"):
-        return value.model_dump(exclude_none=True)
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(key): plain_data(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [plain_data(item) for item in value]
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    for attr in ("x", "y", "width", "height"):
-        if hasattr(value, attr):
-            break
-    else:
-        return str(value)
-
-    payload: dict[str, Any] = {}
-    for attr in ("x", "y", "width", "height"):
-        if hasattr(value, attr):
-            payload[attr] = float(getattr(value, attr))
-    return payload
 
 
 def shorten_text(value: Any, limit: int = 240) -> Any:
@@ -206,9 +181,7 @@ def ax_copy_attribute(element, attribute: str) -> tuple[int, Any]:
 
 
 def ax_value_to_point(value: Any) -> dict[str, float] | None:
-    if value is None:
-        return None
-    if AS.AXValueGetType(value) != AS.kAXValueCGPointType:
+    if value is None or AS.AXValueGetType(value) != AS.kAXValueCGPointType:
         return None
     ok, point = AS.AXValueGetValue(value, AS.kAXValueCGPointType, None)
     if not ok:
@@ -217,9 +190,7 @@ def ax_value_to_point(value: Any) -> dict[str, float] | None:
 
 
 def ax_value_to_size(value: Any) -> dict[str, float] | None:
-    if value is None:
-        return None
-    if AS.AXValueGetType(value) != AS.kAXValueCGSizeType:
+    if value is None or AS.AXValueGetType(value) != AS.kAXValueCGSizeType:
         return None
     ok, size = AS.AXValueGetValue(value, AS.kAXValueCGSizeType, None)
     if not ok:
@@ -227,11 +198,52 @@ def ax_value_to_size(value: Any) -> dict[str, float] | None:
     return {"width": float(size.width), "height": float(size.height)}
 
 
+def ax_value_to_rect(value: Any) -> dict[str, float] | None:
+    if value is None or AS.AXValueGetType(value) != AS.kAXValueCGRectType:
+        return None
+    ok, rect = AS.AXValueGetValue(value, AS.kAXValueCGRectType, None)
+    if not ok:
+        return None
+    return {
+        "x": float(rect.origin.x),
+        "y": float(rect.origin.y),
+        "width": float(rect.size.width),
+        "height": float(rect.size.height),
+    }
+
+
+def ax_value_to_range(value: Any) -> dict[str, int] | None:
+    if value is None or AS.AXValueGetType(value) != AS.kAXValueCFRangeType:
+        return None
+    ok, selected_range = AS.AXValueGetValue(value, AS.kAXValueCFRangeType, None)
+    if not ok:
+        return None
+    if isinstance(selected_range, tuple) and len(selected_range) >= 2:
+        location, length = selected_range[0], selected_range[1]
+    elif hasattr(selected_range, "location") and hasattr(selected_range, "length"):
+        location, length = selected_range.location, selected_range.length
+    else:
+        return None
+    return {
+        "location": int(location),
+        "length": int(length),
+    }
+
+
+TEXT_INPUT_ROLE_NAMES = {
+    "AXTextField",
+    "AXTextArea",
+    "AXComboBox",
+    "AXSearchField",
+}
+
+
 class ScratchpadApp:
     def __init__(self) -> None:
         self.settings = load_settings()
         self.prompt_text = read_prompt()
         self.log_dir = BASE_DIR / self.settings["log_dir"]
+        self.fixtures_dir = BASE_DIR / self.settings["fixtures_dir"]
         self.action_queue: queue.Queue[QueuedAction] = queue.Queue()
         self.stop_event = threading.Event()
         self.accessibility_prompted = False
@@ -252,9 +264,9 @@ class ScratchpadApp:
     def start(self) -> None:
         self._ensure_layout()
         self._maybe_prompt_accessibility_permissions()
-        self._print_banner()
         self.worker_thread.start()
         self.listener.start()
+        self._print_banner()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -279,37 +291,71 @@ class ScratchpadApp:
         return True
 
     def _register_hotkeys(self) -> None:
-        self.listener.register(
-            self.settings["hotkeys"]["set_source"],
-            lambda: self.enqueue_action("set_source"),
-        )
-        self.listener.register(
-            self.settings["hotkeys"]["run_target"],
-            lambda: self.enqueue_action("run_target"),
-        )
-        self.listener.register(
-            self.settings["hotkeys"]["reset_source"],
-            lambda: self.enqueue_action("reset_source"),
-        )
-        self.listener.register(
-            self.settings["hotkeys"]["quit"],
-            self.request_quit,
-        )
+        hotkeys = self.settings["hotkeys"]
+        if hotkeys.get("set_source"):
+            self.listener.register(
+                hotkeys["set_source"],
+                lambda: self.enqueue_action("set_source"),
+            )
+        if hotkeys.get("run_target"):
+            self.listener.register(
+                hotkeys["run_target"],
+                lambda: self.enqueue_action("run_target"),
+            )
+        if hotkeys.get("reset_source"):
+            self.listener.register(
+                hotkeys["reset_source"],
+                lambda: self.enqueue_action("reset_source"),
+            )
+        if hotkeys.get("quit"):
+            self.listener.register(
+                hotkeys["quit"],
+                self.request_quit,
+            )
 
     def _ensure_layout(self) -> None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.fixtures_dir.mkdir(parents=True, exist_ok=True)
 
     def _print_banner(self) -> None:
         source_state = self._load_source_state()
         source_status = "loaded" if source_state else "not set"
+        permission_snapshot = self._permission_snapshot()
         print("Blink scratchpad is running.")
         print(f"- source: {source_status}")
         print(f"- set source: {self.settings['hotkeys']['set_source']}")
         print(f"- run target: {self.settings['hotkeys']['run_target']}")
-        print(f"- reset source: {self.settings['hotkeys']['reset_source']}")
-        print(f"- quit: {self.settings['hotkeys']['quit']}")
+        if self.settings["hotkeys"].get("reset_source"):
+            print(f"- reset source: {self.settings['hotkeys']['reset_source']}")
+        else:
+            print("- reset source: capture a new source with ctrl+shift+c")
+        if self.settings["hotkeys"].get("quit"):
+            print(f"- quit: {self.settings['hotkeys']['quit']}")
+        else:
+            print("- quit: ctrl+c in the terminal")
+        print(f"- fixture mode: {self.settings.get('fixture_mode', True)}")
+        print("- permissions:")
+        print(
+            f"  accessibility_trusted={permission_snapshot['accessibility_trusted']}"
+        )
+        print(
+            f"  screen_capture_access={permission_snapshot['screen_capture_access']}"
+        )
+        print(
+            "  input_monitoring_proxy="
+            f"{permission_snapshot['input_monitoring_proxy']}"
+        )
+        print(
+            f"  hotkey_event_tap_started={permission_snapshot['hotkey_event_tap_started']}"
+        )
+        print(
+            f"  hotkey_event_tap_active={permission_snapshot['hotkey_event_tap_active']}"
+        )
+        if permission_snapshot.get("hotkey_error"):
+            print(f"  hotkey_error={permission_snapshot['hotkey_error']}")
         print("- logs:", self.log_dir)
+        print("- fixtures:", self.fixtures_dir)
         print("")
 
     def _worker_loop(self) -> None:
@@ -331,13 +377,61 @@ class ScratchpadApp:
             finally:
                 self.action_queue.task_done()
 
+    def _status(
+        self,
+        event: str,
+        *,
+        detail: str | None = None,
+        run_log: dict[str, Any] | None = None,
+        prefix: str = "*",
+    ) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        message = f"[{timestamp}] {prefix} {event}"
+        if detail:
+            message = f"{message} ({detail})"
+        print(message)
+        if run_log is not None:
+            run_log.setdefault("status_events", []).append(
+                {"at": now_iso(), "event": event, "detail": detail, "prefix": prefix}
+            )
+
+    def _notify(self, message: str) -> None:
+        if not self.settings.get("notify_on_capture", True):
+            return
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e",
+                f'display notification "{safe_message}" with title "Blink" sound name ""',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _format_bytes(self, size_bytes: int | None) -> str:
+        if size_bytes is None:
+            return "unknown size"
+        units = ["B", "KB", "MB", "GB"]
+        value = float(size_bytes)
+        for unit in units:
+            if value < 1024.0 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(value)}{unit}"
+                return f"{value:.1f}{unit}"
+            value /= 1024.0
+        return f"{size_bytes}B"
+
     def _handle_set_source(self, action: QueuedAction) -> None:
+        del action
+        self._status("source capture...", prefix=">")
         print(self._capture_instruction("source", "reusable source context"))
         pending_path = STATE_DIR / "pending_source.png"
         capture = self._capture_screenshot(pending_path)
         if capture["status"] != "ok":
             detail = capture.get("stderr") or capture.get("stdout") or "no details"
-            print(f"[source] Capture {capture['status']}: {detail}")
+            self._status("source capture failed", detail=detail, prefix="!")
             return
 
         captured_at = now_iso()
@@ -349,33 +443,63 @@ class ScratchpadApp:
             "capture": capture,
         }
         save_json_file(SOURCE_STATE_PATH, source_state)
-        print(f"[source] Saved source snapshot ({source_state['bytes']} bytes).")
+        self._status(
+            "source captured",
+            detail=f"{capture['duration_ms']}ms, {self._format_bytes(source_state['bytes'])}",
+            prefix="+",
+        )
+        self._notify("Source captured")
 
     def _handle_reset_source(self, action: QueuedAction) -> None:
+        del action
         if SOURCE_IMAGE_PATH.exists():
             SOURCE_IMAGE_PATH.unlink()
         if SOURCE_STATE_PATH.exists():
             SOURCE_STATE_PATH.unlink()
-        print("[source] Source state cleared.")
+        self._status("source cleared", prefix="+")
 
     def _handle_run_target(self, action: QueuedAction) -> None:
-        run_dir = self._make_run_dir()
-        run_log = {
+        if self.settings.get("fixture_mode", True):
+            self._handle_run_target_fixture(action)
+            return
+        self._handle_run_target_legacy(action)
+
+    def _base_run_log(self, run_dir: Path, action: QueuedAction) -> dict[str, Any]:
+        return {
             "run_id": run_dir.name,
             "status": "started",
             "settings": self.settings,
+            "permissions": self._permission_snapshot(),
             "prompt_path": str(PROMPT_PATH),
             "hotkey_detected_at": action.hotkey_detected_at,
             "timings": {},
             "errors": [],
+            "warnings": [],
+            "status_events": [],
         }
 
+    def _permission_snapshot(self) -> dict[str, Any]:
+        listener_status = self.listener.status_snapshot()
+        return {
+            "accessibility_trusted": bool(AS.AXIsProcessTrusted()),
+            "screen_capture_access": bool(Quartz.CGPreflightScreenCaptureAccess()),
+            "input_monitoring_proxy": "hotkey_event_tap",
+            "hotkey_event_tap_started": bool(listener_status["started"]),
+            "hotkey_event_tap_active": bool(listener_status["tap_active"]),
+            "hotkey_run_loop_active": bool(listener_status["run_loop_active"]),
+            "hotkey_binding_count": int(listener_status["binding_count"]),
+            "hotkey_error": listener_status["last_error"],
+        }
+
+    def _handle_run_target_legacy(self, action: QueuedAction) -> None:
+        run_dir = self._make_run_dir()
+        run_log = self._base_run_log(run_dir, action)
         source_state = self._load_source_state()
         if not source_state or not SOURCE_IMAGE_PATH.exists():
             run_log["status"] = "missing_source"
             run_log["errors"].append("No source capture is set. Use the set-source hotkey first.")
             self._persist_run_artifacts(run_dir, run_log, "")
-            print("[target] No source snapshot set. Press the set-source hotkey first.")
+            self._status("missing source", detail="press the set-source hotkey first", run_log=run_log, prefix="!")
             return
 
         source_copy_path = run_dir / "source.png"
@@ -388,9 +512,11 @@ class ScratchpadApp:
 
         metadata_started_perf = time.perf_counter()
         metadata_started_at = now_iso()
-        target_metadata = self._capture_target_metadata()
+        self._status("target metadata...", run_log=run_log, prefix=">")
+        target_metadata, _, _ = self._capture_target_metadata()
         metadata_finished_perf = time.perf_counter()
         run_log["target_metadata"] = target_metadata
+        run_log["target_metadata_debug"] = target_metadata.get("_debug")
         run_log["timings"]["target_metadata_started_at"] = metadata_started_at
         run_log["timings"]["target_metadata_finished_at"] = now_iso()
         run_log["timings"]["target_metadata_ms"] = duration_ms(
@@ -399,8 +525,16 @@ class ScratchpadApp:
         run_log["timings"]["queue_delay_ms"] = duration_ms(
             action.hotkey_detected_perf, metadata_started_perf
         )
+        self._status(
+            "target metadata captured",
+            detail=self._target_metadata_status_detail(target_metadata),
+            run_log=run_log,
+            prefix="+",
+        )
+        self._emit_target_metadata_warnings(target_metadata, run_log)
 
         target_path = run_dir / "target.png"
+        self._status("target screenshot...", run_log=run_log, prefix=">")
         print(self._capture_instruction("target", "destination context"))
         capture_started_perf = time.perf_counter()
         run_log["timings"]["target_screenshot_started_at"] = now_iso()
@@ -416,36 +550,306 @@ class ScratchpadApp:
             run_log["status"] = capture["status"]
             self._persist_run_artifacts(run_dir, run_log, "")
             detail = capture.get("stderr") or capture.get("stdout") or "no details"
-            print(f"[target] Capture {capture['status']}: {detail}")
+            self._status("target capture failed", detail=detail, run_log=run_log, prefix="!")
             return
 
-        generation = self._generate_completion(
+        self._status(
+            "target captured",
+            detail=f"{capture['duration_ms']}ms, {self._format_bytes(capture.get('bytes'))}",
+            run_log=run_log,
+            prefix="+",
+        )
+        self._run_generation(
+            run_dir=run_dir,
+            run_log=run_log,
             action=action,
             source_path=source_copy_path,
             target_path=target_path,
             target_metadata=target_metadata,
         )
-        run_log.update(generation["run_log"])
+
+    def _handle_run_target_fixture(self, action: QueuedAction) -> None:
+        run_dir = self._make_run_dir()
+        run_log = self._base_run_log(run_dir, action)
+        source_state = self._load_source_state()
+        if not source_state or not SOURCE_IMAGE_PATH.exists():
+            run_log["status"] = "missing_source"
+            run_log["errors"].append("No source capture is set. Use the set-source hotkey first.")
+            self._persist_run_artifacts(run_dir, run_log, "")
+            self._status("missing source", detail="press the set-source hotkey first", run_log=run_log, prefix="!")
+            return
+
+        if PENDING_TARGET_PATH.exists():
+            PENDING_TARGET_PATH.unlink()
+
+        try:
+            metadata_started_perf = time.perf_counter()
+            metadata_started_at = now_iso()
+            run_log["timings"]["queue_delay_ms"] = duration_ms(
+                action.hotkey_detected_perf, metadata_started_perf
+            )
+            self._status("target metadata...", run_log=run_log, prefix=">")
+            target_metadata, focused_element, app_element = self._capture_target_metadata()
+            metadata_finished_perf = time.perf_counter()
+            run_log["target_metadata"] = target_metadata
+            run_log["target_metadata_debug"] = target_metadata.get("_debug")
+            run_log["timings"]["target_metadata_started_at"] = metadata_started_at
+            run_log["timings"]["target_metadata_finished_at"] = now_iso()
+            run_log["timings"]["target_metadata_ms"] = duration_ms(
+                metadata_started_perf, metadata_finished_perf
+            )
+            self._status(
+                "target metadata captured",
+                detail=self._target_metadata_status_detail(target_metadata),
+                run_log=run_log,
+                prefix="+",
+            )
+            self._emit_target_metadata_warnings(target_metadata, run_log)
+
+            chrome_ax_empty = self._detect_chrome_ax_empty(
+                target_metadata.get("frontmost_app"), app_element
+            )
+            ax_focused = self._capture_focused_ax(focused_element)
+
+            nearby_started_perf = time.perf_counter()
+            nearby_ax = self._capture_nearby_ax(
+                focused_element,
+                chrome_ax_empty=chrome_ax_empty,
+            )
+            run_log["timings"]["nearby_ax_ms"] = duration_ms(nearby_started_perf)
+            if nearby_ax["status"] == "ok":
+                nearby_count = sum(
+                    len(item.get("children", [])) for item in nearby_ax.get("ancestors", [])
+                )
+                self._status(
+                    "AX walk",
+                    detail=f"focused + {nearby_count} nearby",
+                    run_log=run_log,
+                    prefix="+",
+                )
+            else:
+                self._status(
+                    "AX walk",
+                    detail=nearby_ax.get("status", "unavailable"),
+                    run_log=run_log,
+                    prefix="+",
+                )
+
+            caret_started_perf = time.perf_counter()
+            caret = self._capture_caret(focused_element)
+            run_log["timings"]["caret_ms"] = duration_ms(caret_started_perf)
+
+            geometry_started_perf = time.perf_counter()
+            geometry = self._capture_geometry(
+                target_metadata.get("frontmost_pid"),
+                focused_element,
+                app_element,
+            )
+            run_log["timings"]["geometry_ms"] = duration_ms(geometry_started_perf)
+
+            clipboard_started_perf = time.perf_counter()
+            clipboard = self._read_clipboard()
+            run_log["timings"]["clipboard_capture_ms"] = duration_ms(clipboard_started_perf)
+
+            self._status("target screenshot...", run_log=run_log, prefix=">")
+            print(self._capture_instruction("target", "destination context"))
+            capture_started_perf = time.perf_counter()
+            run_log["timings"]["target_screenshot_started_at"] = now_iso()
+            capture = self._capture_screenshot(PENDING_TARGET_PATH)
+            capture_finished_perf = time.perf_counter()
+            run_log["timings"]["target_screenshot_finished_at"] = now_iso()
+            run_log["timings"]["target_screenshot_ms"] = duration_ms(
+                capture_started_perf, capture_finished_perf
+            )
+            if capture["status"] != "ok":
+                run_log["status"] = capture["status"]
+                detail = capture.get("stderr") or capture.get("stdout") or "no details"
+                run_log["errors"].append(detail)
+                self._persist_run_artifacts(run_dir, run_log, "")
+                self._status("target capture failed", detail=detail, run_log=run_log, prefix="!")
+                return
+            self._status(
+                "target captured",
+                detail=f"{capture['duration_ms']}ms, {self._format_bytes(capture.get('bytes'))}",
+                run_log=run_log,
+                prefix="+",
+            )
+
+            ocr_started_perf = time.perf_counter()
+            ocr = self._capture_ocr(PENDING_TARGET_PATH)
+            run_log["timings"]["ocr_ms"] = duration_ms(ocr_started_perf)
+            if ocr["status"] == "ok":
+                self._status(
+                    "OCR",
+                    detail=f"{len(ocr.get('blocks', []))} blocks",
+                    run_log=run_log,
+                    prefix="+",
+                )
+            else:
+                self._status(
+                    "OCR",
+                    detail=ocr.get("status", "unknown"),
+                    run_log=run_log,
+                    prefix="+",
+                )
+
+            fixture_dir = self._make_fixture_dir(
+                self._fixture_slug(
+                    target_metadata.get("focused_app")
+                    or target_metadata.get("frontmost_app"),
+                    target_metadata.get("focused_role"),
+                )
+            )
+            fixture_manifest = self._write_fixture(
+                fixture_dir=fixture_dir,
+                source_state=source_state,
+                target_capture=capture,
+                target_metadata=target_metadata,
+                ax_focused=ax_focused,
+                nearby_ax=nearby_ax,
+                chrome_ax_empty=chrome_ax_empty,
+                caret=caret,
+                geometry=geometry,
+                clipboard=clipboard,
+                ocr=ocr,
+            )
+            run_log["fixture_id"] = fixture_manifest["fixture_id"]
+            run_log["fixture_path"] = str(fixture_dir)
+            run_log["fixture_slug"] = fixture_manifest["slug"]
+            self._status(
+                "fixture saved",
+                detail=fixture_dir.name,
+                run_log=run_log,
+                prefix="+",
+            )
+            self._notify(f"Fixture saved · {fixture_manifest['slug']}")
+
+            if not self.settings.get("run_live_gemini_on_capture", True):
+                run_log["status"] = "captured"
+                self._persist_run_artifacts(run_dir, run_log, "")
+                return
+
+            self._run_generation(
+                run_dir=run_dir,
+                run_log=run_log,
+                action=action,
+                source_path=fixture_dir / "source.png",
+                target_path=fixture_dir / "target.png",
+                target_metadata=fixture_manifest["target_metadata"],
+            )
+        finally:
+            if PENDING_TARGET_PATH.exists():
+                PENDING_TARGET_PATH.unlink()
+
+    def _run_generation(
+        self,
+        *,
+        run_dir: Path,
+        run_log: dict[str, Any],
+        action: QueuedAction,
+        source_path: Path,
+        target_path: Path,
+        target_metadata: dict[str, Any],
+    ) -> None:
+        generation = generate_completion(
+            self.client,
+            self.settings,
+            self.prompt_text,
+            source_path,
+            target_path,
+            target_metadata,
+            status_callback=lambda message: self._status(message, run_log=run_log, prefix=">"),
+        )
+        generation_log = generation["run_log"]
+        run_log["status"] = generation_log["status"]
+        run_log["request"] = generation_log["request"]
+        run_log["response"] = generation_log["response"]
+        run_log.setdefault("timings", {}).update(generation_log["timings"])
+        if generation_log.get("errors"):
+            run_log.setdefault("errors", []).extend(generation_log["errors"])
         output_text = generation["output_text"]
+
+        clipboard = {
+            "copied": False,
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": None,
+        }
+        if run_log["status"] == "ok" and self.settings.get("copy_to_clipboard", True):
+            clipboard_started_perf = time.perf_counter()
+            clipboard["started_at"] = now_iso()
+            self._copy_to_clipboard(output_text)
+            clipboard["finished_at"] = now_iso()
+            clipboard["duration_ms"] = duration_ms(clipboard_started_perf)
+            clipboard["copied"] = True
+        run_log["clipboard"] = clipboard
+
+        clipboard_ready_perf = time.perf_counter()
+        run_log["timings"]["clipboard_ready_at"] = now_iso()
+        run_log["timings"]["end_to_end_ms"] = duration_ms(
+            action.hotkey_detected_perf, clipboard_ready_perf
+        )
         self._persist_run_artifacts(run_dir, run_log, output_text)
 
-        if run_log["status"] == "ok":
+        if self.settings.get("stream_to_terminal", True):
             print("")
-            print(
-                f"[target] end_to_end={run_log['timings']['end_to_end_ms']}ms "
-                f"ttft={run_log['timings'].get('ttft_ms')}ms "
-                f"model={run_log['timings'].get('model_latency_ms')}ms "
-                f"output_tps={run_log['response'].get('output_tps')}"
+        if run_log["status"] == "ok":
+            copied_detail = "copied to clipboard" if clipboard["copied"] else "ready"
+            self._status(
+                "done",
+                detail=f"{copied_detail} · {run_log['timings']['end_to_end_ms']}ms total",
+                run_log=run_log,
+                prefix="+",
             )
-            print(f"[target] Log saved to {run_dir / 'run.json'}")
+            self._notify("Gemini ready · copied" if clipboard["copied"] else "Gemini ready")
         else:
-            print(f"[target] Generation failed: {run_log['errors'][-1]}")
+            error_message = run_log.get("errors", ["unknown error"])[-1]
+            self._status("generation failed", detail=error_message, run_log=run_log, prefix="!")
 
     def _make_run_dir(self) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
         run_dir = self.log_dir / timestamp
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
+
+    def _target_metadata_status_detail(self, target_metadata: dict[str, Any]) -> str:
+        status = str(target_metadata.get("status", "unknown"))
+        if status == "ok":
+            app_name = target_metadata.get("frontmost_app")
+            role = target_metadata.get("focused_role")
+            label = target_metadata.get("focused_label") or target_metadata.get("focused_title")
+            if app_name and role and label:
+                return f"ok · {app_name} · {role} · {label}"
+            if app_name and role:
+                return f"ok · {app_name} · {role}"
+            if role and label:
+                return f"ok · {role} · {label}"
+            if role:
+                return f"ok · {role}"
+            return "ok"
+        extra = target_metadata.get("error_detail") or target_metadata.get("error")
+        return f"{status} · {extra}" if extra else status
+
+    def _emit_target_metadata_warnings(
+        self, target_metadata: dict[str, Any], run_log: dict[str, Any]
+    ) -> None:
+        warnings = list(target_metadata.get("warnings") or [])
+        if not warnings:
+            return
+        run_log.setdefault("warnings", []).extend(warnings)
+        for warning in warnings:
+            self._status("metadata warning", detail=warning, run_log=run_log, prefix="~")
+
+    def _make_fixture_dir(self, slug: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+        fixture_dir = self.fixtures_dir / f"{timestamp}-{slug}"
+        fixture_dir.mkdir(parents=True, exist_ok=False)
+        return fixture_dir
+
+    def _fixture_slug(self, frontmost_app: Any, focused_role: Any) -> str:
+        app_slug = slugify(str(frontmost_app or "unknown-app"))
+        role_slug = slugify(str(focused_role or "unknown-role"))
+        return f"{app_slug}-{role_slug}"
 
     def _load_source_state(self) -> dict[str, Any] | None:
         if not SOURCE_STATE_PATH.exists():
@@ -544,17 +948,26 @@ class ScratchpadApp:
         final_attempt["capture_mode"] = requested_mode
         final_attempt["attempts"] = attempts
         if len(attempts) > 1:
-            final_attempt["fallback_used"] = final_attempt["effective_capture_mode"] != requested_mode
+            final_attempt["fallback_used"] = (
+                final_attempt["effective_capture_mode"] != requested_mode
+            )
             final_attempt["fallback_reason"] = "window_capture_failed"
         else:
             final_attempt["fallback_used"] = False
         return final_attempt
 
-    def _capture_target_metadata(self) -> dict[str, Any]:
+    def _capture_target_metadata(self) -> tuple[dict[str, Any], Any, Any]:
         metadata: dict[str, Any] = {
             "status": "ok",
             "frontmost_app": None,
             "frontmost_window_title": None,
+            "frontmost_pid": None,
+            "workspace_frontmost_app": None,
+            "workspace_frontmost_window_title": None,
+            "workspace_frontmost_pid": None,
+            "focused_app": None,
+            "focused_app_pid": None,
+            "focused_app_bundle_id": None,
             "focused_role": None,
             "focused_subrole": None,
             "focused_title": None,
@@ -562,66 +975,427 @@ class ScratchpadApp:
             "focused_label": None,
             "focused_value_preview": None,
             "focused_bounds": None,
-            "permission": {
-                "accessibility_trusted": bool(AS.AXIsProcessTrusted()),
-            },
+            "permission": self._permission_snapshot(),
+            "warnings": [],
+            "_full": {},
+            "_debug": {},
         }
 
         frontmost = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
         if frontmost is not None:
-            metadata["frontmost_app"] = frontmost.localizedName()
-            metadata["frontmost_pid"] = int(frontmost.processIdentifier())
+            metadata["workspace_frontmost_app"] = frontmost.localizedName()
+            metadata["workspace_frontmost_pid"] = int(frontmost.processIdentifier())
+            metadata["_debug"]["workspace_frontmost_bundle_id"] = frontmost.bundleIdentifier()
+
+        metadata["frontmost_app"] = metadata["workspace_frontmost_app"]
+        metadata["frontmost_pid"] = metadata["workspace_frontmost_pid"]
+        metadata["_debug"]["frontmost_bundle_id"] = metadata["_debug"].get(
+            "workspace_frontmost_bundle_id"
+        )
 
         if not metadata["permission"]["accessibility_trusted"]:
             metadata["status"] = "permission_denied"
             metadata["error"] = "Accessibility access is not granted."
-            return metadata
+            metadata["_full"] = plain_data(metadata)
+            return metadata, None, None
 
         system_wide = AS.AXUIElementCreateSystemWide()
         focused_error, focused_element = ax_copy_attribute(
             system_wide, AS.kAXFocusedUIElementAttribute
         )
-        if focused_error != AS.kAXErrorSuccess or focused_element is None:
+
+        workspace_app_element = None
+        if metadata.get("workspace_frontmost_pid"):
+            workspace_app_element = AS.AXUIElementCreateApplication(
+                metadata["workspace_frontmost_pid"]
+            )
+            window_title = self._get_window_title(workspace_app_element)
+            if window_title:
+                metadata["workspace_frontmost_window_title"] = shorten_text(window_title)
+
+        metadata["frontmost_window_title"] = metadata["workspace_frontmost_window_title"]
+
+        diagnostics = self._build_ax_diagnostics(
+            system_wide=system_wide,
+            app_element=workspace_app_element,
+            focused_error=focused_error,
+            focused_element=focused_element,
+        )
+        metadata["_debug"].update(diagnostics)
+
+        resolved_element = focused_element if focused_error == AS.kAXErrorSuccess else None
+        resolve_strategy = "system_wide_focused_ui_element"
+        if resolved_element is None and workspace_app_element is not None:
+            resolved_element, resolve_strategy = self._resolve_focused_element_with_fallbacks(
+                workspace_app_element, diagnostics
+            )
+
+        if resolved_element is None:
             metadata["status"] = "not_found"
             metadata["error"] = ax_error_name(focused_error)
-            return metadata
+            metadata["error_detail"] = diagnostics.get("focus_resolution_summary")
+            metadata["_full"] = {
+                "status": metadata["status"],
+                "frontmost_app": metadata["frontmost_app"],
+                "frontmost_window_title": metadata["frontmost_window_title"],
+                "frontmost_pid": metadata["frontmost_pid"],
+                "workspace_frontmost_app": metadata["workspace_frontmost_app"],
+                "workspace_frontmost_window_title": metadata["workspace_frontmost_window_title"],
+                "workspace_frontmost_pid": metadata["workspace_frontmost_pid"],
+                "focused_app": metadata["focused_app"],
+                "focused_app_pid": metadata["focused_app_pid"],
+                "focused_app_bundle_id": metadata["focused_app_bundle_id"],
+                "focused_role": None,
+                "focused_subrole": None,
+                "focused_title": None,
+                "focused_description": None,
+                "focused_value": None,
+                "focused_label": None,
+                "focused_bounds": None,
+                "permission": metadata["permission"],
+                "warnings": metadata["warnings"],
+            }
+            return metadata, None, workspace_app_element
 
-        if metadata.get("frontmost_pid"):
-            app_element = AS.AXUIElementCreateApplication(metadata["frontmost_pid"])
-            window_title = self._get_window_title(app_element)
-            if window_title:
-                metadata["frontmost_window_title"] = window_title
+        focused_app_info = self._ax_element_owner_info(resolved_element)
+        metadata["_debug"]["focused_element_owner"] = focused_app_info
 
-        metadata["focused_role"] = shorten_text(
-            self._get_attr_value(focused_element, AS.kAXRoleAttribute)
-        )
-        metadata["focused_subrole"] = shorten_text(
-            self._get_attr_value(focused_element, AS.kAXSubroleAttribute)
-        )
-        metadata["focused_title"] = shorten_text(
-            self._get_attr_value(focused_element, AS.kAXTitleAttribute)
-        )
-        metadata["focused_description"] = shorten_text(
-            self._get_attr_value(focused_element, AS.kAXDescriptionAttribute)
-        )
-        metadata["focused_value_preview"] = shorten_text(
-            self._get_attr_value(focused_element, AS.kAXValueAttribute)
-        )
-        metadata["focused_label"] = shorten_text(self._resolve_label(focused_element))
-        metadata["focused_bounds"] = self._resolve_bounds(focused_element)
-        return metadata
+        app_element = workspace_app_element
+        if focused_app_info and focused_app_info.get("pid") is not None:
+            metadata["focused_app"] = focused_app_info.get("name")
+            metadata["focused_app_pid"] = focused_app_info.get("pid")
+            metadata["focused_app_bundle_id"] = focused_app_info.get("bundle_id")
+            if metadata["focused_app_pid"] != metadata.get("workspace_frontmost_pid"):
+                metadata["warnings"].append(
+                    "workspace_frontmost_app="
+                    f"{metadata.get('workspace_frontmost_app') or 'unknown'} differs from "
+                    "focused_element_owner="
+                    f"{metadata.get('focused_app') or metadata.get('focused_app_pid')}"
+                )
+            app_element = AS.AXUIElementCreateApplication(metadata["focused_app_pid"])
+            metadata["frontmost_app"] = metadata["focused_app"] or metadata["frontmost_app"]
+            metadata["frontmost_pid"] = metadata["focused_app_pid"]
+            metadata["_debug"]["frontmost_bundle_id"] = metadata["focused_app_bundle_id"]
 
-    def _get_window_title(self, app_element) -> str | None:
+        resolved_window_title = self._get_window_title(app_element)
+        if resolved_window_title:
+            metadata["frontmost_window_title"] = shorten_text(resolved_window_title)
+        metadata["_debug"]["resolved_target_app"] = {
+            "name": metadata["frontmost_app"],
+            "pid": metadata["frontmost_pid"],
+            "bundle_id": metadata["_debug"].get("frontmost_bundle_id"),
+            "window_title": metadata["frontmost_window_title"],
+        }
+
+        full_metadata = {
+            "status": metadata["status"],
+            "frontmost_app": metadata["frontmost_app"],
+            "frontmost_window_title": (
+                self._get_window_title(app_element) if app_element is not None else None
+            )
+            or metadata["frontmost_window_title"],
+            "frontmost_pid": metadata["frontmost_pid"],
+            "workspace_frontmost_app": metadata["workspace_frontmost_app"],
+            "workspace_frontmost_window_title": metadata["workspace_frontmost_window_title"],
+            "workspace_frontmost_pid": metadata["workspace_frontmost_pid"],
+            "focused_app": metadata["focused_app"],
+            "focused_app_pid": metadata["focused_app_pid"],
+            "focused_app_bundle_id": metadata["focused_app_bundle_id"],
+            "focused_role": self._get_attr_value(resolved_element, AS.kAXRoleAttribute),
+            "focused_subrole": self._get_attr_value(resolved_element, AS.kAXSubroleAttribute),
+            "focused_title": self._get_attr_value(resolved_element, AS.kAXTitleAttribute),
+            "focused_description": self._get_attr_value(
+                resolved_element, AS.kAXDescriptionAttribute
+            ),
+            "focused_value": self._get_attr_value(resolved_element, AS.kAXValueAttribute),
+            "focused_label": self._resolve_label(resolved_element),
+            "focused_bounds": self._resolve_bounds(resolved_element),
+            "permission": metadata["permission"],
+            "warnings": metadata["warnings"],
+            "focus_resolution_strategy": resolve_strategy,
+        }
+
+        metadata["focused_role"] = shorten_text(full_metadata["focused_role"])
+        metadata["focused_subrole"] = shorten_text(full_metadata["focused_subrole"])
+        metadata["focused_title"] = shorten_text(full_metadata["focused_title"])
+        metadata["focused_description"] = shorten_text(full_metadata["focused_description"])
+        metadata["focused_value_preview"] = shorten_text(full_metadata["focused_value"])
+        metadata["focused_label"] = shorten_text(full_metadata["focused_label"])
+        metadata["focused_bounds"] = full_metadata["focused_bounds"]
+        metadata["_full"] = plain_data(full_metadata)
+        metadata["_debug"]["focus_resolution_strategy"] = resolve_strategy
+        return metadata, resolved_element, app_element
+
+    def _ax_element_pid(self, element) -> int | None:
+        if element is None:
+            return None
+        try:
+            error, pid = AS.AXUIElementGetPid(element, None)
+        except Exception:
+            return None
+        if error != AS.kAXErrorSuccess or pid is None:
+            return None
+        return int(pid)
+
+    def _running_app_info(self, pid: Any) -> dict[str, Any] | None:
+        if pid is None:
+            return None
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            return None
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid_int)
+        return {
+            "pid": pid_int,
+            "name": app.localizedName() if app is not None else None,
+            "bundle_id": app.bundleIdentifier() if app is not None else None,
+        }
+
+    def _ax_element_owner_info(self, element) -> dict[str, Any] | None:
+        return self._running_app_info(self._ax_element_pid(element))
+
+    def _ax_attribute_status(self, element, attribute: str) -> dict[str, Any]:
+        if element is None:
+            return {"attribute": attribute, "status": "missing_element"}
+        error, value = ax_copy_attribute(element, attribute)
+        payload = {"attribute": attribute, "status": ax_error_name(error)}
+        if error == AS.kAXErrorSuccess:
+            payload["value_type"] = type(value).__name__
+            if isinstance(value, (list, tuple)):
+                payload["count"] = len(value)
+            elif isinstance(value, str):
+                payload["value_preview"] = shorten_text(value, 120)
+            elif isinstance(value, (int, float, bool)):
+                payload["value"] = value
+            elif attribute in (AS.kAXPositionAttribute, AS.kAXSizeAttribute):
+                payload["value"] = plain_data(value)
+        return payload
+
+    def _element_token(self, element) -> str:
+        return str(element)
+
+    def _build_ax_diagnostics(
+        self,
+        *,
+        system_wide,
+        app_element,
+        focused_error: int,
+        focused_element,
+    ) -> dict[str, Any]:
+        diagnostics: dict[str, Any] = {
+            "system_wide": {
+                "focused_ui_element": {
+                    "status": ax_error_name(focused_error),
+                    "resolved": focused_element is not None,
+                },
+                "focused_application": self._ax_attribute_status(
+                    system_wide, AS.kAXFocusedApplicationAttribute
+                ),
+            },
+            "workspace_frontmost_app": {
+                "focused_window": self._ax_attribute_status(
+                    app_element, AS.kAXFocusedWindowAttribute
+                ),
+                "main_window": self._ax_attribute_status(
+                    app_element, AS.kAXMainWindowAttribute
+                ),
+                "focused_ui_element": self._ax_attribute_status(
+                    app_element, AS.kAXFocusedUIElementAttribute
+                ),
+                "windows": self._ax_attribute_status(app_element, AS.kAXWindowsAttribute),
+            },
+        }
+        active_attr = getattr(AS, "kAXActiveElementAttribute", None)
+        if active_attr:
+            diagnostics["workspace_frontmost_app"]["active_element"] = self._ax_attribute_status(
+                app_element, active_attr
+            )
+        shared_focus_attr = getattr(AS, "kAXSharedFocusElementsAttribute", None)
+        if shared_focus_attr:
+            diagnostics["workspace_frontmost_app"]["shared_focus_elements"] = self._ax_attribute_status(
+                app_element, shared_focus_attr
+            )
+
+        focused_window = self._get_window_element(app_element)
+        if focused_window is not None:
+            diagnostics["workspace_frontmost_window"] = {
+                "role": self._get_attr_value(focused_window, AS.kAXRoleAttribute),
+                "subrole": self._get_attr_value(focused_window, AS.kAXSubroleAttribute),
+                "title": shorten_text(
+                    self._get_attr_value(focused_window, AS.kAXTitleAttribute), 120
+                ),
+                "children": self._ax_attribute_status(
+                    focused_window, AS.kAXChildrenAttribute
+                ),
+                "visible_children": self._ax_attribute_status(
+                    focused_window, AS.kAXVisibleChildrenAttribute
+                )
+                if hasattr(AS, "kAXVisibleChildrenAttribute")
+                else {"status": "unsupported"},
+            }
+        diagnostics["focus_resolution_summary"] = "no focused element resolved yet"
+        return diagnostics
+
+    def _resolve_focused_element_with_fallbacks(
+        self, app_element, diagnostics: dict[str, Any]
+    ) -> tuple[Any, str]:
+        strategies: list[tuple[str, Any]] = []
+
+        app_focused = self._get_attr_value(app_element, AS.kAXFocusedUIElementAttribute)
+        if app_focused is not None:
+            strategies.append(("workspace_frontmost_app_focused_ui_element", app_focused))
+
+        active_attr = getattr(AS, "kAXActiveElementAttribute", None)
+        if active_attr:
+            active_element = self._get_attr_value(app_element, active_attr)
+            if active_element is not None:
+                strategies.append(("workspace_frontmost_app_active_element", active_element))
+
+        shared_focus_attr = getattr(AS, "kAXSharedFocusElementsAttribute", None)
+        if shared_focus_attr:
+            shared_focus = self._get_attr_value(app_element, shared_focus_attr)
+            if isinstance(shared_focus, (list, tuple)):
+                diagnostics.setdefault("fallback_probe", {})["shared_focus_count"] = len(
+                    shared_focus
+                )
+                if shared_focus:
+                    strategies.append(
+                        ("workspace_frontmost_app_shared_focus_elements[0]", shared_focus[0])
+                    )
+
+        for strategy_name, candidate in strategies:
+            if candidate is None:
+                continue
+            if self._looks_like_focus_candidate(candidate):
+                diagnostics["focus_resolution_summary"] = f"resolved via {strategy_name}"
+                return candidate, strategy_name
+
+        window = self._get_window_element(app_element)
+        if window is not None:
+            descendant = self._find_focus_candidate_in_subtree(window, diagnostics)
+            if descendant is not None:
+                diagnostics["focus_resolution_summary"] = "resolved via focused_window_subtree_probe"
+                return descendant, "focused_window_subtree_probe"
+
+        diagnostics["focus_resolution_summary"] = "no focused or editable candidate found via fallbacks"
+        return None, "not_found"
+
+    def _looks_like_focus_candidate(self, element) -> bool:
+        if element is None:
+            return False
+        focused_flag = self._get_attr_value(element, AS.kAXFocusedAttribute)
+        if focused_flag is True:
+            return True
+        role = self._get_attr_value(element, AS.kAXRoleAttribute)
+        if isinstance(role, str) and role in TEXT_INPUT_ROLE_NAMES:
+            return True
+        selected_range = self._get_attr_value(element, AS.kAXSelectedTextRangeAttribute)
+        if selected_range is not None:
+            return True
+        return False
+
+    def _candidate_score(self, element) -> int:
+        score = 0
+        focused_flag = self._get_attr_value(element, AS.kAXFocusedAttribute)
+        if focused_flag is True:
+            score += 100
+        role = self._get_attr_value(element, AS.kAXRoleAttribute)
+        if isinstance(role, str) and role in TEXT_INPUT_ROLE_NAMES:
+            score += 50
+        selected_range = self._get_attr_value(element, AS.kAXSelectedTextRangeAttribute)
+        if selected_range is not None:
+            score += 25
+        value = self._get_attr_value(element, AS.kAXValueAttribute)
+        if isinstance(value, str):
+            score += 10
+        description = self._get_attr_value(element, AS.kAXDescriptionAttribute)
+        if isinstance(description, str) and "text" in description.lower():
+            score += 5
+        return score
+
+    def _find_focus_candidate_in_subtree(self, root_element, diagnostics: dict[str, Any]) -> Any:
+        max_nodes = 250
+        queue_elements = [root_element]
+        visited: set[str] = set()
+        best_candidate = None
+        best_score = -1
+        scanned = 0
+        top_candidates: list[dict[str, Any]] = []
+
+        while queue_elements and scanned < max_nodes:
+            current = queue_elements.pop(0)
+            token = self._element_token(current)
+            if token in visited:
+                continue
+            visited.add(token)
+            scanned += 1
+
+            score = self._candidate_score(current)
+            if score > 0:
+                candidate_summary = {
+                    "score": score,
+                    "role": self._get_attr_value(current, AS.kAXRoleAttribute),
+                    "subrole": self._get_attr_value(current, AS.kAXSubroleAttribute),
+                    "title": shorten_text(
+                        self._get_attr_value(current, AS.kAXTitleAttribute), 80
+                    ),
+                    "description": shorten_text(
+                        self._get_attr_value(current, AS.kAXDescriptionAttribute), 80
+                    ),
+                    "focused": self._get_attr_value(current, AS.kAXFocusedAttribute),
+                    "bounds": self._resolve_bounds(current),
+                }
+                top_candidates.append(candidate_summary)
+                top_candidates = sorted(
+                    top_candidates, key=lambda item: item["score"], reverse=True
+                )[:5]
+                if score > best_score:
+                    best_score = score
+                    best_candidate = current
+
+            for attr_name in (
+                AS.kAXChildrenAttribute,
+                getattr(AS, "kAXVisibleChildrenAttribute", None),
+            ):
+                if not attr_name:
+                    continue
+                children = self._get_attr_value(current, attr_name) or []
+                if isinstance(children, (list, tuple)):
+                    queue_elements.extend(children)
+
+        diagnostics["subtree_probe"] = {
+            "root_role": self._get_attr_value(root_element, AS.kAXRoleAttribute),
+            "root_title": shorten_text(
+                self._get_attr_value(root_element, AS.kAXTitleAttribute), 120
+            ),
+            "scanned_nodes": scanned,
+            "max_nodes": max_nodes,
+            "best_score": best_score,
+            "top_candidates": top_candidates,
+        }
+        return best_candidate
+
+    def _get_window_element(self, app_element) -> Any:
+        if app_element is None:
+            return None
         for attribute in (AS.kAXFocusedWindowAttribute, AS.kAXMainWindowAttribute):
             error, window = ax_copy_attribute(app_element, attribute)
-            if error != AS.kAXErrorSuccess or window is None:
-                continue
-            title = self._get_attr_value(window, AS.kAXTitleAttribute)
-            if isinstance(title, str) and title.strip():
-                return title.strip()
+            if error == AS.kAXErrorSuccess and window is not None:
+                return window
+        return None
+
+    def _get_window_title(self, app_element) -> str | None:
+        window = self._get_window_element(app_element)
+        if window is None:
+            return None
+        title = self._get_attr_value(window, AS.kAXTitleAttribute)
+        if isinstance(title, str) and title.strip():
+            return title.strip()
         return None
 
     def _get_attr_value(self, element, attribute: str) -> Any:
+        if element is None:
+            return None
         error, value = ax_copy_attribute(element, attribute)
         if error != AS.kAXErrorSuccess:
             return None
@@ -651,9 +1425,7 @@ class ScratchpadApp:
         position = ax_value_to_point(
             self._get_attr_value(focused_element, AS.kAXPositionAttribute)
         )
-        size = ax_value_to_size(
-            self._get_attr_value(focused_element, AS.kAXSizeAttribute)
-        )
+        size = ax_value_to_size(self._get_attr_value(focused_element, AS.kAXSizeAttribute))
         if not position or not size:
             return None
         return {
@@ -663,313 +1435,357 @@ class ScratchpadApp:
             "height": size["height"],
         }
 
-    def _build_user_parts(
+    def _describe_ax_node(
         self,
-        source_path: Path,
-        target_path: Path,
-        target_metadata: dict[str, Any],
-    ) -> tuple[list[Any], dict[str, Any]]:
-        prepare_started_perf = time.perf_counter()
+        element,
+        *,
+        is_focused: bool = False,
+        full: bool = False,
+    ) -> dict[str, Any]:
+        value = self._get_attr_value(element, AS.kAXValueAttribute)
+        value_limit = int(self.settings.get("nearby_ax_value_preview_chars", 120))
+        return {
+            "role": self._get_attr_value(element, AS.kAXRoleAttribute),
+            "subrole": self._get_attr_value(element, AS.kAXSubroleAttribute),
+            "title": self._get_attr_value(element, AS.kAXTitleAttribute)
+            if full
+            else shorten_text(self._get_attr_value(element, AS.kAXTitleAttribute)),
+            "description": self._get_attr_value(element, AS.kAXDescriptionAttribute)
+            if full
+            else shorten_text(self._get_attr_value(element, AS.kAXDescriptionAttribute)),
+            "label": self._resolve_label(element)
+            if full
+            else shorten_text(self._resolve_label(element)),
+            "value": plain_data(value) if full else shorten_text(value, value_limit),
+            "bounds": self._resolve_bounds(element),
+            "is_focused": is_focused,
+        }
 
-        metadata_json = json.dumps(target_metadata, indent=2, ensure_ascii=True)
-        instruction_text = (
-            "TARGET_METADATA_JSON:\n"
-            f"{metadata_json}\n\n"
-            "Use the source image as the source context and the target image as the destination context."
+    def _capture_focused_ax(self, focused_element) -> dict[str, Any]:
+        if focused_element is None:
+            return {"status": "not_found"}
+        payload = self._describe_ax_node(focused_element, is_focused=True, full=True)
+        payload["status"] = "ok"
+        return payload
+
+    def _detect_chrome_ax_empty(self, frontmost_app: Any, app_element) -> bool:
+        if frontmost_app != "Google Chrome" or app_element is None:
+            return False
+        window = self._get_window_element(app_element)
+        if window is None:
+            return False
+        children = self._get_attr_value(window, AS.kAXChildrenAttribute)
+        return isinstance(children, (list, tuple)) and len(children) == 0
+
+    def _capture_nearby_ax(self, focused_element, *, chrome_ax_empty: bool) -> dict[str, Any]:
+        if chrome_ax_empty:
+            return {"status": "empty", "reason": "chrome_ax_tree_empty"}
+        if focused_element is None:
+            return {"status": "not_found"}
+
+        max_depth = int(self.settings.get("nearby_ax_ancestor_depth", 3))
+        max_siblings = int(self.settings.get("nearby_ax_max_siblings", 12))
+        focused_children = list(
+            self._get_attr_value(focused_element, AS.kAXChildrenAttribute) or []
         )
 
-        source_request_image = self._prepare_request_image(source_path)
-        target_request_image = self._prepare_request_image(target_path)
+        ancestors: list[dict[str, Any]] = []
+        current = focused_element
+        for depth in range(1, max_depth + 1):
+            parent = self._get_attr_value(current, AS.kAXParentAttribute)
+            if parent is None:
+                break
+            siblings = list(self._get_attr_value(parent, AS.kAXChildrenAttribute) or [])
+            sibling_summaries = [
+                self._describe_ax_node(child, is_focused=(child == focused_element))
+                for child in siblings[:max_siblings]
+            ]
+            ancestors.append(
+                {
+                    "depth_from_focus": depth,
+                    "node": self._describe_ax_node(parent),
+                    "children": sibling_summaries,
+                    "children_truncated": len(siblings) > max_siblings,
+                }
+            )
+            current = parent
 
-        parts = [
-            types.Part.from_text(text=instruction_text),
-            types.Part.from_text(text="SOURCE_IMAGE"),
-            types.Part.from_bytes(
-                data=source_request_image["bytes_data"],
-                mime_type=source_request_image["mime_type"],
-            ),
-            types.Part.from_text(text="TARGET_IMAGE"),
-            types.Part.from_bytes(
-                data=target_request_image["bytes_data"],
-                mime_type=target_request_image["mime_type"],
-            ),
-        ]
-
-        timings = {
-            "request_build_ms": duration_ms(prepare_started_perf),
-            "source_image_prepare_ms": source_request_image["duration_ms"],
-            "target_image_prepare_ms": target_request_image["duration_ms"],
+        return {
+            "status": "ok",
+            "focused": self._describe_ax_node(focused_element, is_focused=True),
+            "ancestors": ancestors,
+            "focused_children": [
+                self._describe_ax_node(child) for child in focused_children[:max_siblings]
+            ],
+            "focused_children_truncated": len(focused_children) > max_siblings,
         }
-        inputs = {
-            "instruction_chars": len(instruction_text),
-            "source_image_bytes": source_request_image["request_bytes"],
-            "target_image_bytes": target_request_image["request_bytes"],
-            "source_original_image_bytes": source_request_image["original_bytes"],
-            "target_original_image_bytes": target_request_image["original_bytes"],
-        }
-        images = {
-            "source": source_request_image["log"],
-            "target": target_request_image["log"],
-        }
-        return parts, {"timings": timings, "inputs": inputs, "images": images}
 
-    def _prepare_request_image(self, image_path: Path) -> dict[str, Any]:
-        original_bytes = image_path.stat().st_size
-        preprocess_enabled = bool(self.settings.get("preprocess_request_images", True))
-        started_perf = time.perf_counter()
-        started_at = now_iso()
+    def _capture_caret(self, focused_element) -> dict[str, Any]:
+        if not self.settings.get("caret_capture", True):
+            return {"status": "skipped"}
+        if focused_element is None:
+            return {"status": "not_found"}
+        try:
+            selected_range_value = self._get_attr_value(
+                focused_element, AS.kAXSelectedTextRangeAttribute
+            )
+            selected_range = ax_value_to_range(selected_range_value)
+            if selected_range_value is not None and selected_range is not None:
+                error, bounds_value = AS.AXUIElementCopyParameterizedAttributeValue(
+                    focused_element,
+                    AS.kAXBoundsForRangeParameterizedAttribute,
+                    selected_range_value,
+                    None,
+                )
+                payload = {"status": "ok", "range": selected_range}
+                if error == AS.kAXErrorSuccess and bounds_value is not None:
+                    payload["bounds"] = ax_value_to_rect(bounds_value)
+                else:
+                    payload["bounds"] = None
+                    payload["bounds_status"] = ax_error_name(error)
+                return payload
 
-        if not preprocess_enabled:
-            data = image_path.read_bytes()
-            finished_at = now_iso()
+            line_number = self._get_attr_value(
+                focused_element, AS.kAXInsertionPointLineNumberAttribute
+            )
+            if line_number is not None:
+                return {"status": "line_only", "line_number": int(line_number)}
+            return {"status": "unsupported"}
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}
+
+    def _capture_geometry(self, frontmost_pid: Any, focused_element, app_element) -> dict[str, Any]:
+        if not frontmost_pid or app_element is None:
+            return {"status": "not_found"}
+        try:
+            window = self._get_window_element(app_element)
+            if window is None:
+                return {"status": "not_found"}
+            window_position = ax_value_to_point(
+                self._get_attr_value(window, AS.kAXPositionAttribute)
+            )
+            window_size = ax_value_to_size(self._get_attr_value(window, AS.kAXSizeAttribute))
+            screen_payload = None
+            display_scale = None
+            window_center = None
+            screens = list(AppKit.NSScreen.screens())
+            primary_height = float(screens[0].frame().size.height) if screens else 0.0
+            if window_position and window_size:
+                window_center = (
+                    window_position["x"] + (window_size["width"] / 2.0),
+                    window_position["y"] + (window_size["height"] / 2.0),
+                )
+                for screen in screens:
+                    frame = screen.frame()
+                    ax_origin_x = float(frame.origin.x)
+                    ax_origin_y = primary_height - (
+                        float(frame.origin.y) + float(frame.size.height)
+                    )
+                    ax_max_x = ax_origin_x + float(frame.size.width)
+                    ax_max_y = ax_origin_y + float(frame.size.height)
+                    in_x = ax_origin_x <= window_center[0] <= ax_max_x
+                    in_y = ax_origin_y <= window_center[1] <= ax_max_y
+                    if in_x and in_y:
+                        screen_payload = {
+                            "x": ax_origin_x,
+                            "y": ax_origin_y,
+                            "width": float(frame.size.width),
+                            "height": float(frame.size.height),
+                            "cocoa_origin": {
+                                "x": float(frame.origin.x),
+                                "y": float(frame.origin.y),
+                            },
+                        }
+                        display_scale = float(screen.backingScaleFactor())
+                        break
+            if display_scale is None:
+                main_screen = AppKit.NSScreen.mainScreen()
+                if main_screen is not None:
+                    display_scale = float(main_screen.backingScaleFactor())
+
+            window_bounds = None
+            if window_position and window_size:
+                window_bounds = {
+                    "x": window_position["x"],
+                    "y": window_position["y"],
+                    "width": window_size["width"],
+                    "height": window_size["height"],
+                }
+
             return {
-                "bytes_data": data,
-                "mime_type": guess_mime_type(image_path),
-                "original_bytes": original_bytes,
-                "request_bytes": len(data),
-                "duration_ms": duration_ms(started_perf),
-                "log": {
-                    "status": "original",
-                    "enabled": False,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "duration_ms": duration_ms(started_perf),
-                    "original_path": str(image_path),
-                    "original_bytes": original_bytes,
-                    "request_path": str(image_path),
-                    "request_bytes": len(data),
-                    "request_mime_type": guess_mime_type(image_path),
-                },
+                "status": "ok",
+                "coord_system": "ax_top_left",
+                "window_bounds_points": window_bounds,
+                "window_center_points": window_center,
+                "display_scale": display_scale,
+                "screen_frame_points": screen_payload,
+                "focused_bounds_points": self._resolve_bounds(focused_element),
+                "coord_notes": (
+                    "AX coordinates are in display points with a top-left origin. "
+                    "Multiply by display_scale to approximate PNG pixel coordinates."
+                ),
             }
+        except Exception as exc:
+            return {"status": "error", "error": str(exc)}
 
-        request_format = str(self.settings.get("request_image_format", "jpeg")).lower()
-        max_dimension = int(self.settings.get("request_image_max_dimension", 1600))
-        jpeg_quality = int(self.settings.get("request_image_jpeg_quality", 80))
-        extension = ".jpg" if request_format in {"jpeg", "jpg"} else f".{request_format}"
-        request_path = image_path.with_name(f"{image_path.stem}.request{extension}")
-        command = ["/usr/bin/sips"]
-        if request_format:
-            command += ["-s", "format", request_format]
-            if request_format in {"jpeg", "jpg"}:
-                command += ["-s", "formatOptions", str(jpeg_quality)]
-        if max_dimension > 0:
-            command += ["-Z", str(max_dimension)]
-        command += [str(image_path), "--out", str(request_path)]
+    def _clipboard_token_to_mime(self, token: str) -> str | None:
+        normalized = token.strip().strip('"').lower()
+        mapping = {
+            "utf8": "text/plain",
+            "utxt": "text/plain",
+            "string": "text/plain",
+            "text": "text/plain",
+            "pngf": "image/png",
+            "tiff": "image/tiff",
+            "jpeg": "image/jpeg",
+            "jpgf": "image/jpeg",
+            "pdf ": "application/pdf",
+            "url ": "text/uri-list",
+        }
+        for key, value in mapping.items():
+            if key in normalized:
+                return value
+        return None
 
-        result = subprocess.run(
-            command,
+    def _read_clipboard(self) -> dict[str, Any]:
+        max_chars = int(self.settings.get("clipboard_max_chars", 8000))
+        text_result = subprocess.run(
+            ["/usr/bin/pbpaste"],
+            capture_output=True,
+            check=False,
+        )
+        raw_text = (
+            text_result.stdout.decode("utf-8", errors="replace")
+            if text_result.returncode == 0 and text_result.stdout
+            else ""
+        )
+        text = raw_text
+        truncated = False
+        if len(text) > max_chars:
+            text = text[:max_chars]
+            truncated = True
+
+        info_result = subprocess.run(
+            ["/usr/bin/osascript", "-e", "clipboard info"],
             capture_output=True,
             text=True,
+            check=False,
         )
-        finished_at = now_iso()
-        duration = duration_ms(started_perf)
+        raw_info = (info_result.stdout or "").strip()
+        mime_types: list[str] = []
+        if raw_text:
+            mime_types.append("text/plain")
+        for match in re.findall(r"«class ([^»]+)»|\"([^\"]+)\"", raw_info):
+            token = next((item for item in match if item), "")
+            mime_type = self._clipboard_token_to_mime(token)
+            if mime_type and mime_type not in mime_types:
+                mime_types.append(mime_type)
 
-        if result.returncode == 0 and request_path.exists():
-            data = request_path.read_bytes()
-            return {
-                "bytes_data": data,
-                "mime_type": guess_mime_type(request_path),
-                "original_bytes": original_bytes,
-                "request_bytes": len(data),
-                "duration_ms": duration,
-                "log": {
-                    "status": "processed",
-                    "enabled": True,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "duration_ms": duration,
-                    "original_path": str(image_path),
-                    "original_bytes": original_bytes,
-                    "request_path": str(request_path),
-                    "request_bytes": len(data),
-                    "request_mime_type": guess_mime_type(request_path),
-                    "request_format": request_format,
-                    "request_image_max_dimension": max_dimension,
-                    "request_image_jpeg_quality": jpeg_quality
-                    if request_format in {"jpeg", "jpg"}
-                    else None,
-                    "command": command,
-                    "stdout": (result.stdout or "").strip(),
-                    "stderr": (result.stderr or "").strip(),
-                },
-            }
-
-        data = image_path.read_bytes()
         return {
-            "bytes_data": data,
-            "mime_type": guess_mime_type(image_path),
-            "original_bytes": original_bytes,
-            "request_bytes": len(data),
-            "duration_ms": duration,
-            "log": {
-                "status": "fallback_original",
-                "enabled": True,
-                "started_at": started_at,
-                "finished_at": finished_at,
-                "duration_ms": duration,
-                "original_path": str(image_path),
-                "original_bytes": original_bytes,
-                "request_path": str(image_path),
-                "request_bytes": len(data),
-                "request_mime_type": guess_mime_type(image_path),
-                "request_format": request_format,
-                "request_image_max_dimension": max_dimension,
-                "request_image_jpeg_quality": jpeg_quality
-                if request_format in {"jpeg", "jpg"}
-                else None,
-                "command": command,
-                "stdout": (result.stdout or "").strip(),
-                "stderr": (result.stderr or "").strip(),
-            },
+            "text": text,
+            "mime_types": mime_types,
+            "length": len(raw_text),
+            "truncated": truncated,
+            "captured_at": now_iso(),
+            "raw_clipboard_info": raw_info,
         }
 
-    def _build_generation_config(self) -> Any:
-        thinking_level = str(self.settings.get("thinking_level", "MINIMAL")).upper()
-        thinking_fields = getattr(types.ThinkingConfig, "model_fields", {})
-        thinking_kwargs: dict[str, Any] = {"include_thoughts": False}
-        if "thinking_level" in thinking_fields:
-            thinking_kwargs["thinking_level"] = thinking_level
-        elif thinking_level == "MINIMAL":
-            thinking_kwargs["thinking_budget"] = 0
-        thinking_config = types.ThinkingConfig(**thinking_kwargs)
-
-        return types.GenerateContentConfig(
-            system_instruction=self.prompt_text,
-            temperature=self.settings["temperature"],
-            max_output_tokens=self.settings["max_output_tokens"],
-            response_mime_type="text/plain",
-            media_resolution=self.settings["media_resolution"],
-            thinking_config=thinking_config,
+    def _capture_ocr(self, image_path: Path) -> dict[str, Any]:
+        if not self.settings.get("enable_ocr", True):
+            return {"status": "skipped"}
+        return recognize_text(
+            image_path,
+            uses_language_correction=bool(
+                self.settings.get("ocr_language_correction", True)
+            ),
         )
 
-    def _generate_completion(
+    def _write_fixture(
         self,
         *,
-        action: QueuedAction,
-        source_path: Path,
-        target_path: Path,
+        fixture_dir: Path,
+        source_state: dict[str, Any],
+        target_capture: dict[str, Any],
         target_metadata: dict[str, Any],
+        ax_focused: dict[str, Any],
+        nearby_ax: dict[str, Any],
+        chrome_ax_empty: bool,
+        caret: dict[str, Any],
+        geometry: dict[str, Any],
+        clipboard: dict[str, Any],
+        ocr: dict[str, Any],
     ) -> dict[str, Any]:
-        output_chunks: list[str] = []
-        first_chunk_perf: float | None = None
-        final_chunk_perf: float | None = None
-        first_chunk_at: str | None = None
-        final_chunk_at: str | None = None
-        usage_metadata: Any = None
-        final_chunk_payload: Any = None
+        source_path = fixture_dir / "source.png"
+        target_path = fixture_dir / "target.png"
+        shutil.copy2(SOURCE_IMAGE_PATH, source_path)
+        shutil.copy2(PENDING_TARGET_PATH, target_path)
 
-        parts, prep = self._build_user_parts(source_path, target_path, target_metadata)
-        contents = [types.Content(role="user", parts=parts)]
-        config = self._build_generation_config()
+        source_request = prepare_request_image(source_path, self.settings)
+        target_request = prepare_request_image(target_path, self.settings)
 
-        request_send_perf = time.perf_counter()
-        request_send_at = now_iso()
-        status = "ok"
-        error_message = None
-        chunk_count = 0
-
-        try:
-            stream = self.client.models.generate_content_stream(
-                model=self.settings["model"],
-                contents=contents,
-                config=config,
-            )
-            for chunk in stream:
-                chunk_count += 1
-                chunk_perf = time.perf_counter()
-                if first_chunk_perf is None:
-                    first_chunk_perf = chunk_perf
-                    first_chunk_at = now_iso()
-                final_chunk_perf = chunk_perf
-                final_chunk_at = now_iso()
-                if getattr(chunk, "text", None):
-                    text = chunk.text
-                    output_chunks.append(text)
-                    if self.settings.get("stream_to_terminal", True):
-                        print(text, end="", flush=True)
-                if getattr(chunk, "usage_metadata", None) is not None:
-                    usage_metadata = plain_data(chunk.usage_metadata)
-                final_chunk_payload = plain_data(chunk)
-        except Exception as exc:
-            status = "error"
-            error_message = str(exc)
-
-        finished_perf = time.perf_counter()
-        if final_chunk_perf is None:
-            final_chunk_perf = finished_perf
-
-        output_text = "".join(output_chunks).strip()
-        clipboard = {
-            "copied": False,
-            "started_at": None,
-            "finished_at": None,
-            "duration_ms": None,
+        capture_payload = {
+            "source": source_state.get("capture"),
+            "target": target_capture,
         }
-        if status == "ok" and self.settings.get("copy_to_clipboard", True):
-            clipboard_started_perf = time.perf_counter()
-            clipboard["started_at"] = now_iso()
-            self._copy_to_clipboard(output_text)
-            clipboard["finished_at"] = now_iso()
-            clipboard["duration_ms"] = duration_ms(clipboard_started_perf)
-            clipboard["copied"] = True
+        save_json_file(fixture_dir / "ax_focused.json", ax_focused)
+        save_json_file(fixture_dir / "ax_nearby.json", nearby_ax)
+        save_json_file(fixture_dir / "caret.json", caret)
+        save_json_file(fixture_dir / "geometry.json", geometry)
+        save_json_file(fixture_dir / "clipboard.json", clipboard)
+        save_json_file(fixture_dir / "ocr.json", ocr)
+        save_json_file(fixture_dir / "capture.json", capture_payload)
 
-        clipboard_ready_perf = time.perf_counter()
-        clipboard_ready_at = now_iso()
-        candidates_token_count = self._extract_usage_number(
-            usage_metadata, "candidates_token_count", "candidatesTokenCount"
-        )
-        stream_duration_ms = None
-        output_tps = None
-        if first_chunk_perf is not None and final_chunk_perf is not None:
-            stream_duration_ms = duration_ms(first_chunk_perf, final_chunk_perf)
-            if candidates_token_count and stream_duration_ms and stream_duration_ms > 0:
-                output_tps = round(
-                    float(candidates_token_count) / (stream_duration_ms / 1000.0), 2
-                )
-
-        run_log = {
-            "status": status,
-            "request": {
-                "model": self.settings["model"],
-                "request_send_at": request_send_at,
-                "prompt_chars": len(self.prompt_text),
-                **prep["inputs"],
-                "images": prep["images"],
+        full_metadata = target_metadata.get("_full", plain_data(target_metadata))
+        manifest = {
+            "schema_version": FIXTURE_SCHEMA_VERSION,
+            "fixture_id": fixture_dir.name,
+            "slug": fixture_dir.name.split("-", 3)[-1] if "-" in fixture_dir.name else fixture_dir.name,
+            "created_at": now_iso(),
+            "labels": [],
+            "tags": [],
+            "capture_settings": plain_data(self.settings),
+            "source": {
+                "captured_at": source_state.get("captured_at"),
+                "image_path": source_path.name,
+                "request_image_path": Path(source_request["log"]["request_path"]).name,
+                "bytes": source_path.stat().st_size,
+                "request_bytes": source_request["request_bytes"],
             },
-            "response": {
-                "usage_metadata": usage_metadata,
-                "chunk_count": chunk_count,
-                "response_metadata": final_chunk_payload,
-                "output_tps": output_tps,
-                "output_text": output_text,
-                "output_text_length": len(output_text),
+            "target": {
+                "captured_at": target_capture.get("finished_at"),
+                "image_path": target_path.name,
+                "request_image_path": Path(target_request["log"]["request_path"]).name,
+                "bytes": target_path.stat().st_size,
+                "request_bytes": target_request["request_bytes"],
             },
-            "clipboard": clipboard,
-            "timings": {
-                **prep["timings"],
-                "request_send_at": request_send_at,
-                "first_chunk_at": first_chunk_at,
-                "final_chunk_at": final_chunk_at,
-                "clipboard_ready_at": clipboard_ready_at,
-                "ttft_ms": duration_ms(request_send_perf, first_chunk_perf)
-                if first_chunk_perf is not None
-                else None,
-                "stream_duration_ms": stream_duration_ms,
-                "model_latency_ms": duration_ms(request_send_perf, final_chunk_perf),
-                "end_to_end_ms": duration_ms(action.hotkey_detected_perf, clipboard_ready_perf),
+            "app": {
+                "frontmost_app": full_metadata.get("frontmost_app"),
+                "frontmost_window_title": full_metadata.get("frontmost_window_title"),
+                "frontmost_pid": full_metadata.get("frontmost_pid"),
+                "workspace_frontmost_app": full_metadata.get("workspace_frontmost_app"),
+                "workspace_frontmost_window_title": full_metadata.get(
+                    "workspace_frontmost_window_title"
+                ),
+                "workspace_frontmost_pid": full_metadata.get("workspace_frontmost_pid"),
+                "focused_app": full_metadata.get("focused_app"),
+                "focused_app_pid": full_metadata.get("focused_app_pid"),
+                "focused_app_bundle_id": full_metadata.get("focused_app_bundle_id"),
             },
+            "warnings": full_metadata.get("warnings", []),
+            "target_metadata": full_metadata,
+            "ax": {
+                "chrome_ax_empty": chrome_ax_empty,
+                "focused_path": "ax_focused.json",
+                "nearby_path": "ax_nearby.json",
+            },
+            "caret": {"path": "caret.json"},
+            "geometry": {"path": "geometry.json"},
+            "clipboard": {"path": "clipboard.json"},
+            "ocr": {"path": "ocr.json"},
+            "capture": {"path": "capture.json"},
         }
-        if error_message:
-            run_log["errors"] = [error_message]
-        return {"run_log": run_log, "output_text": output_text}
-
-    def _extract_usage_number(self, payload: Any, *keys: str) -> Any:
-        if not isinstance(payload, dict):
-            return None
-        for key in keys:
-            if key in payload:
-                return payload[key]
-        return None
+        save_json_file(fixture_dir / "fixture.json", manifest)
+        return manifest
 
     def _copy_to_clipboard(self, text: str) -> None:
         subprocess.run(
@@ -998,6 +1814,7 @@ class ScratchpadApp:
 
 
 def main() -> int:
+    load_workspace_env()
     if not os.environ.get("GEMINI_API_KEY"):
         print("Set GEMINI_API_KEY before running this script.", file=sys.stderr)
         return 1
@@ -1005,6 +1822,7 @@ def main() -> int:
     app = ScratchpadApp()
 
     def handle_signal(signum, frame) -> None:
+        del signum, frame
         app.stop()
 
     signal.signal(signal.SIGINT, handle_signal)

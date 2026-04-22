@@ -1,0 +1,11 @@
+{
+  "name": "gpt-5-mini-openai-responses",
+  "provider": "openai_sdk",
+  "model": "gpt-5-mini",
+  "temperature": 0,
+  "max_output_tokens": 512,
+  "provider_options": {
+    "api_style": "responses",
+    "api_key_env": "OPENAI_API_KEY"
+  }
+}

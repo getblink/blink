@@ -1,54 +1,63 @@
 # Blink
 
-Blink is a clean-slate repository for building an AI assistant that understands workflow context across apps.
+Blink is an experiment in local, cross-app intelligent copy-paste. The current goal is narrow on purpose: capture what the user is looking at, infer what belongs in the focused field, and suggest the right paste with low correction effort.
 
-The initial focus is a single magical moment:
+## Quickstart
 
-- **Intelligent copy-paste** — capture information from what is on-screen and paste the right value into the currently focused field.
+1. Put `GEMINI_API_KEY=...` in `.env` at the repo root.
+2. Create the local virtualenv and install dependencies:
 
-## Product thesis
+```bash
+python3.11 -m venv scratchpad/.venv
+scratchpad/.venv/bin/pip install -r scratchpad/requirements.txt
+```
 
-Modern AI tools are siloed inside individual apps. Blink explores a local, cross-app context layer that can:
+3. Start the resident capture runner:
 
-- understand what the user is looking at,
-- carry that context between apps,
-- and help in the exact moment a task is being performed.
+```bash
+./capture
+```
 
-Autocomplete and intent may be explored later, but this repository is currently focused on validating intelligent copy-paste first.
+4. Press `ctrl+shift+c` on a source window, then `ctrl+shift+v` on a target field to record fixtures under `scratchpad/fixtures/`.
+5. Sweep saved fixtures against config variants:
 
-## Current stage
+```bash
+./sweep --fixtures 'scratchpad/fixtures/*' --configs 'scratchpad/eval_configs/*.json' --out scratchpad/sweeps/<name>
+```
 
-This project is in **experiments over builds** mode.
+6. Open `compare.html` and `summary.md` in the sweep output directory.
 
-Principles:
+In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/conductor/shared/blink/fixtures/`, so new workspaces inherit the full captured corpus automatically while archived sweeps still remain self-contained.
 
-- Manual before automation.
-- Learn before scaling.
-- One core workflow at a time.
-- Keep architecture simple until repeated patterns appear.
+Conductor hook receipts now make it easy to sanity-check execution: setup writes `.context/conductor/setup-receipt.json`, and archive appends `~/conductor/archive/blink/_archive_runs.jsonl` plus `archive-receipt.json` inside each preserved archive bundle.
 
-## Repository map
+## Current focus
 
-- `AGENTS.md` — guidance for coding agents working in this repo.
-- `docs/PROJECT_BRIEF.md` — high-level scope, goals, and non-goals.
-- `docs/EXPERIMENT_LOG.md` — running log of experiments, results, and follow-ups.
-- `docs/MANUAL_COPY_PASTE_PLAYBOOK.md` — practical protocol for screenshot framing, prompt structure, and manual evaluation.
-- `scratchpad/` — resident hotkey runner plus disposable scripts for profiling screenshot-to-completion experiments.
+- **In scope:** intelligent copy-paste
+- **Out of scope for now:** autocomplete, intent feeds, polished UI, background automation
+- **Working style:** experiments over builds, manual validation before productization
 
-## How to work in this repo
+## Documentation Tree
 
-1. Start with a concrete experiment hypothesis.
-2. Define how success/failure will be evaluated.
-3. Prefer minimal artifacts (scripts, notes, prompts) over broad infrastructure.
-4. Record outcomes in `docs/EXPERIMENT_LOG.md`.
-5. Only productize what has shown repeated signal.
+- [AGENTS.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/AGENTS.md:1): repo operating rules and documentation expectations for coding agents
+- [CLAUDE.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/CLAUDE.md:1): implementation-oriented repo guide, layout, and current script workflow
+- [docs/PROJECT_BRIEF.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/PROJECT_BRIEF.md:1): product scope, success criteria, constraints, and phase goals
+- [docs/MANUAL_COPY_PASTE_PLAYBOOK.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/MANUAL_COPY_PASTE_PLAYBOOK.md:1): manual trial framing, prompt structure, and evaluation protocol
+- [docs/EXPERIMENT_LOG.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/EXPERIMENT_LOG.md:1): durable experiment history and outcomes
+- [scratchpad/README.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/README.md:1): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
+- [scratchpad/eval_configs/README.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/eval_configs/README.md:1): config override format for offline sweeps
 
-## Immediate next step
+## Repository Map
 
-Run the first intelligent copy-paste experiments manually and log:
+- `docs/` contains the product brief, manual playbook, and experiment log
+- `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, and evaluation configs
+- `capture` is the repo-root wrapper for the resident capture runner
+- `sweep` is the repo-root wrapper for the offline fixture sweep
 
-- source type (doc/image/web page/PDF),
-- target field type,
-- extraction/mapping quality,
-- correction effort,
-- time saved vs manual entry.
+## Working Expectations
+
+1. Start with a clear experiment hypothesis.
+2. Prefer the fixture capture + sweep workflow over ad hoc prompt trials.
+3. Keep changes minimal, reversible, and easy to inspect.
+4. Record real experiment outcomes in `docs/EXPERIMENT_LOG.md`.
+5. Update docs whenever the workflow or folder structure changes.

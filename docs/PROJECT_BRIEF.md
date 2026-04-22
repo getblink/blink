@@ -1,5 +1,14 @@
 # Project Brief
 
+See also:
+
+- `README.md` for the repo entrypoint and quickstart
+- `AGENTS.md` for working rules and documentation expectations
+- `CLAUDE.md` for implementation-oriented repo guidance
+- `docs/MANUAL_COPY_PASTE_PLAYBOOK.md` for hands-on trial execution
+- `docs/EXPERIMENT_LOG.md` for actual experiment outcomes
+- `scratchpad/README.md` for the current fixture capture and sweep workflow
+
 ## Vision
 
 Blink explores a local, cross-app context system that helps users carry information between applications in real time.
@@ -46,3 +55,12 @@ These may be revisited only after strong evidence from copy-paste experiments.
 - Cloud-first, resume-anywhere workflow
 - Small, auditable commits
 - Structured experiment logging
+
+## Current operational path
+
+The current validation loop is:
+
+1. run `./capture`
+2. capture source and target fixtures with `ctrl+shift+c` and `ctrl+shift+v`
+3. compare results offline with `./sweep`
+4. record outcomes in `docs/EXPERIMENT_LOG.md`

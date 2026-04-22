@@ -2,6 +2,13 @@
 
 Use this file to keep a durable record of what was tried, what worked, and what did not.
 
+See also:
+
+- `README.md` for the repo entrypoint and quickstart
+- `docs/PROJECT_BRIEF.md` for scope and success criteria
+- `docs/MANUAL_COPY_PASTE_PLAYBOOK.md` for trial structure and evaluation framing
+- `scratchpad/README.md` for the current capture and sweep workflow
+
 ## Entry template
 
 ```md
@@ -137,3 +144,27 @@ Use this file to keep a durable record of what was tried, what worked, and what 
 - **Evidence / examples:** `scratchpad/run_gemini_trial.py`, `scratchpad/settings.json`, `scratchpad/README.md`.
 - **Decision:** Keep request-side compression on by default while profiling, since it is reversible and does not alter the original captured artifacts.
 - **Next step:** Re-run the same source/target scenario and compare `ttft_ms`, `model_latency_ms`, and `request.images.*.request_bytes` against the prior uncompressed run.
+
+
+## 2026-04-21 — Fixture-library capture and offline sweep harness
+
+- **Hypothesis:** Splitting live capture from offline evaluation will remove the biggest prompt-iteration bottleneck and make qualitative model comparisons much faster.
+- **Setup:** Added reusable fixture capture to the resident hotkey runner, richer AX/caret/geometry/clipboard/OCR collection, root wrapper scripts, shared Gemini request helpers, and a serial sweep CLI that writes `summary.md` plus `compare.html`.
+- **Input type(s):** Live source and target screenshots captured from the desktop, then replayed offline as fixture bundles.
+- **Target field type(s):** Focused text-entry targets across apps, especially form fields where AX metadata and visible OCR context both help.
+- **Outcome:** Tooling added; ready for the first real `fixtures x configs` qualitative sweep.
+- **Evidence / examples:** `capture`, `sweep`, `scratchpad/run_gemini_trial.py`, `scratchpad/gemini_runner.py`, `scratchpad/ocr.py`, `scratchpad/eval_sweep.py`, `scratchpad/eval_configs/`.
+- **Decision:** Use fixture capture as the default path for new trials and keep the sweep loop serial until actual rate limits or throughput needs justify parallelism.
+- **Next step:** Capture a small Chrome-heavy fixture set, run an initial sweep, and ask Claude to fill the judging rubric in the generated `summary.md`.
+
+
+## 2026-04-21 — Shared fixture pool rollout
+
+- **Hypothesis:** Moving fixtures into a shared pool across Conductor workspaces will reduce recapture churn without breaking sweep outputs or archive bundles.
+- **Setup:** Updated `.conductor/setup.sh`, `.conductor/archive.sh`, `.gitignore`, and docs; added `.conductor/migrate_fixtures.sh`; migrated the existing `kyiv` fixture corpus into `~/conductor/shared/blink/fixtures/`; ran a 9-fixture post-migration sweep with `flash-lite-low-minimal`; and dry-ran archive behavior for symlinked and forked fixture cases in isolated temp workspaces.
+- **Input type(s):** Existing screenshot fixture bundles already captured in `kyiv`.
+- **Target field type(s):** Mixed focused text fields captured during the 2026-04-21 fixture-library session.
+- **Outcome:** Migration succeeded cleanly for all 9 fixtures. `scratchpad/fixtures` now symlinks to the shared pool, `setup.sh` re-runs idempotently, the sweep still enumerates all fixtures through the symlink, and archive bundles remain self-contained for both symlinked and forked fixture layouts.
+- **Evidence / examples:** `.conductor/setup.sh`, `.conductor/archive.sh`, `.conductor/migrate_fixtures.sh`, `scratchpad/eval_sweep.py`, `scratchpad/sweeps/post-migration-relative/summary.md`, `scratchpad/sweeps/post-migration-relative/compare.html`.
+- **Decision:** Keep the shared-pool workflow as the default Conductor setup and preserve fork-on-demand only for schema-incompatible experiments.
+- **Next step:** Run one live `./capture` after the next manual session to confirm newly captured fixtures land directly in the shared pool under the normal hotkey flow.

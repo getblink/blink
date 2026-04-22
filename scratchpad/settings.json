@@ -15,10 +15,19 @@
   "request_image_max_dimension": 1600,
   "request_image_jpeg_quality": 80,
   "log_dir": "runs",
+  "fixture_mode": true,
+  "fixtures_dir": "fixtures",
+  "run_live_gemini_on_capture": true,
+  "enable_ocr": true,
+  "ocr_language_correction": true,
+  "nearby_ax_ancestor_depth": 3,
+  "nearby_ax_max_siblings": 12,
+  "nearby_ax_value_preview_chars": 120,
+  "clipboard_max_chars": 8000,
+  "caret_capture": true,
+  "notify_on_capture": true,
   "hotkeys": {
     "set_source": "ctrl+shift+c",
-    "run_target": "ctrl+shift+v",
-    "reset_source": "ctrl+option+r",
-    "quit": "ctrl+option+q"
+    "run_target": "ctrl+shift+v"
   }
 }

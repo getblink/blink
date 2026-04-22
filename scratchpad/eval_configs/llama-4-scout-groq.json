@@ -1,0 +1,12 @@
+{
+  "name": "llama-4-scout-groq",
+  "provider": "openai_sdk",
+  "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+  "temperature": 0,
+  "max_output_tokens": 512,
+  "provider_options": {
+    "api_style": "chat_completions",
+    "base_url": "https://api.groq.com/openai/v1",
+    "api_key_env": "GROQ_API_KEY"
+  }
+}

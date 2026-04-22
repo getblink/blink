@@ -2,6 +2,14 @@
 
 This repository is optimized for agent collaboration on early-stage product discovery.
 
+See also:
+
+- `README.md` for the repo quickstart and documentation tree
+- `CLAUDE.md` for the implementation-oriented repo guide and current script flow
+- `docs/PROJECT_BRIEF.md` for product scope and success criteria
+- `docs/EXPERIMENT_LOG.md` for the durable experiment history
+- `scratchpad/README.md` for the current capture and sweep workflow
+
 ## Mission
 
 Build toward a trustworthy, local-first cross-app assistant, starting with one validated capability:
@@ -24,6 +32,7 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Prefer simple scripts and notes for early validation.
 - Do not add background daemons, hotkeys, or polished UI until manual value is proven.
 - Favor additive iteration with clear experiment boundaries; do not delete prior learning artifacts unless explicitly requested.
+- When debugging Conductor hooks, check `.context/conductor/setup-receipt.json` and `~/conductor/archive/blink/_archive_runs.jsonl` before assuming setup or archive failed to run.
 
 ## Documentation requirements
 
@@ -40,6 +49,19 @@ If introducing any new folder/module, document purpose in either:
 
 - `README.md` (for top-level), or
 - a local README inside that folder.
+
+When workflow changes, update the root documentation layer as needed:
+
+- `README.md` for user-facing quickstart and navigation
+- `CLAUDE.md` for repo layout and implementation workflow
+- `AGENTS.md` for agent-facing guardrails
+
+Preferred documentation chain:
+
+1. `README.md` as the repo entrypoint
+2. `CLAUDE.md` and `AGENTS.md` as execution guidance
+3. `docs/` for product and experiment context
+4. local READMEs for folder-specific operational detail
 
 ## Priority order for upcoming work
 

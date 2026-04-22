@@ -1,0 +1,8 @@
+{
+  "name": "gemini-2.5-flash-lite-preview",
+  "provider": "gemini",
+  "model": "gemini-2.5-flash-lite",
+  "temperature": 0,
+  "media_resolution": "MEDIA_RESOLUTION_HIGH",
+  "thinking_level": null
+}

@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+.env
+.env.local
 scratchpad/.venv/
 scratchpad/runs/
 scratchpad/state/*
@@ -9,6 +11,8 @@ scratchpad/source/*
 !scratchpad/source/.gitkeep
 scratchpad/target/*
 !scratchpad/target/.gitkeep
+scratchpad/fixtures
+scratchpad/sweeps/
 scratchpad/last_output.txt
 scratchpad/last_run.json
 scratchpad/target_context.json

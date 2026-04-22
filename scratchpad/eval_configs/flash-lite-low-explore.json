@@ -1,0 +1,8 @@
+{
+  "name": "flash-lite-low-explore",
+  "model": "gemini-3.1-flash-lite-preview",
+  "temperature": 0.2,
+  "media_resolution": "MEDIA_RESOLUTION_LOW",
+  "thinking_level": "MINIMAL",
+  "max_output_tokens": 768
+}

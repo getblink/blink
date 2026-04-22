@@ -1,0 +1,15 @@
+{
+  "name": "kimi-k2.5-cloudflare",
+  "provider": "openai_sdk",
+  "model": "@cf/moonshotai/kimi-k2.5",
+  "temperature": 0,
+  "max_output_tokens": 512,
+  "provider_options": {
+    "api_style": "chat_completions",
+    "base_url": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+    "api_key_env": "CLOUDFLARE_API_TOKEN",
+    "url_substitutions": [
+      "CLOUDFLARE_ACCOUNT_ID"
+    ]
+  }
+}
