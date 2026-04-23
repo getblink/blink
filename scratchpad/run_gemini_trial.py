@@ -230,6 +230,57 @@ def ax_value_to_range(value: Any) -> dict[str, int] | None:
     }
 
 
+def normalize_for_paste(
+    model_text: str,
+    existing_text: str | None,
+    caret_pos: int | None,
+) -> str:
+    """Fix insertion-boundary artifacts before the model output hits the clipboard.
+
+    The model is instructed to emit only the continuation at the caret, but it
+    may still repeat the text already in the field (overlap) or emit/drop a
+    leading space that collides with what surrounds the caret. This runs after
+    generation and handles those cases deterministically so cmd+V lands cleanly.
+
+    caret_pos comes from AX (UTF-16 code units) and is consumed as a Python
+    str index (code points). They match for ASCII and BMP text — the content
+    these demos target — but can skew by one per astral-plane glyph.
+    """
+    model_text = model_text.strip("\n")
+    if not existing_text:
+        return model_text
+    before_caret = (
+        existing_text[:caret_pos] if caret_pos is not None else existing_text
+    )
+    for k in range(min(len(before_caret), len(model_text)), 0, -1):
+        if model_text.startswith(before_caret[-k:]):
+            model_text = model_text[k:]
+            break
+    if before_caret.endswith((" ", "\n", "\t")):
+        model_text = model_text.lstrip(" \t")
+    elif (
+        model_text
+        and before_caret
+        and before_caret[-1].isalnum()
+        and not model_text[0].isspace()
+    ):
+        model_text = " " + model_text
+    return model_text
+
+
+def _caret_pos_from_capture(caret: dict[str, Any] | None) -> int | None:
+    if not isinstance(caret, dict) or caret.get("status") != "ok":
+        return None
+    rng = caret.get("range")
+    if not isinstance(rng, dict):
+        return None
+    location = rng.get("location")
+    try:
+        return int(location) if location is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 TEXT_INPUT_ROLE_NAMES = {
     "AXTextField",
     "AXTextArea",
@@ -736,6 +787,7 @@ class ScratchpadApp:
                 source_path=fixture_dir / "source.png",
                 target_path=fixture_dir / "target.png",
                 target_metadata=fixture_manifest["target_metadata"],
+                caret=caret,
             )
         finally:
             if PENDING_TARGET_PATH.exists():
@@ -750,6 +802,7 @@ class ScratchpadApp:
         source_path: Path,
         target_path: Path,
         target_metadata: dict[str, Any],
+        caret: dict[str, Any] | None = None,
     ) -> None:
         generation = generate_completion(
             self.client,
@@ -769,6 +822,27 @@ class ScratchpadApp:
             run_log.setdefault("errors", []).extend(generation_log["errors"])
         output_text = generation["output_text"]
 
+        existing_text = (
+            target_metadata.get("focused_value")
+            if isinstance(target_metadata, dict)
+            else None
+        )
+        caret_pos = _caret_pos_from_capture(caret)
+        pasted_text = normalize_for_paste(
+            output_text,
+            existing_text if isinstance(existing_text, str) else None,
+            caret_pos,
+        )
+        run_log["paste"] = {
+            "text": pasted_text,
+            "model_text": output_text,
+            "normalized": pasted_text != output_text,
+            "caret_pos": caret_pos,
+            "existing_text_length": (
+                len(existing_text) if isinstance(existing_text, str) else None
+            ),
+        }
+
         clipboard = {
             "copied": False,
             "started_at": None,
@@ -778,7 +852,7 @@ class ScratchpadApp:
         if run_log["status"] == "ok" and self.settings.get("copy_to_clipboard", True):
             clipboard_started_perf = time.perf_counter()
             clipboard["started_at"] = now_iso()
-            self._copy_to_clipboard(output_text)
+            self._copy_to_clipboard(pasted_text)
             clipboard["finished_at"] = now_iso()
             clipboard["duration_ms"] = duration_ms(clipboard_started_perf)
             clipboard["copied"] = True
