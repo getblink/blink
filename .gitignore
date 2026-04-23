@@ -17,3 +17,6 @@ scratchpad/last_output.txt
 scratchpad/last_run.json
 scratchpad/target_context.json
 scratchpad/annotation_hints.json
+app/scripts/config.env
+app/build/
+app/python-dist/

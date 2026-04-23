@@ -31,6 +31,19 @@ In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/con
 
 Conductor hook receipts now make it easy to sanity-check execution: setup writes `.context/conductor/setup-receipt.json`, and archive appends `~/conductor/archive/blink/_archive_runs.jsonl` plus `archive-receipt.json` inside each preserved archive bundle.
 
+## Tester deployment channel (`app/`)
+
+The research loop above runs on the dev box. For non-developer testers, there's a second, independent channel: a signed, notarized Swift `.app` that does the same copy-paste end-to-end and emits bundles we can replay. Source in [`app/`](app/README.md); bundle schema shared across both loops in [`docs/ARTIFACT_SCHEMA.md`](docs/ARTIFACT_SCHEMA.md).
+
+Round-trip for a tester session:
+
+1. Tester runs `Blink.app` → bundles land in `~/Library/Application Support/Blink/runs/<ts>/`.
+2. Tester uses the menubar "Export last 10 runs…" action → `~/Desktop/Blink-runs-<ts>.zip`.
+3. Researcher imports: `python scratchpad/import_field_runs.py <zip>` → lands under `scratchpad/field_runs/<fixture_id>/`.
+4. Replay via sweep: `./sweep --fixtures 'scratchpad/field_runs/*' --configs 'scratchpad/eval_configs/*.json' --out scratchpad/sweeps/<name>`.
+
+No runtime coupling between `app/` and `scratchpad/`: production Python is forked from scratchpad at a known SHA (see the header of `app/python/gemini_runner.py`). Resyncing is a deliberate commit.
+
 ## Current focus
 
 - **In scope:** intelligent copy-paste
@@ -39,18 +52,21 @@ Conductor hook receipts now make it easy to sanity-check execution: setup writes
 
 ## Documentation Tree
 
-- [AGENTS.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/AGENTS.md:1): repo operating rules and documentation expectations for coding agents
-- [CLAUDE.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/CLAUDE.md:1): implementation-oriented repo guide, layout, and current script workflow
-- [docs/PROJECT_BRIEF.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/PROJECT_BRIEF.md:1): product scope, success criteria, constraints, and phase goals
-- [docs/MANUAL_COPY_PASTE_PLAYBOOK.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/MANUAL_COPY_PASTE_PLAYBOOK.md:1): manual trial framing, prompt structure, and evaluation protocol
-- [docs/EXPERIMENT_LOG.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/docs/EXPERIMENT_LOG.md:1): durable experiment history and outcomes
-- [scratchpad/README.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/README.md:1): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
-- [scratchpad/eval_configs/README.md](/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/eval_configs/README.md:1): config override format for offline sweeps
+- [AGENTS.md](AGENTS.md): repo operating rules and documentation expectations for coding agents
+- [CLAUDE.md](CLAUDE.md): implementation-oriented repo guide, layout, and current script workflow
+- [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md): product scope, success criteria, constraints, and phase goals
+- [docs/ARTIFACT_SCHEMA.md](docs/ARTIFACT_SCHEMA.md): versioned bundle contract shared by research and tester loops
+- [docs/MANUAL_COPY_PASTE_PLAYBOOK.md](docs/MANUAL_COPY_PASTE_PLAYBOOK.md): manual trial framing, prompt structure, and evaluation protocol
+- [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md): durable experiment history and outcomes
+- [scratchpad/README.md](scratchpad/README.md): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
+- [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
+- [app/README.md](app/README.md): tester-deployment channel (Swift app + bundled Python)
 
 ## Repository Map
 
-- `docs/` contains the product brief, manual playbook, and experiment log
-- `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, and evaluation configs
+- `docs/` contains the product brief, artifact schema, manual playbook, and experiment log
+- `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, evaluation configs, and the `field_runs/` + `import_field_runs.py` bridge from the tester app
+- `app/` contains the signed/notarized Swift `.app` scaffolding, production Python (`app/python/`), resources, build scripts, and the XcodeGen spec
 - `capture` is the repo-root wrapper for the resident capture runner
 - `sweep` is the repo-root wrapper for the offline fixture sweep
 

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BlinkProxyToken</key>
+	<string></string>
+	<key>BlinkProxyURL</key>
+	<string></string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Blink</string>
+	<key>CFBundleExecutable</key>
+	<string>Blink</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.blink.tester.Blink</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Blink</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Blink uses accessibility events to read the focused field and paste text.</string>
+	<key>NSInputMonitoringUsageDescription</key>
+	<string>Blink listens for the source/target hotkeys you configure.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Blink captures the window you target to understand which field to fill.</string>
+</dict>
+</plist>
