@@ -168,3 +168,15 @@ See also:
 - **Evidence / examples:** `.conductor/setup.sh`, `.conductor/archive.sh`, `.conductor/migrate_fixtures.sh`, `scratchpad/eval_sweep.py`, `scratchpad/sweeps/post-migration-relative/summary.md`, `scratchpad/sweeps/post-migration-relative/compare.html`.
 - **Decision:** Keep the shared-pool workflow as the default Conductor setup and preserve fork-on-demand only for schema-incompatible experiments.
 - **Next step:** Run one live `./capture` after the next manual session to confirm newly captured fixtures land directly in the shared pool under the normal hotkey flow.
+
+
+## 2026-04-22 — Swift tester-app channel: Phases 0/1/4 gates
+
+- **Hypothesis:** A second, independent deployment loop (signed Swift `.app` → bundled Python → exportable artifact bundles) can coexist with the dev research loop if bridged by a single versioned bundle schema, without touching `./capture` / `./sweep`.
+- **Setup:** Implemented per `.context/attachments/plan.md` v3. Phase 0 added `docs/ARTIFACT_SCHEMA.md` (schema v1, field-by-field) and `scratchpad/field_runs/`. Phase 1 forked `app/python/gemini_runner.py` from `scratchpad/gemini_runner.py@192d8c5` and added `app/python/run_once.py`, a CLI emitting `fixture.json` + `source.png` + `target.png` + `run.json` + `output.txt` in schema-v1 shape. Phase 4 added `scratchpad/import_field_runs.py` for zip/dir import into `scratchpad/field_runs/`. Phases 2/3/5/6 scaffolded (Swift sources, XcodeGen spec, scripts) but not yet exercised end-to-end.
+- **Input type(s):** Existing fixture bundle `20260421-034447-726-conductor-unknown-role` used as a source/target pair for the gate runs.
+- **Target field type(s):** Schema-contract validation, not a real copy-paste trial.
+- **Outcome:** Phase 0 gate — `./sweep` accepts `scratchpad/field_runs/*` as a fixture glob unchanged. Phase 1 gate — `run_once.py --skip-gemini` emits a v1 bundle to `/tmp/blink-phase1/<ts>/` that `./sweep` replays (status=ok, first chunk returned). Phase 4 gate — round-tripped: run_once → zip → `import_field_runs.py <zip>` → `./sweep --fixtures 'scratchpad/field_runs/*'` → `compare.html`/`summary.md` rendered. Phase 2 gate (live dogfood in Xcode) and Phase 6 gate (notarized external-tester run) still pending; both require build infrastructure that isn't wired up yet.
+- **Evidence / examples:** `docs/ARTIFACT_SCHEMA.md`, `app/README.md`, `app/python/run_once.py`, `app/python/gemini_runner.py`, `scratchpad/import_field_runs.py`, `app/Blink/*.swift` (typechecks via `swiftc -typecheck` against the macOS 14 SDK).
+- **Decision:** Land the scaffolded Swift/Xcode/sign/notarize paths so a follow-up session can run the remaining gates without re-planning. Keep the research loop untouched — no changes to `./capture`, `./sweep`, or any file outside `app/`, `docs/ARTIFACT_SCHEMA.md`, `scratchpad/field_runs/`, `scratchpad/import_field_runs.py`.
+- **Next step:** Install XcodeGen locally, run `app/scripts/fetch_python.sh` → `app/scripts/build.sh`, exercise the Phase 2 dogfood gate on the dev box (hotkey → capture → paste → bundle), then thread the Phase 6 sign/notarize/DMG chain through.
