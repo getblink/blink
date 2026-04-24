@@ -7,7 +7,9 @@ See also:
 - `README.md` for the repo-level quickstart and documentation tree
 - `AGENTS.md` for operating principles that apply to all coding agents
 - `docs/PROJECT_BRIEF.md` for product scope and success criteria
+- `docs/ARTIFACT_SCHEMA.md` for the versioned bundle contract shared across the research and tester-deployment loops
 - `scratchpad/README.md` for the current capture and sweep workflow
+- `app/README.md` for the Swift tester-deployment channel (`Blink.app` + bundled Python)
 
 ## What is Blink
 
@@ -28,21 +30,28 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `PROJECT_BRIEF.md` — product scope, constraints, and success criteria
   - `MANUAL_COPY_PASTE_PLAYBOOK.md` — manual evaluation protocol
   - `EXPERIMENT_LOG.md` — durable record of experiments and outcomes
+  - `ARTIFACT_SCHEMA.md` — versioned fixture/run bundle contract shared by the research and tester-deployment loops
+  - `DEMO_FIXTURE_PLAN.md` — capture checklist for the one-source / many-targets demo portfolio
 - `capture` — repo-root wrapper for the resident hotkey runner
 - `sweep` — repo-root wrapper for the offline fixture sweep
 - `scratchpad/`
   - `README.md` — scratchpad-specific workflow and artifact layout
-  - `run_gemini_trial.py` — primary resident capture runner
+  - `run_gemini_trial.py` — primary resident capture runner; also owns `normalize_for_paste()` for clipboard-side post-processing
   - `gemini_runner.py` — shared Gemini request-building and generation helpers
   - `ocr.py` — Vision OCR wrapper used during fixture capture
   - `eval_sweep.py` — offline fixture x config sweep runner
   - `env_loader.py` — loads `.env` and `.env.local` from repo root
   - `eval_configs/` — small JSON config variants for sweeps
+  - `providers/` — sweep-only provider adapters (Gemini + OpenAI-compatible); the live runner stays Gemini-only
   - `hotkey.py` — macOS Quartz-based global hotkey listener used by the runner
   - `make_trial.py` — optional standalone packet generator kept for older/manual flows
   - `prompt.txt` — current base prompt template for the clipboard assistant
+  - `import_field_runs.py` — ingests tester-exported zip/dir bundles from `Blink.app` into `field_runs/`
+  - `field_runs/` — landing zone for imported tester bundles; replayable by `./sweep` like any fixture
+  - `tests/` — unit tests (e.g. `test_normalize_for_paste.py`); run with `scratchpad/.venv/bin/python -m unittest discover scratchpad/tests`
   - `fixtures` — symlink to `~/conductor/shared/blink/fixtures/` in the default shared-pool workflow, or a real directory in deliberately forked workspaces
   - `.venv/` — Python 3.11 virtualenv (gitignored)
+- `app/` — Swift tester-deployment channel (`Blink.app`) paired with a forked production Python runtime in `app/python/` and a canonical local installer at `app/scripts/install_local_app.sh`; see `app/README.md` and the bundle contract in `docs/ARTIFACT_SCHEMA.md`. No runtime coupling with `scratchpad/` — `app/python/gemini_runner.py` is a deliberate fork at a pinned SHA.
 
 ## Development setup
 
@@ -86,6 +95,8 @@ To compare saved fixtures offline:
 Open `compare.html` and `summary.md` in the output directory to review the sweep.
 
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
+
+Tester-deployment bundles (the `app/` channel) are produced by `app/python/run_once.py`, either spawned from `Blink.app` or invoked directly. It emits schema-v1 bundles (`fixture.json` + `source.png` + `target.png` + `run.json` + `output.txt`, plus `target_metadata.json` and `settings.json`) that `./sweep` replays unchanged. Tester zips exported from `Blink.app` land under `scratchpad/field_runs/` via `python scratchpad/import_field_runs.py <zip-or-dir>`.
 
 For Blink.app local testing or profiling, prefer the canonical installer:
 

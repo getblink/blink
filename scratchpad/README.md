@@ -6,7 +6,10 @@ See also:
 - `CLAUDE.md` for the current repo layout and implementation guidance
 - `docs/PROJECT_BRIEF.md` for scope and success criteria
 - `docs/EXPERIMENT_LOG.md` for recording experiment outcomes
+- `docs/ARTIFACT_SCHEMA.md` for the versioned fixture/run bundle contract
+- `docs/DEMO_FIXTURE_PLAN.md` for the demo-portfolio capture checklist
 - `scratchpad/eval_configs/README.md` for sweep config file conventions
+- `scratchpad/providers/README.md` for the sweep-only provider adapters
 
 This folder is for fast, disposable experiment work.
 
@@ -195,6 +198,30 @@ Each run folder contains:
 - `trial.md` - human-readable packet
 - `preview.html` - local side-by-side viewer for sources, targets, and prompt
 - copied source/target image assets
+
+## Field runs from the tester app
+
+Bundles exported from `Blink.app` (the tester-deployment channel in `app/`) land here via:
+
+```bash
+python scratchpad/import_field_runs.py ~/Desktop/Blink-runs-<ts>.zip
+```
+
+Imported bundles live under `scratchpad/field_runs/<fixture_id>/` and replay through the same sweep path as research fixtures:
+
+```bash
+./sweep --fixtures 'scratchpad/field_runs/*' --configs 'scratchpad/eval_configs/*.json' --out scratchpad/sweeps/<name>
+```
+
+See `docs/ARTIFACT_SCHEMA.md` for the shared v1 bundle contract.
+
+## Tests
+
+Unit tests for scratchpad helpers (currently the clipboard `normalize_for_paste()` boundary post-processing) live under `scratchpad/tests/`. Run them with:
+
+```bash
+scratchpad/.venv/bin/python -m unittest discover scratchpad/tests
+```
 
 ## Archived experiment artifacts
 
