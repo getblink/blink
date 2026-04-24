@@ -8,6 +8,7 @@ See also:
 - `AGENTS.md` for operating principles that apply to all coding agents
 - `docs/PROJECT_BRIEF.md` for product scope and success criteria
 - `docs/ARTIFACT_SCHEMA.md` for the versioned bundle contract shared across the research and tester-deployment loops
+- `docs/DOGFOOD_PLAYBOOK.md` for the "clean build + clean permissions + capture everything" procedure when reinstalling `Blink.app` for a dogfood session
 - `scratchpad/README.md` for the current capture and sweep workflow
 - `app/README.md` for the Swift tester-deployment channel (`Blink.app` + bundled Python)
 
@@ -32,6 +33,7 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `EXPERIMENT_LOG.md` — durable record of experiments and outcomes
   - `ARTIFACT_SCHEMA.md` — versioned fixture/run bundle contract shared by the research and tester-deployment loops
   - `DEMO_FIXTURE_PLAN.md` — capture checklist for the one-source / many-targets demo portfolio
+  - `DOGFOOD_PLAYBOOK.md` — clean-build + TCC reset + artifact-capture procedure for `Blink.app` dogfood sessions
 - `capture` — repo-root wrapper for the resident hotkey runner
 - `sweep` — repo-root wrapper for the offline fixture sweep
 - `scratchpad/`
@@ -109,6 +111,10 @@ Release app, installs it to `~/Applications/Blink.app`, and moves duplicate
 Blink bundles from `DerivedData` / `app/build` into `.context/disabled-apps/`
 so Spotlight and TCC do not get confused by multiple local installs. Pass
 `--reset-tcc` if you want a clean permissions prompt on the next launch.
+
+When the user asks for a "clean build" or a Blink.app dogfood reinstall,
+follow `docs/DOGFOOD_PLAYBOOK.md` — it covers the one-command install, TCC
+reset, verification, and where fixtures / profiling / debug logs land.
 
 ## Key conventions
 

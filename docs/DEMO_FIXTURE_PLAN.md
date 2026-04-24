@@ -7,6 +7,8 @@ changes the meaning of the clipboard, not that autofill exists.
 
 See also:
 
+- `README.md` — repo entrypoint and quickstart
+- `CLAUDE.md` — repo layout and implementation guide
 - `docs/MANUAL_COPY_PASTE_PLAYBOOK.md` — what a good source/target screenshot
   should contain
 - `docs/EXPERIMENT_LOG.md` — log each captured demo's sweep results here

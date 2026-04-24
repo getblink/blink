@@ -1,5 +1,13 @@
 # Blink Artifact Schema v1
 
+See also:
+
+- `README.md` for the repo entrypoint and quickstart
+- `CLAUDE.md` for the implementation-oriented repo guide
+- `scratchpad/README.md` for how the research loop emits v1 bundles
+- `app/README.md` for how the tester-deployment loop emits v1 bundles
+- `docs/DOGFOOD_PLAYBOOK.md` for the clean-build procedure that exercises the tester-loop emitter end-to-end
+
 The versioned contract that bridges Blink's two independent loops:
 
 - **Research loop** — `./capture` (scratchpad runtime) writes fixtures under `scratchpad/fixtures/<ts-slug>/` and runs under `scratchpad/runs/<ts>/`.

@@ -33,7 +33,7 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Do not add background daemons, hotkeys, or polished UI until manual value is proven.
 - Favor additive iteration with clear experiment boundaries; do not delete prior learning artifacts unless explicitly requested.
 - When debugging Conductor hooks, check `.context/conductor/setup-receipt.json` and `~/conductor/archive/blink/_archive_runs.jsonl` before assuming setup or archive failed to run.
-- When validating `app/` locally, use `bash app/scripts/install_local_app.sh` and launch only `~/Applications/Blink.app`; do not run Blink from `DerivedData` or `app/build`, since macOS may treat those as separate installs for Spotlight/TCC.
+- When validating `app/` locally, use `bash app/scripts/install_local_app.sh` and launch only `~/Applications/Blink.app`; do not run Blink from `DerivedData` or `app/build`, since macOS may treat those as separate installs for Spotlight/TCC. For a full clean-build + TCC-reset dogfood session, follow `docs/DOGFOOD_PLAYBOOK.md`.
 
 ## Documentation requirements
 
