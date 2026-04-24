@@ -203,6 +203,30 @@ the same hand-authored packet target. The comparison tool accepts either
 JSON packets (`source_packet.json`) or OCR-style text packets
 (`source_packet.txt`).
 
+For target-side latency experiments on top of cached source packets, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_target_context.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/target-context-{auto-timestamp}
+```
+
+That benchmark reuses the OCR-style source packet, then compares four
+target-side modes:
+
+- source packet + full target image
+- source packet + local target OCR packet
+- source packet + focused target crop
+- source packet + OCR packet with fallback to the full target image
+
+Each fixture directory includes the generated `target_ocr_packet.txt`,
+`target_ocr_packet.build.json`, `target_crop.build.json`, and, when the
+crop succeeds, `target.focused_crop.png`. The aggregate `summary.md`
+reports target-only latency, fallback counts, and amortized request-path
+estimates for repeated pastes from the same source packet.
+
 ## What `run_gemini_trial.py` profiles
 
 - queue delay between hotkey and work starting
