@@ -80,12 +80,14 @@ fixtures, profiling timings, and debug logs land per trial.
 - [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
 - [scratchpad/providers/README.md](scratchpad/providers/README.md): sweep-only provider adapters (Gemini + OpenAI-compatible)
 - [app/README.md](app/README.md): tester-deployment channel (Swift app + bundled Python)
+- [site/README.md](site/README.md): marketing landing page (Astro, static, Cloudflare Pages)
 
 ## Repository Map
 
 - `docs/` contains the product brief, artifact schema, manual playbook, and experiment log
 - `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, evaluation configs, and the `field_runs/` + `import_field_runs.py` bridge from the tester app
 - `app/` contains the signed/notarized Swift `.app` scaffolding, production Python (`app/python/`), resources, build scripts, and the XcodeGen spec
+- `site/` is the standalone marketing landing page (Astro, static, deployed to Cloudflare Pages)
 - `capture` is the repo-root wrapper for the resident capture runner
 - `sweep` is the repo-root wrapper for the offline fixture sweep
 
