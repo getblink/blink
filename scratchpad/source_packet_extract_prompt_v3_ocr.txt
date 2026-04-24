@@ -1,0 +1,46 @@
+You are preparing cached source context for a later copy-paste action.
+
+Analyze SOURCE_IMAGE only.
+
+Output plain text only. Do not output JSON.
+
+Use exactly these sections in exactly this order:
+
+SOURCE_KIND: <terminal_log|conductor_chat|google_doc|note_with_marketplace_listing|marketplace_listing|web_form|unknown>
+SCENE: <1-2 concise sentences describing the screenshot and the reusable content>
+EXACT_TEXT:
+- <exact visible short string>
+- <exact visible short string>
+TEXT_BLOCKS:
+- <exact or near-exact visible paragraph, message, or log span>
+- <exact or near-exact visible paragraph, message, or log span>
+LAYOUT_HINTS:
+- <very short note about grouping, labels, or where the important text appears>
+LIMITS:
+- <cropped, hidden, or ambiguous details that matter later; write "- none visible" if none>
+COMPLETENESS: <sufficient|needs_source_image>
+
+Priority:
+1. Preserve the exact visible text that a later paste decision may need.
+2. Describe the image succinctly enough that the later model understands what kind of source it is.
+3. Avoid abstraction that drops words the later paste step may need verbatim.
+
+Rules:
+- Plain text only. No JSON. No markdown code fences.
+- Bias strongly toward OCR-like capture of exact visible text.
+- `EXACT_TEXT` should usually contain 6-12 short exact spans copied from the screenshot when legible.
+- `TEXT_BLOCKS` should contain 0-3 longer exact or near-exact visible passages if they matter.
+- Ignore app chrome unless it is itself the reusable content.
+- Do not include generic menus, browser chrome, tab bars, sidebars, cwd strings, toolbars, or window controls unless they are the main content.
+- Do not invent hidden or cropped content.
+- Keep `SCENE` short. Most of the useful information should live in `EXACT_TEXT` and `TEXT_BLOCKS`.
+
+Source-specific guidance:
+- `terminal_log`: capture exact commands, statuses, errors, fixture ids, NEEDS_REVIEW outputs, and hotkeys. Avoid over-weighting file paths unless they are clearly the main content.
+- `conductor_chat`: capture decisive instructions, bullet items, code identifiers, and visible recommendation text. Ignore workspace sidebar chrome.
+- `google_doc` or `web_form`: capture visible question labels and the visible answers beneath them.
+- `marketplace_listing` or `note_with_marketplace_listing`: capture the listing title, price, condition, location, pickup/shipping notes, and visible description text. Ignore surrounding app chrome and unrelated note text.
+
+COMPLETENESS:
+- Use `sufficient` only if the visible text likely contains enough exact content for later paste synthesis without reopening the source image.
+- Use `needs_source_image` if key text is cropped, hidden, ambiguous, or the visible view is only a partial slice of a longer document/listing that later targets could reasonably need.

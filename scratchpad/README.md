@@ -141,6 +141,68 @@ The rendered sweep outputs surface the three model timings that matter most for 
 - `ttft_ms`
 - `stream_duration_ms`
 
+For source-packet latency experiments, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --out scratchpad/sweeps/source-packet-{auto-timestamp}
+```
+
+That benchmark compares the current two-image request against a cached
+source-packet flow, writes per-fixture artifacts plus `benchmark.json`
+and `summary.md`, and reports amortized latency estimates for reuse
+counts such as 1, 3, and 5 target pastes per source capture.
+
+For prompt-variant runs, pass explicit prompt paths and, if the packet
+schema becomes more verbose, raise the packet response ceiling so the
+JSON does not truncate mid-object:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --extract-prompt-path scratchpad/source_packet_extract_prompt_v2.txt \
+  --target-prompt-path scratchpad/source_packet_target_prompt_v2.txt \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/source-packet-v2-{auto-timestamp}
+```
+
+For an OCR-biased plain-text packet that preserves exact visible spans
+instead of emitting JSON fields, switch the packet format to `text` and
+use the v3 OCR prompts:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --extract-prompt-path scratchpad/source_packet_extract_prompt_v3_ocr.txt \
+  --target-prompt-path scratchpad/source_packet_target_prompt_v3_ocr.txt \
+  --packet-format text \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/source-packet-v3-ocr-{auto-timestamp}
+```
+
+That variant writes `source_packet.txt` instead of `source_packet.json`
+and treats a literal `COMPLETENESS: needs_source_image` line as the
+packet's self-reported insufficiency signal.
+
+Human-authored gold packets for the current fixture corpus live in
+`scratchpad/gold_source_packets.json`. To compare a benchmark run's
+generated packets against that gold corpus, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/compare_source_packets.py \
+  --pred-dir scratchpad/sweeps/source-packet-20260423-204225
+```
+
+That writes `gold_packet_compare.json` and `gold_packet_compare.md`
+inside the benchmark directory so prompt revisions can be judged against
+the same hand-authored packet target. The comparison tool accepts either
+JSON packets (`source_packet.json`) or OCR-style text packets
+(`source_packet.txt`).
+
 ## What `run_gemini_trial.py` profiles
 
 - queue delay between hotkey and work starting
