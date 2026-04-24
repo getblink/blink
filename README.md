@@ -56,6 +56,10 @@ That script builds a self-contained Release app, installs it to
 TCC only see one local Blink install. Use `--reset-tcc` when you explicitly
 want a fresh permissions flow.
 
+See [`docs/DOGFOOD_PLAYBOOK.md`](docs/DOGFOOD_PLAYBOOK.md) for the full "clean
+build + clean permissions + capture everything" procedure, including where
+fixtures, profiling timings, and debug logs land per trial.
+
 ## Current focus
 
 - **In scope:** intelligent copy-paste
@@ -69,9 +73,12 @@ want a fresh permissions flow.
 - [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md): product scope, success criteria, constraints, and phase goals
 - [docs/ARTIFACT_SCHEMA.md](docs/ARTIFACT_SCHEMA.md): versioned bundle contract shared by research and tester loops
 - [docs/MANUAL_COPY_PASTE_PLAYBOOK.md](docs/MANUAL_COPY_PASTE_PLAYBOOK.md): manual trial framing, prompt structure, and evaluation protocol
+- [docs/DEMO_FIXTURE_PLAN.md](docs/DEMO_FIXTURE_PLAN.md): capture checklist for the one-source / many-targets demo portfolio
+- [docs/DOGFOOD_PLAYBOOK.md](docs/DOGFOOD_PLAYBOOK.md): clean-build + TCC reset + artifact-capture procedure for Blink.app dogfood sessions
 - [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md): durable experiment history and outcomes
 - [scratchpad/README.md](scratchpad/README.md): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
 - [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
+- [scratchpad/providers/README.md](scratchpad/providers/README.md): sweep-only provider adapters (Gemini + OpenAI-compatible)
 - [app/README.md](app/README.md): tester-deployment channel (Swift app + bundled Python)
 
 ## Repository Map

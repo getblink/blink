@@ -46,7 +46,6 @@ enum PythonRunner {
             "--target-meta", targetMetadataJSON.path,
             "--out-dir", outputParent.path,
             "--bundle-id", bundleId,
-            "--silent-stderr",
         ]
         if let prompt = prompt { args += ["--prompt", prompt.path] }
         if let settings = settings { args += ["--settings", settings.path] }
@@ -66,6 +65,8 @@ enum PythonRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let bundleDir = outputParent.appendingPathComponent(bundleId, isDirectory: true)
+
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try process.run()
@@ -77,6 +78,16 @@ enum PythonRunner {
             let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
             let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
             let stderrText = String(data: errData, encoding: .utf8) ?? ""
+            // Persist stderr alongside the v1 bundle when the bundle already
+            // exists (run_once.py creates it early). If Python died before
+            // getting that far, skip — don't leave a schema-incomplete stub
+            // directory that importers would reject.
+            var bundleIsDir: ObjCBool = false
+            if !errData.isEmpty,
+               FileManager.default.fileExists(atPath: bundleDir.path, isDirectory: &bundleIsDir),
+               bundleIsDir.boolValue {
+                try? errData.write(to: bundleDir.appendingPathComponent("stderr.log"))
+            }
             if process.terminationStatus != 0 {
                 completion(.failure(RunError.nonZeroExit(
                     status: process.terminationStatus, stderr: stderrText)))

@@ -155,6 +155,10 @@ That script:
 The goal is to keep Spotlight, LaunchServices, and TCC pointed at one stable
 local Blink install.
 
+For a full dogfood session — clean build, clean permissions, and guaranteed
+capture of fixtures / profiling timings / debug logs per trial — follow
+[`../docs/DOGFOOD_PLAYBOOK.md`](../docs/DOGFOOD_PLAYBOOK.md).
+
 ## Permissions
 
 First-launch `PermissionsWindow` walks the tester through three grants:
