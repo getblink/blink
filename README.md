@@ -44,6 +44,18 @@ Round-trip for a tester session:
 
 No runtime coupling between `app/` and `scratchpad/`: production Python is forked from scratchpad at a known SHA (see the header of `app/python/gemini_runner.py`). Resyncing is a deliberate commit.
 
+For local profiling / dogfood on the dev box, do **not** launch Blink out of
+`DerivedData` or `app/build` directly. Install one canonical copy instead:
+
+```bash
+bash app/scripts/install_local_app.sh
+```
+
+That script builds a self-contained Release app, installs it to
+`~/Applications/Blink.app`, and hides duplicate build products so Spotlight and
+TCC only see one local Blink install. Use `--reset-tcc` when you explicitly
+want a fresh permissions flow.
+
 ## Current focus
 
 - **In scope:** intelligent copy-paste
