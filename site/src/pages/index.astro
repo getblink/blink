@@ -42,6 +42,9 @@ const title = "Blink — instant recall across every AI thread";
         instant recall across every AI thread<br class="tagline__break" /> for
         multi‑agent power users
       </p>
+      <p class="more">
+        <a href="/story">learn more →</a>
+      </p>
     </main>
 
     <style>
@@ -230,6 +233,31 @@ const title = "Blink — instant recall across every AI thread";
 
       .tagline__break {
         display: none;
+      }
+
+      .more {
+        margin: 28px auto 0;
+      }
+
+      .more a {
+        color: rgba(245, 245, 247, 0.65);
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        padding: 6px 10px;
+        border-radius: 6px;
+        transition: color 160ms ease, background 160ms ease;
+      }
+
+      .more a:hover {
+        color: var(--fg);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .more a:focus-visible {
+        outline: 2px solid var(--fg);
+        outline-offset: 2px;
       }
 
       @media (max-width: 600px) {
