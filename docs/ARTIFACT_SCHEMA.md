@@ -30,13 +30,13 @@ Every bundle is a flat directory keyed by timestamp. For a bundle at `<bundle_di
 | `fixture.json` | yes | Sweep-replayable manifest. Primary contract. |
 | `source.png` | yes | Source screenshot (PNG). Referenced by `fixture.json.source.image_path`. |
 | `target.png` | yes | Target screenshot (PNG). Referenced by `fixture.json.target.image_path`. |
-| `output.txt` | yes | Generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. |
+| `output.txt` | yes | Raw generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. Paste-normalized text is recorded separately in `run.json.paste.text` when available. |
 | `run.json` | yes* | Live-trial request/response log. *Required for tester-loop bundles; optional for sweep-replay outputs because sweep writes its own run.json per cell.* |
 | `settings.json` | no | Snapshot of the capture settings used at trial time. Mirrors `fixture.json.capture_settings`. Tester loop writes this; research loop may skip. |
 | `target_metadata.json` | no | Raw, unshortened target metadata captured at trial time. Mirrors `fixture.json.target_metadata`. Present when the emitter captures a full AX tree. |
 | `source.request.jpg` | no | Preprocessed request image for source. Referenced by `fixture.json.source.request_image_path`. Research loop writes this; tester loop may skip. |
 | `target.request.jpg` | no | Preprocessed request image for target. Same as above. |
-| `ax_focused.json`, `ax_nearby.json`, `caret.json`, `geometry.json`, `clipboard.json`, `ocr.json`, `capture.json` | no | Research-loop diagnostic files. Tester loop may omit. Sweep does not read these. |
+| `ax_focused.json`, `ax_nearby.json`, `caret.json`, `geometry.json`, `clipboard.json`, `ocr.json`, `capture.json` | no | Research-loop diagnostic files. Tester loop may emit `caret.json` when AX selected-range capture succeeds. Sweep does not read these. |
 
 Unknown files are ignored by sweep. Emitters should never overwrite or rename the required files.
 
@@ -188,6 +188,13 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
     "output_tps": 42.7,
     "output_text": "…",
     "output_text_length": 123
+  },
+  "paste": {
+    "text": "…",                   // normalized text actually returned on stdout for paste
+    "model_text": "…",             // raw model output; mirrors response.output_text
+    "normalized": true,
+    "caret_pos": 12,               // optional
+    "existing_text_length": 34     // optional
   },
   "timings": {
     "request_build_ms": 12.3,

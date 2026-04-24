@@ -40,12 +40,14 @@ final class TrialCoordinator {
             status("capturing target…")
 
             let metadata: TargetMetadata
+            let caret: [String: Any]
             let targetCapture: ScreenCapture.Capture
             do {
                 // AX metadata FIRST — it reads the currently focused element,
                 // which must not change before we capture. SCScreenshotManager
                 // runs off-thread and doesn't affect focus.
                 metadata = TargetMetadataCapture.capture()
+                caret = TargetMetadataCapture.captureCaret()
                 targetCapture = try ScreenCapture.captureFrontmostWindowSync()
             } catch {
                 status("target capture failed: \(error.localizedDescription)")
@@ -63,6 +65,10 @@ final class TrialCoordinator {
                     metadata.asDictionary(),
                     to: tempDir.appendingPathComponent("target_metadata.json")
                 )
+                try ArtifactWriter.writeJSON(
+                    caret,
+                    to: tempDir.appendingPathComponent("caret.json")
+                )
             } catch {
                 try? FileManager.default.removeItem(at: tempDir)
                 status("artifact prep failed: \(error.localizedDescription)")
@@ -75,6 +81,7 @@ final class TrialCoordinator {
                 sourcePNG: tempDir.appendingPathComponent("source.png"),
                 targetPNG: tempDir.appendingPathComponent("target.png"),
                 targetMetadataJSON: tempDir.appendingPathComponent("target_metadata.json"),
+                caretJSON: tempDir.appendingPathComponent("caret.json"),
                 outputParent: Paths.runsDir,
                 bundleId: bundleId
             ) { [weak self] result in

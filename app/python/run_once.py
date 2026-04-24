@@ -48,17 +48,44 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 DEFAULT_PROMPT = (
     "You are a precise clipboard assistant.\n\n"
-    "Use SOURCE_IMAGE as the primary truth for content. "
-    "Use TARGET_IMAGE plus TARGET_METADATA_JSON to determine the current destination "
-    "field and any visible formatting constraints.\n\n"
+    "Use TARGET_IMAGE as the primary signal for the destination field - its "
+    "visible label, placeholder, surrounding text, formatting, and whether "
+    "text is already present. TARGET_METADATA_JSON is a supporting hint but "
+    "can be unreliable or sparse; treat the image as ground truth when they "
+    "disagree.\n\n"
+    "Use SOURCE_IMAGE as the truth for content.\n\n"
+    "Default: carry the source over as-is, formatted to fit the target field.\n\n"
+    "When the target's purpose is clear from the image or metadata, adapt:\n"
+    "- Title fields (calendar event, email subject)  -> terse, <=8 words\n"
+    "- Messaging apps (iMessage, Slack, Discord)     -> casual, conversational\n"
+    "- Structured notes (Notes, Bear, Obsidian)      -> preserve structure, light cleanup\n"
+    "- Typed form fields (phone, date, name)         -> match the field's apparent format\n"
+    "If unclear, fall back to carry-over.\n\n"
+    "Output only the text to be inserted at the caret. If the field is empty,\n"
+    "that's the full content. If text is already in the field (visible in\n"
+    "TARGET_IMAGE or in `focused_value`), output only the continuation - do\n"
+    "not repeat existing text. Whitespace at insertion boundaries is\n"
+    "normalized downstream, so don't worry about leading/trailing spaces.\n\n"
+    "Examples:\n\n"
+    "(1) Carry-over (default)\n"
+    'SOURCE: resume showing "John Smith · john@example.com · Software Engineer"\n'
+    'TARGET: job application "Full name" text field\n'
+    "OUTPUT: John Smith\n\n"
+    "(2) Title condensation\n"
+    'SOURCE: flight email "United UA1234 SFO -> JFK confirmed Tue Jun 3, 3:45 PM. Confirmation ABC123"\n'
+    "TARGET: Google Calendar event-title field\n"
+    "OUTPUT: SFO -> JFK · UA1234\n\n"
+    "(3) Casual tone shift (same source as #2)\n"
+    "TARGET: iMessage compose to a friend\n"
+    "OUTPUT: just booked UA1234 to JFK tue 3:45pm - confirmation ABC123\n\n"
+    "(4) Format inference\n"
+    'SOURCE: contact card "(415) 555-1234"\n'
+    'TARGET: CRM phone field with placeholder "415-555-1234"\n'
+    "OUTPUT: 415-555-1234\n\n"
     "Rules:\n"
-    "1) Prefer exact carry-over unless the field clearly calls for summarization or transformation.\n"
-    "2) Treat TARGET_METADATA_JSON as the strongest hint for which field the user means.\n"
-    "3) Use TARGET_IMAGE to validate the field context and any visible formatting constraints.\n"
-    "4) If existing field text is implied by TARGET_METADATA_JSON, return the exact text needed for that field state.\n"
-    "5) Return plain text only. No explanations.\n"
-    "6) If the correct result should be empty, return [[BLANK]].\n"
-    "7) If uncertain, return [[NEEDS_REVIEW: reason in <=12 words]]."
+    "- Return plain text only. No explanations.\n"
+    "- Empty result -> [[BLANK]].\n"
+    "- Uncertain -> [[NEEDS_REVIEW: <=12 word reason]]."
 )
 
 STUB_TARGET_METADATA: dict[str, Any] = {
@@ -86,6 +113,7 @@ STUB_TARGET_METADATA: dict[str, Any] = {
     "error_detail": None,
     "_full": {},
 }
+STUB_CARET: dict[str, Any] = {"status": "not_found"}
 
 
 def _eprint(message: str, *, silent: bool) -> None:
@@ -126,6 +154,45 @@ def _save_json(path: Path, payload: Any) -> None:
         json.dumps(plain_data(payload), indent=2, ensure_ascii=True) + "\n",
         encoding="utf-8",
     )
+
+
+def normalize_for_paste(
+    model_text: str,
+    existing_text: str | None,
+    caret_pos: int | None,
+) -> str:
+    """Fix insertion-boundary artifacts before the pasted text leaves Python."""
+    model_text = model_text.strip("\n")
+    if not existing_text:
+        return model_text
+    before_caret = existing_text[:caret_pos] if caret_pos is not None else existing_text
+    for k in range(min(len(before_caret), len(model_text)), 0, -1):
+        if model_text.startswith(before_caret[-k:]):
+            model_text = model_text[k:]
+            break
+    if before_caret.endswith((" ", "\n", "\t")):
+        model_text = model_text.lstrip(" \t")
+    elif (
+        model_text
+        and before_caret
+        and before_caret[-1].isalnum()
+        and not model_text[0].isspace()
+    ):
+        model_text = " " + model_text
+    return model_text
+
+
+def _caret_pos_from_capture(caret: dict[str, Any] | None) -> int | None:
+    if not isinstance(caret, dict) or caret.get("status") != "ok":
+        return None
+    rng = caret.get("range")
+    if not isinstance(rng, dict):
+        return None
+    location = rng.get("location")
+    try:
+        return int(location) if location is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_genai_client() -> Any:
@@ -173,6 +240,7 @@ def _fixture_manifest(
     target_captured_at: str | None,
     target_metadata: dict[str, Any],
     run_request: dict[str, Any] | None,
+    has_caret: bool,
 ) -> dict[str, Any]:
     full = target_metadata.get("_full") if isinstance(target_metadata.get("_full"), dict) else {}
     if not full:
@@ -232,6 +300,8 @@ def _fixture_manifest(
         "warnings": list(target_metadata.get("warnings") or []),
         "target_metadata": plain_data(target_metadata),
     }
+    if has_caret:
+        manifest["caret"] = {"path": "caret.json"}
     return manifest
 
 
@@ -240,6 +310,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--source", required=True, type=Path, help="Path to source PNG")
     parser.add_argument("--target", required=True, type=Path, help="Path to target PNG")
     parser.add_argument("--target-meta", type=Path, default=None, help="Path to JSON target metadata")
+    parser.add_argument("--caret", type=Path, default=None, help="Path to JSON caret metadata")
     parser.add_argument("--settings", type=Path, default=None, help="Path to JSON settings override")
     parser.add_argument("--prompt", type=Path, default=None, help="Path to prompt text file")
     parser.add_argument("--out-dir", required=True, type=Path, help="Parent dir; bundle lands at <out-dir>/<ts>/")
@@ -285,6 +356,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.target_meta
         else dict(STUB_TARGET_METADATA)
     )
+    caret = (
+        _load_json_or_default(args.caret.expanduser(), STUB_CARET)
+        if args.caret
+        else None
+    )
 
     out_root = args.out_dir.expanduser().resolve()
     out_root.mkdir(parents=True, exist_ok=True)
@@ -301,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
     shutil.copy2(source_src, source_dst)
     shutil.copy2(target_src, target_dst)
     _save_json(bundle_dir / "target_metadata.json", target_metadata)
+    if caret is not None:
+        _save_json(bundle_dir / "caret.json", caret)
     _save_json(bundle_dir / "settings.json", settings)
 
     run_log: dict[str, Any] = {
@@ -319,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     output_text = ""
+    pasted_text = ""
     trial_start_perf = time.perf_counter()
 
     if args.skip_gemini:
@@ -350,6 +429,26 @@ def main(argv: list[str] | None = None) -> int:
             run_log["errors"].append(str(exc))
             _eprint(f"[blink] gemini error: {exc}", silent=args.silent_stderr)
 
+    existing_text = (
+        target_metadata.get("focused_value")
+        if isinstance(target_metadata, dict)
+        else None
+    )
+    caret_pos = _caret_pos_from_capture(caret)
+    pasted_text = normalize_for_paste(
+        output_text,
+        existing_text if isinstance(existing_text, str) else None,
+        caret_pos,
+    )
+    run_log["paste"] = {
+        "text": pasted_text,
+        "model_text": output_text,
+        "normalized": pasted_text != output_text,
+        "caret_pos": caret_pos,
+        "existing_text_length": (
+            len(existing_text) if isinstance(existing_text, str) else None
+        ),
+    }
     run_log.setdefault("timings", {})["end_to_end_ms"] = duration_ms(trial_start_perf)
 
     fixture_manifest = _fixture_manifest(
@@ -363,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         target_captured_at=target_captured_at,
         target_metadata=target_metadata,
         run_request=run_log.get("request"),
+        has_caret=caret is not None,
     )
 
     _save_json(bundle_dir / "fixture.json", fixture_manifest)
@@ -372,8 +472,8 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
     )
 
-    _eprint(f"[blink] status={run_log['status']} chars={len(output_text)}", silent=args.silent_stderr)
-    sys.stdout.write(output_text)
+    _eprint(f"[blink] status={run_log['status']} chars={len(pasted_text)}", silent=args.silent_stderr)
+    sys.stdout.write(pasted_text)
     sys.stdout.flush()
     return 0 if run_log["status"] in {"ok", "skipped"} else 1
 

@@ -89,18 +89,21 @@ python3 app/python/run_once.py \
   --source /path/to/source.png \
   --target /path/to/target.png \
   --target-meta /path/to/target_metadata.json \
+  --caret /path/to/caret.json \
   --settings /path/to/settings.json \
   --prompt /path/to/prompt.txt \
   --out-dir /tmp/blink-runs
 ```
 
 Writes `<out-dir>/<ts>/` containing `fixture.json`, `source.png`, `target.png`,
-`run.json`, `output.txt`, `target_metadata.json`, `settings.json`. Sweep reads the
+`run.json`, `output.txt`, `target_metadata.json`, `settings.json`, and
+`caret.json` when the caller captured AX selected-range state. Sweep reads the
 bundle via `./sweep --fixtures '/tmp/blink-runs/*' --configs …`.
 
-stdout is the generated text (for Swift to capture and paste). stderr carries
-progress logs. `--skip-gemini` emits the bundle without a live API call — useful
-for bundle-shape verification.
+`output.txt` preserves the raw model output for sweep parity. stdout carries the
+paste-normalized text (for Swift to capture and paste). stderr carries progress
+logs. `--skip-gemini` emits the bundle without a live API call - useful for
+bundle-shape verification.
 
 Requires `GEMINI_API_KEY` in the environment. For proxy/bearer auth (Phase 5),
 also set `BLINK_PROXY_URL` and optionally `BLINK_PROXY_TOKEN`; both are

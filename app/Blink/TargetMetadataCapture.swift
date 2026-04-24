@@ -159,6 +159,77 @@ enum TargetMetadataCapture {
         return metadata
     }
 
+    static func captureCaret() -> [String: Any] {
+        guard AXIsProcessTrusted() else {
+            return [
+                "status": "permission_denied",
+                "error": "accessibility_not_trusted",
+            ]
+        }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        let focusedError = AXUIElementCopyAttributeValue(
+            systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef
+        )
+        guard focusedError == .success, let rawFocused = focusedRef else {
+            return [
+                "status": "not_found",
+                "error": axErrorCode(focusedError),
+            ]
+        }
+        let focused = rawFocused as! AXUIElement
+
+        var selectedRangeRef: CFTypeRef?
+        let selectedRangeError = AXUIElementCopyAttributeValue(
+            focused, kAXSelectedTextRangeAttribute as CFString, &selectedRangeRef
+        )
+        if selectedRangeError == .success,
+           let selectedRangeRef,
+           let range = selectedRange(selectedRangeRef) {
+            var payload: [String: Any] = [
+                "status": "ok",
+                "range": [
+                    "location": range.location,
+                    "length": range.length,
+                ],
+            ]
+            var boundsRef: CFTypeRef?
+            let boundsError = AXUIElementCopyParameterizedAttributeValue(
+                focused,
+                kAXBoundsForRangeParameterizedAttribute as CFString,
+                selectedRangeRef,
+                &boundsRef
+            )
+            if boundsError == .success, let boundsRef, let bounds = rectPayload(boundsRef) {
+                payload["bounds"] = bounds
+            } else {
+                payload["bounds"] = NSNull()
+                payload["bounds_status"] = axErrorCode(boundsError)
+            }
+            return payload
+        }
+
+        var lineRef: CFTypeRef?
+        let lineError = AXUIElementCopyAttributeValue(
+            focused, kAXInsertionPointLineNumberAttribute as CFString, &lineRef
+        )
+        if lineError == .success, let lineNumber = lineRef as? NSNumber {
+            return [
+                "status": "line_only",
+                "line_number": lineNumber.intValue,
+            ]
+        }
+
+        if selectedRangeError == .attributeUnsupported || selectedRangeError == .noValue {
+            return ["status": "unsupported"]
+        }
+        return [
+            "status": "error",
+            "error": axErrorCode(selectedRangeError),
+        ]
+    }
+
     // MARK: - AX helpers
 
     private static func stringAttr(_ element: AXUIElement, _ name: CFString) -> String? {
@@ -181,6 +252,29 @@ enum TargetMetadataCapture {
         guard AXValueGetValue(pv, .cgPoint, &origin),
               AXValueGetValue(sv, .cgSize, &size) else { return nil }
         return CGRect(origin: origin, size: size)
+    }
+
+    private static func selectedRange(_ value: CFTypeRef) -> CFRange? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    private static func rectPayload(_ value: CFTypeRef) -> [String: Double]? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cgRect else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(axValue, .cgRect, &rect) else { return nil }
+        return [
+            "x": rect.origin.x,
+            "y": rect.origin.y,
+            "width": rect.size.width,
+            "height": rect.size.height,
+        ]
     }
 
     private static func shortenedRole(_ role: String?) -> String? {

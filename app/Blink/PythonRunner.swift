@@ -21,6 +21,7 @@ enum PythonRunner {
         sourcePNG: URL,
         targetPNG: URL,
         targetMetadataJSON: URL,
+        caretJSON: URL?,
         outputParent: URL,
         bundleId: String,
         completion: @escaping (Result<String, Error>) -> Void
@@ -47,6 +48,9 @@ enum PythonRunner {
             "--out-dir", outputParent.path,
             "--bundle-id", bundleId,
         ]
+        if let caretJSON {
+            args += ["--caret", caretJSON.path]
+        }
         if let prompt = prompt { args += ["--prompt", prompt.path] }
         if let settings = settings { args += ["--settings", settings.path] }
         process.arguments = args
