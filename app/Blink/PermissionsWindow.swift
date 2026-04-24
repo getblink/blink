@@ -134,24 +134,10 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Probes
 
-    /// There's no public API to query Input Monitoring directly. We infer it
-    /// from whether we can create a CGEventTap: if the tap creation returns
-    /// a valid port, IM is granted. A false negative (IM granted but we
-    /// haven't started our own tap yet) is acceptable — the row will flip to
-    /// ✅ as soon as `HotkeyManager.start()` succeeds elsewhere.
+    /// Query Input Monitoring directly instead of creating probe event taps on
+    /// every refresh. The permissions window polls once per second while open,
+    /// so probing via `CGEvent.tapCreate` needlessly churns WindowServer/TCC.
     static func inputMonitoringGranted() -> Bool {
-        let mask = (1 << CGEventType.keyDown.rawValue)
-        guard let probe = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: CGEventMask(mask),
-            callback: { _, _, evt, _ in Unmanaged.passUnretained(evt) },
-            userInfo: nil
-        ) else {
-            return false
-        }
-        CGEvent.tapEnable(tap: probe, enable: false)
-        return true
+        HotkeyManager.inputMonitoringGranted()
     }
 }

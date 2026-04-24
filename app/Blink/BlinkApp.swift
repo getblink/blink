@@ -56,11 +56,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyRetryTimer?.invalidate()
         hotkeyRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
+            guard HotkeyManager.inputMonitoringGranted() else { return }
             if self.hotkeys.start() {
                 timer.invalidate()
                 self.hotkeyRetryTimer = nil
             }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        hotkeyRetryTimer?.invalidate()
+        hotkeyRetryTimer = nil
+        hotkeys?.stop()
     }
 
     func showPermissionsWindow() {

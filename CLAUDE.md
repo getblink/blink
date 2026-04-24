@@ -87,6 +87,18 @@ Open `compare.html` and `summary.md` in the output directory to review the sweep
 
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
 
+For Blink.app local testing or profiling, prefer the canonical installer:
+
+```bash
+bash app/scripts/install_local_app.sh
+```
+
+That script fetches `app/python-dist` on first run, builds a self-contained
+Release app, installs it to `~/Applications/Blink.app`, and moves duplicate
+Blink bundles from `DerivedData` / `app/build` into `.context/disabled-apps/`
+so Spotlight and TCC do not get confused by multiple local installs. Pass
+`--reset-tcc` if you want a clean permissions prompt on the next launch.
+
 ## Key conventions
 
 - Record experiment outcomes in `docs/EXPERIMENT_LOG.md` with: date, hypothesis, setup, result, decision, next step.

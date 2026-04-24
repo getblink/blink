@@ -70,6 +70,7 @@ app/
   scripts/
     fetch_python.sh               download python-build-standalone
     build.sh                      xcodebuild + copy python-dist
+    install_local_app.sh          canonical local install to ~/Applications/Blink.app
     sign.sh                       leaf-first codesign
     notarize.sh                   notarytool + stapler
     make_dmg.sh                   create-dmg
@@ -134,6 +135,25 @@ bash app/scripts/make_dmg.sh        # → build/Blink-<version>.dmg
 ```
 
 Each step is idempotent and safe to re-run.
+
+For local profiling / dogfood, prefer the canonical installer instead of
+opening `DerivedData` or `app/build` products directly:
+
+```bash
+bash app/scripts/install_local_app.sh
+```
+
+That script:
+
+1. fetches `python-dist` if needed,
+2. builds a self-contained Release app,
+3. installs it to `~/Applications/Blink.app`,
+4. moves duplicate Blink app bundles into `.context/disabled-apps/*.app.disabled`,
+5. optionally resets TCC with `--reset-tcc`, and
+6. relaunches the canonical app.
+
+The goal is to keep Spotlight, LaunchServices, and TCC pointed at one stable
+local Blink install.
 
 ## Permissions
 

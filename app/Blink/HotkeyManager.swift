@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import IOKit.hid
 
 /// Global hotkey manager using `CGEventTap`. Default bindings:
 ///   ⌃⇧C → onSetSource
@@ -31,6 +32,7 @@ final class HotkeyManager {
     /// (usually Input Monitoring/Accessibility not granted).
     @discardableResult
     func start() -> Bool {
+        stop()
         let mask = (1 << CGEventType.keyDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -49,6 +51,10 @@ final class HotkeyManager {
         self.eventTap = tap
         self.runLoopSource = source
         return true
+    }
+
+    static func inputMonitoringGranted() -> Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     }
 
     func stop() {
