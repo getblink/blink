@@ -16,7 +16,9 @@
 #   5. Relaunch the canonical app.
 #
 # Options:
-#   --reset-tcc   Reset Blink's TCC permissions before relaunching.
+#   --reset-tcc   Reset Blink's TCC permissions before relaunching. Use after
+#                 Swift app-code changes or if Accessibility appears enabled
+#                 but the new build still behaves like it is denied.
 #   --no-launch   Install only; do not reopen Blink.app.
 set -euo pipefail
 
@@ -72,6 +74,15 @@ if [[ ! -d "$APP_DIR/python-dist" ]]; then
     bash "$SCRIPT_DIR/fetch_python.sh"
 fi
 
+# Pre-compile bundled Python sources to .pyc so the cold-spawn fallback path
+# skips parser/AST work. Use the bundled python-dist interpreter so the .pyc
+# magic number matches the runtime that will eventually load them.
+if [[ -x "$APP_DIR/python-dist/bin/python3" ]]; then
+    echo "[blink] precompiling app/python/*.py to .pyc"
+    "$APP_DIR/python-dist/bin/python3" -m compileall -q "$APP_DIR/python" || \
+        echo "[blink] warning: compileall failed; continuing without .pyc"
+fi
+
 echo "[blink] building self-contained Release app"
 CONFIG=Release BLINK_SKIP_TCC_RESET=1 bash "$SCRIPT_DIR/build.sh"
 
@@ -89,10 +100,28 @@ ditto "$RELEASE_APP" "$CANONICAL_APP"
 disable_app_bundle "$RELEASE_APP" "Blink-Release"
 disable_app_bundle "/Applications/Blink.app" "Blink-System"
 
+# Catch any other Blink.app under DerivedData (both Debug and Release) — TCC
+# treats each path as a separate bundle even when they share the same
+# CFBundleIdentifier, which is the source of macOS Tahoe's repeated Screen &
+# System Audio Recording prompts at launch.
 while IFS= read -r derived_app; do
-    disable_app_bundle "$derived_app" "Blink-Debug"
+    flavor="Blink-Debug"
+    case "$derived_app" in
+        */Build/Products/Release/*) flavor="Blink-Release-DerivedData" ;;
+    esac
+    disable_app_bundle "$derived_app" "$flavor"
 done < <(find "$HOME/Library/Developer/Xcode/DerivedData" \
-    -path '*/Build/Products/Debug/Blink.app' -type d | sort)
+    \( -path '*/Build/Products/Debug/Blink.app' \
+       -o -path '*/Build/Products/Release/Blink.app' \) \
+    -type d | sort)
+
+# An earlier xcodebuild invocation from inside `app/` produces a doubled
+# `app/app/build/...` path in this workspace. Stash it for the same reason.
+if [[ -d "$APP_DIR/app" ]]; then
+    while IFS= read -r doubled_app; do
+        disable_app_bundle "$doubled_app" "Blink-DoubledPath"
+    done < <(find "$APP_DIR/app" -name 'Blink.app' -type d 2>/dev/null | sort)
+fi
 
 if [[ "$RESET_TCC" == "1" ]]; then
     echo "[blink] resetting TCC for the canonical install"

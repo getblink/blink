@@ -1,0 +1,46 @@
+G /kyiv
+j° gemini-screenshot-experiment > origin/main =
+• History
+@ Discuss Librar...
+* Start Chat
+* Detect macO...
+Workspaces
+For Blink specifically, I'd treat this as the right long-term direction:
+blink
+• use AX to identify target field, bounds, nearby structure, and sometimes caret
+f° Gemini....
++2.3k -466
+• use event tap only as a signal that typing/focus activity happened
+• add AX observers later for focused element changed, selected text changed, and value changed
+• always tolerate partial AX exposure and degrade gracefully to field-bounds-level context
+So overall: strong, useful, and directionally correct. The one thing I'd stress more than that answer does is fallback
+strategy, because real apps are messier than the "minimum viable probe" suggests.
+145 • |
+are we ready for another test?
+Yes.
+This last run shows the important blocker is cleared:
+• permissions are good
+• Conductor target focus is now being found
+• AX walk and geometry are working
+• Gemini is producing a concrete output instead of NEEDS_REVIEW
+So you're ready for another real test.
+Best next test:
+• Keep Conductor as target if you want to validate the fixed AX path there
+• use a source with a very obvious short payload, so it's easy to judge whether Blink copied the right thing
+• then try one labeled form field in another app, like Chrome, to compare "generic text area" vs "semantically
+labeled field"
+What I'd watch for in the next run:
+• target metadata captured (ok • AXTextAIea) or another real role
+• fixture slug not unknown-tole
+• output quality, not just whether metadata exists
+• whether the model starts over-copying visible source text when the target field lacks a semantic label
+If you send me the next run after that, I can help separate:
+• capture/metadata issues
+• prompt/context issues
+• model judgment issues
+175 • B *
+Ask to make changes, @mention files, run /commands
+O + e 1
+@ GPT-5.4
+> Fast
+• High

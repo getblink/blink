@@ -203,6 +203,37 @@ the same hand-authored packet target. The comparison tool accepts either
 JSON packets (`source_packet.json`) or OCR-style text packets
 (`source_packet.txt`).
 
+Imported Blink.app hybrid bundles may also include `source_text.json` when the
+source was captured from AX selected text or a temporary Cmd+C. In that case
+`prepared_source.json.source_packet_kind` can be `local_source_text`; OCR-style
+fallback bundles continue to use `native_ocr_paragraphs` and `source_packet.txt`.
+
+For a source-side Vision OCR inspection run that does not call the model,
+use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_ocr.py \
+  --inputs 'scratchpad/fixtures/*' \
+  --out scratchpad/sweeps/source-ocr-{auto-timestamp}
+```
+
+That experiment accepts either fixture/run-bundle directories containing
+`source.png` or direct image-file globs. It writes:
+
+- `benchmark.json` and `summary.md` at the sweep root
+- per-source `ocr.raw.json`, `ocr.blocks.json`, `ocr.filtered.json`,
+  `ocr.paragraphs.json`, and `ocr.sections.json`
+- per-source `ocr.raw.txt`, `ocr.filtered.txt`, `ocr.paragraphs.txt`,
+  and `ocr.packet.txt`
+- per-source `preview.html` with OCR box overlays on the original
+  screenshot
+
+The current postprocessing stays intentionally literal: it keeps the raw
+Vision OCR blocks, infers a dominant content column, groups the kept
+blocks into paragraphs, and emits a deterministic packet candidate so
+noise from sidebars / toolbars can be inspected directly before any model
+integration.
+
 For target-side latency experiments on top of cached source packets, use:
 
 ```bash

@@ -64,6 +64,31 @@ struct Config {
 
 /// Paths the app writes to / reads from.
 enum Paths {
+    /// `~/.blink/`
+    static var runtimeDir: URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".blink", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// `~/.blink/prompts/`
+    static var runtimePromptsDir: URL {
+        let dir = runtimeDir.appendingPathComponent("prompts", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static var runtimeConfigPath: URL {
+        runtimeDir.appendingPathComponent("runtime-config.json")
+    }
+
+    static var runtimeSettingsPath: URL {
+        runtimeDir.appendingPathComponent("settings.json")
+    }
+
     /// `~/Library/Application Support/Blink/`
     static var appSupportDir: URL {
         let base = FileManager.default.urls(
@@ -108,15 +133,36 @@ enum Paths {
         Bundle.main.resourceURL?.appendingPathComponent("run_once.py")
     }
 
-    static var promptPath: URL? {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("prompt.txt"),
+    static var prepareSourcePath: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("prepare_source.py")
+    }
+
+    static var providerPresetsPath: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("provider_presets.json"),
               FileManager.default.fileExists(atPath: url.path) else { return nil }
         return url
     }
 
-    static var settingsPath: URL? {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("settings.json"),
+    static func bundledResource(named name: String) -> URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent(name),
               FileManager.default.fileExists(atPath: url.path) else { return nil }
         return url
+    }
+
+    static func activePromptPath(named name: String) -> URL? {
+        let override = runtimePromptsDir.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: override.path) {
+            return override
+        }
+        return bundledResource(named: name)
+    }
+
+    static var promptPath: URL? { activePromptPath(named: "prompt.txt") }
+
+    static var settingsPath: URL? {
+        if FileManager.default.fileExists(atPath: runtimeSettingsPath.path) {
+            return runtimeSettingsPath
+        }
+        return bundledResource(named: "settings.json")
     }
 }

@@ -109,12 +109,15 @@ bash app/scripts/install_local_app.sh
 That script fetches `app/python-dist` on first run, builds a self-contained
 Release app, installs it to `~/Applications/Blink.app`, and moves duplicate
 Blink bundles from `DerivedData` / `app/build` into `.context/disabled-apps/`
-so Spotlight and TCC do not get confused by multiple local installs. Pass
-`--reset-tcc` if you want a clean permissions prompt on the next launch.
+so Spotlight and TCC do not get confused by multiple local installs. After
+Swift app-code changes, pass `--reset-tcc` before trusting the next launch's
+Accessibility/Input Monitoring state; the System Settings toggle can stay on
+while the grant is still effectively tied to the older binary.
 
 When the user asks for a "clean build" or a Blink.app dogfood reinstall,
 follow `docs/DOGFOOD_PLAYBOOK.md` — it covers the one-command install, TCC
-reset, verification, and where fixtures / profiling / debug logs land.
+reset, verification, and where fixtures / profiling / `host_profile.json` /
+debug logs land.
 
 ## Key conventions
 

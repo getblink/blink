@@ -32,8 +32,13 @@ Every bundle is a flat directory keyed by timestamp. For a bundle at `<bundle_di
 | `target.png` | yes | Target screenshot (PNG). Referenced by `fixture.json.target.image_path`. |
 | `output.txt` | yes | Raw generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. Paste-normalized text is recorded separately in `run.json.paste.text` when available. |
 | `run.json` | yes* | Live-trial request/response log. *Required for tester-loop bundles; optional for sweep-replay outputs because sweep writes its own run.json per cell.* |
+| `host_profile.json` | no | Swift-side wall-clock profiling for `Blink.app` runs: capture, artifact prep, Python wall time, and paste timing. Tester loop only. |
 | `settings.json` | no | Snapshot of the capture settings used at trial time. Mirrors `fixture.json.capture_settings`. Tester loop writes this; research loop may skip. |
 | `target_metadata.json` | no | Raw, unshortened target metadata captured at trial time. Mirrors `fixture.json.target_metadata`. Present when the emitter captures a full AX tree. |
+| `prepared_source.json` | no | Cached source-packet record captured at source time. Present for request modes that precompute source context. |
+| `source_text.json` | no | Exact source-text capture from AX selected text or temporary Cmd+C. Present when Blink tries clipboard-first source prep. |
+| `runtime_selection.json` | no | Runtime provider/model/request-mode snapshot for the trial. Tester loop only. |
+| `target_ocr_text.txt` | no | Plain reading-order target OCR text used by the hybrid text-only target path. |
 | `source.request.jpg` | no | Preprocessed request image for source. Referenced by `fixture.json.source.request_image_path`. Research loop writes this; tester loop may skip. |
 | `target.request.jpg` | no | Preprocessed request image for target. Same as above. |
 | `ax_focused.json`, `ax_nearby.json`, `caret.json`, `geometry.json`, `clipboard.json`, `ocr.json`, `capture.json` | no | Research-loop diagnostic files. Tester loop may emit `caret.json` when AX selected-range capture succeeds. Sweep does not read these. |
@@ -168,8 +173,27 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
   "status": "ok" | "error",
   "bundle_source": "blink_app",
   "prompt_path": "/abs/path/to/prompt.txt",
-  "settings": { /* snapshot */ },
+  "settings": {
+    "extractor": { /* resolved source/extractor settings */ },
+    "paste": { /* resolved paste-time settings */ }
+  },
+  "runtime": {
+    "request_mode": "source_ocr_target_text_or_full_image",
+    "extractor": { "provider": "gemini", "provider_preset_id": "gemini-direct", "model": "gemini-3.1-flash-lite-preview", "base_url": null },
+    "paste": { "provider": "openai_compatible", "provider_preset_id": "groq-chat", "model": "llama-3.3-70b-versatile", "base_url": "https://api.groq.com/openai/v1" },
+    "env_paths_loaded": ["/Users/name/.blink/.env"]
+  },
   "target_metadata": { /* same as fixture.json.target_metadata */ },
+  "source_packet": {
+    "status": "ok",
+    "prepared": true,
+    "packet_chars": 1438,
+    "kind": "local_source_text" | "native_ocr_paragraphs" | "model_extracted_text"
+  },
+  "target_context": {
+    "mode": "text_only" | "full_target_image",   // optional; hybrid mode only
+    "fallback_reason": "focused_role_not_allowed" // optional; hybrid mode only
+  },
   "request": {
     "model": "gemini-3.1-flash-lite-preview",
     "request_send_at": "ISO-8601",
@@ -200,15 +224,158 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
     "request_build_ms": 12.3,
     "source_image_prepare_ms": 3.1,
     "target_image_prepare_ms": 2.4,
+    "python_startup_ms": 240.5,
+    "target_capture_ms": 271.6,
+    "target_ocr_ms": 53.2,
+    "source_packet_build_ms": 0.0,
+    "source_packet_reused": true,
+    "via_warm_worker": true,
     "request_send_at": "ISO-8601",
     "first_chunk_at": "ISO-8601",
     "final_chunk_at": "ISO-8601",
     "ttft_ms": 510,
     "stream_duration_ms": 180,
-    "model_latency_ms": 690
+    "model_latency_ms": 690,
+    "host_source_capture_ms": 412.7,              // optional; mirrored from host_profile.json
+    "host_source_text_capture_ms": 42.1,
+    "host_source_prepare_source_packet_ms": 1184.2,
+    "host_source_set_total_ms": 1608.4,
+    "host_target_metadata_capture_ms": 44.3,
+    "host_target_caret_capture_ms": 5.8,
+    "host_target_screenshot_capture_ms": 271.6,
+    "host_target_capture_total_ms": 321.7,
+    "host_artifact_prep_ms": 18.4,
+    "host_pre_python_ms": 347.9,
+    "host_python_wall_ms": 1028.5,
+    "host_insert_ms": 71.6,
+    "host_run_target_total_ms": 1452.9
   },
   "errors": [ /* string[] — present only on error */ ],
   "warnings": [ /* string[] */ ]
+}
+```
+
+Notes:
+
+- `timings.end_to_end_ms` is the Python helper's own wall time once `run_once.py`
+  has started. It does **not** include the Swift-side capture, temp-file, or
+  paste phases.
+- `timings.python_startup_ms`, `target_capture_ms`, `target_ocr_ms`,
+  `source_packet_build_ms`, `source_packet_reused`, and `via_warm_worker` are
+  paste-path stage timings emitted by the warm-worker aware tester loop.
+- The optional `host_*` timing keys are copied into `run.json.timings` by the
+  Swift app after the trial finishes so the in-app inspector can summarize them
+  without opening extra files.
+- `source_packet.kind` distinguishes exact local source text, deterministic
+  native OCR paragraphs, and the legacy model-extracted source packet.
+- `target_context.mode` records whether the hybrid request used the text-only
+  target path or the pre-request full-target-image fallback.
+- `target_context.fallback_reason` is only present when the hybrid mode routes
+  away from text-only because the focused role is weak/missing or target OCR
+  was unusable.
+
+## `source_text.json` schema (tester loop, optional)
+
+Emitted by the Swift side when the hybrid source text/OCR mode tries to capture
+exact selected text before OCR. The app first asks AX for selected text. If that
+is empty or unsupported, it briefly saves the pasteboard, synthesizes Cmd+C,
+reads plain text, then restores the original pasteboard, including the empty
+state.
+
+```jsonc
+{
+  "schema_version": 1,
+  "status": "ok" | "no_text",
+  "method": "ax_selected_text" | "cmd_c",
+  "captured_at": "ISO-8601",
+  "duration_ms": 42.1,
+  "max_chars": 8000,
+  "raw_text_chars": 1695,
+  "text_chars": 1695,
+  "truncated": false,
+  "warnings": [ /* string[] */ ],
+  "text": "Exact source text with preserved\n\nparagraph breaks"
+}
+```
+
+## `host_profile.json` schema (tester loop, optional)
+
+Emitted by the Swift side of `Blink.app` after each trial. This file records the
+wall-clock phases around the Python helper and paste insertion, and mirrors the
+headline timing numbers into `run.json.timings`.
+
+```jsonc
+{
+  "schema_version": 1,
+  "bundle_id": "YYYYMMDD-HHMMSS-mmm",
+  "recorded_at": "ISO-8601",
+  "source": {
+    "captured_at": "ISO-8601",
+    "request_mode": "baseline_full_images",
+    "capture_started_at": "ISO-8601",
+    "capture_finished_at": "ISO-8601",
+    "capture_ms": 412.7,
+    "source_text_capture_started_at": "ISO-8601",     // optional
+    "source_text_capture_finished_at": "ISO-8601",    // optional
+    "source_text_capture_ms": 42.1,                   // optional
+    "source_text_status": "ok",                       // optional
+    "source_text_method": "cmd_c",                    // optional
+    "source_text_chars": 1695,                        // optional
+    "prepare_source_packet_started_at": "ISO-8601",   // optional
+    "prepare_source_packet_finished_at": "ISO-8601",  // optional
+    "prepare_source_packet_ms": 1184.2,               // optional
+    "prepared_source_packet": true,                   // optional
+    "set_source_started_at": "ISO-8601",
+    "set_source_finished_at": "ISO-8601",
+    "set_source_total_ms": 1608.4
+  },
+  "target": {
+    "request_mode": "baseline_full_images",
+    "capture_started_at": "ISO-8601",
+    "capture_finished_at": "ISO-8601",
+    "metadata_capture_started_at": "ISO-8601",
+    "metadata_capture_finished_at": "ISO-8601",
+    "metadata_capture_ms": 44.3,
+    "caret_capture_started_at": "ISO-8601",
+    "caret_capture_finished_at": "ISO-8601",
+    "caret_capture_ms": 5.8,
+    "screenshot_capture_started_at": "ISO-8601",
+    "screenshot_capture_finished_at": "ISO-8601",
+    "screenshot_capture_ms": 271.6,
+    "capture_total_ms": 321.7,
+    "artifact_prep_started_at": "ISO-8601",
+    "artifact_prep_finished_at": "ISO-8601",
+    "artifact_prep_ms": 18.4,
+    "focused_bounds_present": true
+  },
+  "python": {
+    "started_at": "ISO-8601",
+    "finished_at": "ISO-8601",
+    "wall_ms": 1028.5,
+    "status": "ok"
+  },
+  "paste": {
+    "status": "ok" | "pending" | "error" | "skipped_empty_output" | "skipped_python_failure",
+    "started_at": "ISO-8601",              // optional
+    "finished_at": "ISO-8601",             // optional
+    "insert_ms": 71.6,                     // optional
+    "error": "..."                         // optional
+  },
+  "summary": {
+    "host_source_capture_ms": 412.7,
+    "host_source_text_capture_ms": 42.1,
+    "host_source_prepare_source_packet_ms": 1184.2,
+    "host_source_set_total_ms": 1608.4,
+    "host_target_metadata_capture_ms": 44.3,
+    "host_target_caret_capture_ms": 5.8,
+    "host_target_screenshot_capture_ms": 271.6,
+    "host_target_capture_total_ms": 321.7,
+    "host_artifact_prep_ms": 18.4,
+    "host_pre_python_ms": 347.9,
+    "host_python_wall_ms": 1028.5,
+    "host_insert_ms": 71.6,
+    "host_run_target_total_ms": 1452.9
+  }
 }
 ```
 

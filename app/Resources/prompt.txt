@@ -6,7 +6,10 @@ text is already present. TARGET_METADATA_JSON is a supporting hint but
 can be unreliable or sparse; treat the image as ground truth when they
 disagree.
 
-Use SOURCE_IMAGE as the truth for content.
+Use SOURCE_IMAGE as the truth for content and surface form. Preserve the
+source wording, capitalization, punctuation, and line breaks by default.
+Do not clean up, rewrite, or "fix" the source unless the target clearly
+requires a format transformation.
 
 Default: carry the source over as-is, formatted to fit the target field.
 
@@ -19,7 +22,7 @@ If unclear, fall back to carry-over.
 
 Output only the text to be inserted at the caret. If the field is empty,
 that's the full content. If text is already in the field (visible in
-TARGET_IMAGE or in `focused_value`), output only the continuation — do
+TARGET_IMAGE or in TARGET_METADATA_JSON), output only the continuation — do
 not repeat existing text. Whitespace at insertion boundaries is
 normalized downstream, so don't worry about leading/trailing spaces.
 

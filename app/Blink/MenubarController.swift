@@ -3,12 +3,18 @@ import AppKit
 final class MenubarController: NSObject {
     private let coordinator: TrialCoordinator
     private let onShowPermissions: () -> Void
+    private let onShowControlCenter: () -> Void
     private var statusItem: NSStatusItem!
     private var statusLabel: NSMenuItem!
 
-    init(coordinator: TrialCoordinator, onShowPermissions: @escaping () -> Void) {
+    init(
+        coordinator: TrialCoordinator,
+        onShowPermissions: @escaping () -> Void,
+        onShowControlCenter: @escaping () -> Void
+    ) {
         self.coordinator = coordinator
         self.onShowPermissions = onShowPermissions
+        self.onShowControlCenter = onShowControlCenter
     }
 
     func install() {
@@ -18,7 +24,10 @@ final class MenubarController: NSObject {
         statusItem.menu = buildMenu()
 
         coordinator.onStatusChange = { [weak self] text in
-            DispatchQueue.main.async { self?.statusLabel.title = text }
+            DispatchQueue.main.async {
+                self?.statusLabel.title = text
+                self?.updateIndicator(for: text)
+            }
         }
     }
 
@@ -39,6 +48,8 @@ final class MenubarController: NSObject {
         menu.addItem(withTitle: "Export last 10 runs…", action: #selector(exportRuns), keyEquivalent: "")
             .target = self
         menu.addItem(withTitle: "Open runs folder", action: #selector(openRunsFolder), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "Control Center…", action: #selector(openControlCenter), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
 
@@ -72,5 +83,22 @@ final class MenubarController: NSObject {
     @objc private func openRunsFolder() {
         NSWorkspace.shared.open(Paths.runsDir)
     }
+    @objc private func openControlCenter() { onShowControlCenter() }
     @objc private func openPermissions() { onShowPermissions() }
+
+    private func updateIndicator(for status: String) {
+        let normalized = status.lowercased()
+        let indicator: String
+        if normalized.contains("failed") || normalized.contains("empty output") || normalized.contains("no source") || normalized.contains("python failed") {
+            indicator = "⎈!"
+        } else if normalized.contains("done") || normalized.contains("source captured") || normalized.contains("packet prepared") {
+            indicator = "⎈✓"
+        } else if normalized.contains("capturing") || normalized.contains("preparing") || normalized.contains("calling") || normalized.contains("inserting") {
+            indicator = "⎈…"
+        } else {
+            indicator = "⎈"
+        }
+        statusItem.button?.title = indicator
+        statusItem.button?.toolTip = "Blink: \(status)"
+    }
 }

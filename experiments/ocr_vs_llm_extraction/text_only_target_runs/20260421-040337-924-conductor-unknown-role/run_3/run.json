@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:57:53.503-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 4324,
+    "source_packet_chars": 2632,
+    "target_ocr_chars": 1216,
+    "target_metadata_chars": 412
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 25,
+      "prompt_token_count": 2295,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 2295
+        }
+      ],
+      "total_token_count": 2320
+    },
+    "chunk_count": 4,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:57:53 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=482",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7\\xcc\\x0eRDl\\x08)g\\xc4\\xa0\\x9a\\xea\\x92\\xe5\\xce~{bm\\xcd\\xba\\xd1fA\\xa9pQ\\x14\\x9c\\xbd\\xa8\\xd9\\x9b\\xb9,h\\xber\\x8b\\xd6\\xeb\\xe9\\xbf\\x93Q'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "wTvsaee4O6jQjMcP1o-ggQs",
+      "usage_metadata": {
+        "candidates_token_count": 25,
+        "prompt_token_count": 2295,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 2295
+          }
+        ],
+        "total_token_count": 2320
+      }
+    },
+    "output_text": "/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/runs",
+    "output_text_length": 65
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:57:53.503-07:00",
+    "first_chunk_at": "2026-04-24T20:57:54.004-07:00",
+    "final_chunk_at": "2026-04-24T20:57:54.054-07:00",
+    "ttft_ms": 501.29,
+    "stream_duration_ms": 50.53,
+    "model_latency_ms": 551.82,
+    "request_build_ms": 0.04
+  }
+}
