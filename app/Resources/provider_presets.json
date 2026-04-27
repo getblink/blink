@@ -1,0 +1,101 @@
+[
+  {
+    "id": "gemini-direct",
+    "name": "Gemini Direct",
+    "provider": "gemini",
+    "api_key_env": "GEMINI_API_KEY",
+    "api_style": "native",
+    "base_url": null,
+    "url_substitutions": [],
+    "default_headers": {},
+    "extra_headers": {},
+    "default_model": "gemini-3.1-flash-lite-preview",
+    "supports_vision": true,
+    "suggested_models": [
+      "gemini-3.1-flash-lite-preview",
+      "gemini-2.5-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro"
+    ]
+  },
+  {
+    "id": "openai-responses",
+    "name": "OpenAI Responses",
+    "provider": "openai_sdk",
+    "api_key_env": "OPENAI_API_KEY",
+    "api_style": "responses",
+    "base_url": null,
+    "url_substitutions": [],
+    "default_headers": {},
+    "extra_headers": {},
+    "default_model": "gpt-5-mini",
+    "supports_vision": true,
+    "suggested_models": [
+      "gpt-5-mini",
+      "gpt-5",
+      "gpt-4.1-mini"
+    ]
+  },
+  {
+    "id": "openrouter-chat",
+    "name": "OpenRouter Chat",
+    "provider": "openai_sdk",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "api_style": "chat_completions",
+    "base_url": "https://openrouter.ai/api/v1",
+    "url_substitutions": [],
+    "default_headers": {
+      "HTTP-Referer": "https://github.com/henryz2004/blink",
+      "X-Title": "Blink app"
+    },
+    "extra_headers": {},
+    "default_model": "anthropic/claude-haiku-4.5",
+    "supports_vision": true,
+    "suggested_models": [
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-5-mini",
+      "google/gemini-2.5-flash-lite"
+    ]
+  },
+  {
+    "id": "groq-chat",
+    "name": "Groq Chat",
+    "provider": "openai_sdk",
+    "api_key_env": "GROQ_API_KEY",
+    "api_style": "chat_completions",
+    "base_url": "https://api.groq.com/openai/v1",
+    "url_substitutions": [],
+    "default_headers": {},
+    "extra_headers": {},
+    "default_model": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "supports_vision": true,
+    "suggested_models": [
+      "meta-llama/llama-4-scout-17b-16e-instruct",
+      "llama-3.3-70b-versatile"
+    ],
+    "model_overrides": {
+      "llama-3.3-70b-versatile": {
+        "supports_vision": false
+      }
+    }
+  },
+  {
+    "id": "cloudflare-workers-ai",
+    "name": "Cloudflare Workers AI",
+    "provider": "openai_sdk",
+    "api_key_env": "CLOUDFLARE_API_TOKEN",
+    "api_style": "chat_completions",
+    "base_url": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+    "url_substitutions": [
+      "CLOUDFLARE_ACCOUNT_ID"
+    ],
+    "default_headers": {},
+    "extra_headers": {},
+    "default_model": "@cf/moonshotai/kimi-k2.5",
+    "supports_vision": true,
+    "suggested_models": [
+      "@cf/moonshotai/kimi-k2.5",
+      "@cf/meta/llama-4-scout-17b-16e-instruct"
+    ]
+  }
+]

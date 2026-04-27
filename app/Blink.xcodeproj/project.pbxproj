@@ -14,10 +14,13 @@
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		3156026306517F723A7E909C /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6470A28243919A3F6CE3F636 /* UniformTypeIdentifiers.framework */; };
 		4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */; };
+		50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */; };
 		55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */; };
 		6FB07562EA3C40D3051B04F4 /* TargetMetadataCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A817871B9ED09D32EEA9BD /* TargetMetadataCapture.swift */; };
 		7CF606DC505B6CA2775CB68A /* ApplicationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 40A3234FC54834D91492DCC2 /* ApplicationServices.framework */; };
 		8550B2497B8E60C5C41CC218 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7907A5FA8563D8D62D8A0538 /* IOKit.framework */; };
+		88B7C6CF3E3EEBA5F4CCCA68 /* FeedbackCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22133BF2FE55BAFF8626FA59 /* FeedbackCenter.swift */; };
+		91B7EFEFCD20A7B3A75E8C5F /* ControlCenterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9BD155A12A9F74197FF77C8 /* ControlCenterWindow.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		D480D4B8BC8F46752EE261B6 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBFD0424E841D9B578986EF2 /* AppKit.framework */; };
 		DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B0F9AAF9A7972C08DC337C /* Inserter.swift */; };
@@ -31,6 +34,7 @@
 		009080B616A8506A5210AC26 /* MenubarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarController.swift; sourceTree = "<group>"; };
 		0B47EB8B7273BB95141192DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		111C775580802A86D963BB01 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
+		22133BF2FE55BAFF8626FA59 /* FeedbackCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackCenter.swift; sourceTree = "<group>"; };
 		40A3234FC54834D91492DCC2 /* ApplicationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT; };
 		41A817871B9ED09D32EEA9BD /* TargetMetadataCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetMetadataCapture.swift; sourceTree = "<group>"; };
 		48431B2C296BDB92BF0BB93C /* Blink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Blink.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -42,10 +46,12 @@
 		7907A5FA8563D8D62D8A0538 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Blink.entitlements; sourceTree = "<group>"; };
 		989DBB159CA5CB427CCCADEF /* BlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkApp.swift; sourceTree = "<group>"; };
+		A9BD155A12A9F74197FF77C8 /* ControlCenterWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlCenterWindow.swift; sourceTree = "<group>"; };
 		A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
 		B6CFA143AF216667464AF0DE /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
 		CBFD0424E841D9B578986EF2 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
+		CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStore.swift; sourceTree = "<group>"; };
 		D3B24AC8FE3E1EC0A4A8F471 /* TrialCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrialCoordinator.swift; sourceTree = "<group>"; };
 		D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindow.swift; sourceTree = "<group>"; };
 		E6A589F9000A294F10E2FAFB /* BundleExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleExporter.swift; sourceTree = "<group>"; };
@@ -89,12 +95,15 @@
 				989DBB159CA5CB427CCCADEF /* BlinkApp.swift */,
 				E6A589F9000A294F10E2FAFB /* BundleExporter.swift */,
 				B6CFA143AF216667464AF0DE /* Config.swift */,
+				A9BD155A12A9F74197FF77C8 /* ControlCenterWindow.swift */,
+				22133BF2FE55BAFF8626FA59 /* FeedbackCenter.swift */,
 				5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */,
 				0B47EB8B7273BB95141192DE /* Info.plist */,
 				71B0F9AAF9A7972C08DC337C /* Inserter.swift */,
 				009080B616A8506A5210AC26 /* MenubarController.swift */,
 				D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */,
 				A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */,
+				CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */,
 				BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */,
 				41A817871B9ED09D32EEA9BD /* TargetMetadataCapture.swift */,
 				D3B24AC8FE3E1EC0A4A8F471 /* TrialCoordinator.swift */,
@@ -183,11 +192,14 @@
 				25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */,
 				06F91203E8658AEACFABDB78 /* BundleExporter.swift in Sources */,
 				F98F38FA0D707A3CDDD1C94B /* Config.swift in Sources */,
+				91B7EFEFCD20A7B3A75E8C5F /* ControlCenterWindow.swift in Sources */,
+				88B7C6CF3E3EEBA5F4CCCA68 /* FeedbackCenter.swift in Sources */,
 				55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */,
 				DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */,
 				F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */,
 				B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */,
 				4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */,
+				50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */,
 				E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */,
 				6FB07562EA3C40D3051B04F4 /* TargetMetadataCapture.swift in Sources */,
 				E570BE48750D3FD4F0FDA6B7 /* TrialCoordinator.swift in Sources */,

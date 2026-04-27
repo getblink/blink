@@ -1,0 +1,23 @@
+SOURCE_VISION_OCR_PACKET
+RAW_BLOCK_COUNT: 39
+FILTERED_BLOCK_COUNT: 29
+PARAGRAPH_COUNT: 16
+DOMINANT_CONTENT_BAND: x=399.7..2224.7 (width=1825.0, supporting_blocks=17)
+
+SECTIONS:
+- body: 8° gemini-screenshot-experiment > origin/main
+- body: Start Chat Discuss Librar... +
+- body: • subtree probe results with top fallback candidates
+- header_candidate: • a focus_resolution_summary
+  body: • if AXFocusedUIElement) fails, it now tries:
+- body: • frontmost app AXFocusedUIElement
+- body: • frontmost app AXActiveElement
+- header_candidate: • frontmost app AXSharedFocusElements
+  body: • a bounded descendant search through the focused window subtree for likely editable/focused nodes
+- body: I also fixed the AX sibling focus comparison to use (==) instead of is while I was in there.
+- body: I verified the updated files compile. Next step is just: run (./capture capture again, do the Conductor target case once more, and send me either:
+- body: • the new terminal line for target metadata captured 1, or • the newest (un. json 's target_metadata_debug
+- body: That should tell us whether Conductor has an accessible subtree we can exploit or whether its input is effectively invisible to this AX approach.
+- body: 2m, 38s • • run_gemini_trial.py +293 - 16
+- body: Enter your plan adjustments here....
+- body: ® GPT-5.4 4 Fast all High

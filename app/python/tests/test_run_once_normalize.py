@@ -10,7 +10,7 @@ APP_PYTHON_DIR = Path(__file__).resolve().parent.parent
 if str(APP_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(APP_PYTHON_DIR))
 
-from run_once import _caret_pos_from_capture, normalize_for_paste  # noqa: E402
+from run_once import _build_baseline_instruction, _caret_pos_from_capture, normalize_for_paste  # noqa: E402
 
 
 class NormalizeForPasteTests(unittest.TestCase):
@@ -62,6 +62,25 @@ class CaretPosFromCaptureTests(unittest.TestCase):
         self.assertIsNone(_caret_pos_from_capture({"status": "not_found"}))
         self.assertIsNone(_caret_pos_from_capture({"status": "line_only", "line_number": 3}))
         self.assertIsNone(_caret_pos_from_capture({"status": "ok"}))
+
+
+class BaselineInstructionTests(unittest.TestCase):
+    def test_baseline_instruction_threads_caret_into_metadata(self) -> None:
+        instruction = _build_baseline_instruction(
+            {
+                "status": "ok",
+                "focused_app": "Google Chrome",
+                "focused_role": "TextArea",
+                "_full": {
+                    "focused_value": "Calendar event title:\nSlack to coworker:",
+                },
+            },
+            caret={"status": "ok", "range": {"location": len("Calendar event title:\n"), "length": 0}},
+        )
+
+        self.assertIn('"text_before_caret": "Calendar event title:\\n"', instruction)
+        self.assertIn('"text_after_caret": "Slack to coworker:"', instruction)
+        self.assertNotIn('"existing_text"', instruction)
 
 
 if __name__ == "__main__":

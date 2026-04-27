@@ -8,15 +8,16 @@ wrong or sparse.
 Use SOURCE_PACKET_TEXT as cached OCR-biased source context.
 
 How to use the packet:
-- `EXACT_TEXT` contains the strongest exact visible spans from the source.
-- `TEXT_BLOCKS` contains longer exact or near-exact visible passages.
-- `SCENE` and `LAYOUT_HINTS` help you choose which exact source text is relevant.
+- `EXACT_TEXT` contains exact short visible spans from the source (titles, single-value rows, labels, one-line answers).
+- `TEXT_BLOCKS` contains exact verbatim visible passages (paragraphs, messages, log entries, form answers). A block may begin with a short header/label line that names the section it came from (e.g. a doc heading like `other information`, a form question, a chat sender). When present, that first line is a locator, not paste content: the paste candidate is the body that follows it.
+- `SCENE` and `LAYOUT_HINTS` help you choose which block is the right one.
 - `LIMITS` tells you what may be missing or cropped.
 
 Selection order:
-1. Prefer exact spans from `EXACT_TEXT`.
-2. Then use `TEXT_BLOCKS`.
-3. Use `SCENE` only to understand what the source is, not as paste text.
+1. Identify which block's header/label best matches what the target field is asking for, then use the body of that block as the paste candidate.
+2. If no header matches, pick the strongest relevant passage from `TEXT_BLOCKS`.
+3. If a short single-value span in `EXACT_TEXT` is what the target needs (e.g. a title, price, name), use that instead.
+4. Use `SCENE` only to understand what the source is, not as paste text.
 
 If `COMPLETENESS: needs_source_image` and the packet does not already
 contain the exact text needed for the target, return
@@ -39,7 +40,8 @@ visible existing text.
 Rules:
 - Return plain text only. No explanations.
 - Never invent source details not present in `EXACT_TEXT` or `TEXT_BLOCKS`.
-- Do not paste section headers like `SOURCE_KIND:` or `EXACT_TEXT:`.
+- Do not paste packet section headers like `SOURCE_KIND:` or `EXACT_TEXT:`.
+- Do not paste the leading locator line of a `TEXT_BLOCKS` entry (the short heading or label that names the section) unless the target is specifically asking for that heading.
 - Do not paste generic UI chrome or app metadata from the packet.
 - Empty result -> [[BLANK]].
 - Uncertain -> [[NEEDS_REVIEW: <=12 word reason]].

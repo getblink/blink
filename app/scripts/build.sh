@@ -49,6 +49,9 @@ echo "[blink] built $APP_PATH"
 RESOURCES="$APP_PATH/Contents/Resources"
 mkdir -p "$RESOURCES/python"
 
+echo "[blink] copying app resources → $RESOURCES"
+rsync -a "$APP_DIR/Resources/" "$RESOURCES/"
+
 if [[ ! -d "$APP_DIR/python-dist" ]]; then
     echo "[blink] error: app/python-dist not found — run scripts/fetch_python.sh first" >&2
     exit 1

@@ -51,6 +51,8 @@ app/
     HotkeyManager.swift           CGEventTap-based global hotkeys
     ScreenCapture.swift           ScreenCaptureKit wrapper
     TargetMetadataCapture.swift   AX metadata capture with schema parity
+    RuntimeConfigStore.swift      ~/.blink runtime config + request-mode snapshot
+    ControlCenterWindow.swift     in-app controls + run inspector
     Inserter.swift                clipboard-save → Cmd+V → restore
     PermissionsWindow.swift       Input Monitoring + Accessibility + Screen Recording
     PythonRunner.swift            Process spawn per trial
@@ -62,10 +64,16 @@ app/
   Resources/                      ← copied into .app/Contents/Resources at build
     prompt.txt                    copy of scratchpad/prompt.txt
     settings.json                 copy of scratchpad/settings.json
+    provider_presets.json         in-app provider presets for dogfood toggles
+    source_packet_*.txt           OCR-biased source packet prompts
+    target_context_prompt_ocr.txt target OCR packet prompt
   python/                         ← production Python, self-contained
     run_once.py                   CLI; emits v1 bundle
-    gemini_runner.py              forked from scratchpad/ at known SHA
-    requirements.txt              google-genai only
+    prepare_source.py             precomputes source packets at source-capture time
+    model_runner.py               provider-agnostic request builder
+    target_context.py             local OCR packet builder
+    gemini_runner.py              forked helper utilities from scratchpad/ at known SHA
+    requirements.txt              google-genai + openai + PyObjC Vision bindings
   python-dist/                    ← python-build-standalone runtime (gitignored)
   scripts/
     fetch_python.sh               download python-build-standalone
@@ -80,7 +88,26 @@ app/
 No symlinks between `app/python/` and `scratchpad/`. The fork's header comment
 records the source SHA. Re-syncing is a deliberate commit.
 
-## Production Python (Phase 1, usable today)
+## Runtime Config And Control Center
+
+Blink now keeps dogfood-time runtime config under `~/.blink/`:
+
+- `runtime-config.json` — selected provider preset, model, and request mode
+- `settings.json` — optional override for the bundled base settings
+- `.env` / `.env.local` — provider credentials and any provider-specific env vars
+- `prompts/<filename>` — optional prompt overrides; matching filenames shadow the bundled prompt resources
+
+The menubar app now exposes a `Control Center…` window with:
+
+- provider preset and model selection
+- request-mode toggles (`baseline`, `source packet + full target`, `source packet + target OCR packet`, `source packet + OCR fallback`, `experimental source OCR + text target fallback`)
+- active prompt/settings paths
+- a recent-run inspector for screenshots, packets, assembled requests, raw prompts, `run.json`, `host_profile.json`, and stderr logs
+
+Source-packet modes precompute the source packet on `Capture source (⌃⇧C)` when possible so the later paste path can reuse it.
+The hybrid experimental mode swaps source extraction to deterministic native OCR paragraphs, then routes target-time inference to a text-only call for strong text-field AX roles and falls back to the full target image otherwise.
+
+## Production Python (Phase 1+, usable today)
 
 `app/python/run_once.py` is a clean CLI, independent of `scratchpad/`:
 
@@ -95,19 +122,35 @@ python3 app/python/run_once.py \
   --out-dir /tmp/blink-runs
 ```
 
-Writes `<out-dir>/<ts>/` containing `fixture.json`, `source.png`, `target.png`,
-`run.json`, `output.txt`, `target_metadata.json`, `settings.json`, and
-`caret.json` when the caller captured AX selected-range state. Sweep reads the
-bundle via `./sweep --fixtures '/tmp/blink-runs/*' --configs …`.
+Writes `<out-dir>/<ts>/` containing the core bundle files (`fixture.json`,
+`source.png`, `target.png`, `run.json`, `output.txt`, `target_metadata.json`,
+`settings.json`, `caret.json`) plus optional debug artifacts like
+`host_profile.json`,
+`runtime_selection.json`, `geometry.json`, `source_packet.txt`,
+`target_ocr_packet.txt`, `target_ocr_packet.build.json`,
+`generation.prompt.txt`, and
+`generation.request.txt`. Sweep reads the bundle via
+`./sweep --fixtures '/tmp/blink-runs/*' --configs …`.
+
+`target_ocr_packet.txt` is the small paste-facing target packet, usually only
+resolved facts such as `FOCUSED_FIELD_LABEL`, or empty when Blink has no
+resolved target fact. Geometry, OCR boxes, fallback
+reasons, and other Blink-side confidence evidence live in
+`target_ocr_packet.build.json` and `run.json.target_context`.
+
+Control Center's Runs tab includes an OCR Visualizer that overlays saved OCR
+boxes and target focus/caret geometry on the source or target screenshot when
+the run bundle contains the corresponding build-log geometry.
 
 `output.txt` preserves the raw model output for sweep parity. stdout carries the
 paste-normalized text (for Swift to capture and paste). stderr carries progress
 logs. `--skip-gemini` emits the bundle without a live API call - useful for
 bundle-shape verification.
 
-Requires `GEMINI_API_KEY` in the environment. For proxy/bearer auth (Phase 5),
-also set `BLINK_PROXY_URL` and optionally `BLINK_PROXY_TOKEN`; both are
-forwarded into `http_options` when building the client.
+Requires provider credentials in the environment; the app-side runtime loads
+them from `~/.blink/.env` and `~/.blink/.env.local`. For direct Gemini runs,
+the app still also honors `GEMINI_API_KEY`, `BLINK_PROXY_URL`, and
+`BLINK_PROXY_TOKEN` from the process environment / overrides.
 
 ## Capability token, not auth
 
@@ -152,11 +195,14 @@ That script:
 2. builds a self-contained Release app,
 3. installs it to `~/Applications/Blink.app`,
 4. moves duplicate Blink app bundles into `.context/disabled-apps/*.app.disabled`,
-5. optionally resets TCC with `--reset-tcc`, and
+5. optionally resets TCC with `--reset-tcc` (recommended after Swift app-code changes or when Accessibility seems stale), and
 6. relaunches the canonical app.
 
 The goal is to keep Spotlight, LaunchServices, and TCC pointed at one stable
-local Blink install.
+local Blink install. We have seen macOS keep Accessibility checked in System
+Settings while the grant is still effectively attached to an older Blink build,
+so reinstall with `--reset-tcc` after Swift changes before trusting the
+permissions state.
 
 For a full dogfood session — clean build, clean permissions, and guaranteed
 capture of fixtures / profiling timings / debug logs per trial — follow
@@ -169,6 +215,10 @@ First-launch `PermissionsWindow` walks the tester through three grants:
 1. **Input Monitoring** — required for `CGEventTap` to see global hotkeys.
 2. **Accessibility** — required for AX metadata capture and Cmd+V insertion.
 3. **Screen Recording** — required for `ScreenCaptureKit` window/region capture.
+
+Blink opens this window on every startup during the tester-app phase and calls
+the real Screen Recording request API at launch so macOS creates the System
+Settings row before the first capture.
 
 All three are documented in `scratchpad/README.md:40-44` for the research-loop
 equivalent.

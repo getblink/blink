@@ -207,9 +207,12 @@ enum TargetMetadataCapture {
                 payload["bounds"] = NSNull()
                 payload["bounds_status"] = axErrorCode(boundsError)
             }
+            payload["range_probe"] = rangeProbeDiagnostics(focused, range: range)
+            payload["text_marker"] = textMarkerDiagnostics(focused, selectedRange: range)
             return payload
         }
 
+        let textMarker = textMarkerDiagnostics(focused, selectedRange: nil)
         var lineRef: CFTypeRef?
         let lineError = AXUIElementCopyAttributeValue(
             focused, kAXInsertionPointLineNumberAttribute as CFString, &lineRef
@@ -218,15 +221,20 @@ enum TargetMetadataCapture {
             return [
                 "status": "line_only",
                 "line_number": lineNumber.intValue,
+                "text_marker": textMarker,
             ]
         }
 
         if selectedRangeError == .attributeUnsupported || selectedRangeError == .noValue {
-            return ["status": "unsupported"]
+            return [
+                "status": "unsupported",
+                "text_marker": textMarker,
+            ]
         }
         return [
             "status": "error",
             "error": axErrorCode(selectedRangeError),
+            "text_marker": textMarker,
         ]
     }
 
@@ -275,6 +283,291 @@ enum TargetMetadataCapture {
             "width": rect.size.width,
             "height": rect.size.height,
         ]
+    }
+
+    private static func rangePayload(_ value: CFTypeRef) -> [String: Int]? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = value as! AXValue
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return ["location": range.location, "length": range.length]
+    }
+
+    private static func axRangeValue(_ range: CFRange) -> AXValue? {
+        var mutableRange = range
+        return AXValueCreate(.cfRange, &mutableRange)
+    }
+
+    private static func parameterizedValue(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        _ parameter: CFTypeRef
+    ) -> (AXError, CFTypeRef?) {
+        var ref: CFTypeRef?
+        let error = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            attribute,
+            parameter,
+            &ref
+        )
+        return (error, ref)
+    }
+
+    private static func parameterizedRectSnapshot(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        _ parameter: CFTypeRef
+    ) -> [String: Any] {
+        let (error, ref) = parameterizedValue(element, attribute, parameter)
+        var snapshot: [String: Any] = ["status": axErrorCode(error)]
+        if error == .success, let ref, let rect = rectPayload(ref) {
+            snapshot["rect"] = rect
+        }
+        return snapshot
+    }
+
+    private static func parameterizedStringSnapshot(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        _ parameter: CFTypeRef
+    ) -> [String: Any] {
+        let (error, ref) = parameterizedValue(element, attribute, parameter)
+        var snapshot: [String: Any] = ["status": axErrorCode(error)]
+        if error == .success, let value = ref as? String {
+            snapshot["text"] = truncate(value, limit: 500)
+        }
+        return snapshot
+    }
+
+    private static func parameterizedNumberSnapshot(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        _ parameter: CFTypeRef
+    ) -> [String: Any] {
+        let (error, ref) = parameterizedValue(element, attribute, parameter)
+        var snapshot: [String: Any] = ["status": axErrorCode(error)]
+        if error == .success, let value = ref as? NSNumber {
+            snapshot["value"] = value
+        }
+        return snapshot
+    }
+
+    private static func parameterizedRangeSnapshot(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        _ parameter: CFTypeRef
+    ) -> [String: Any] {
+        let (error, ref) = parameterizedValue(element, attribute, parameter)
+        var snapshot: [String: Any] = ["status": axErrorCode(error)]
+        if error == .success, let ref, let range = rangePayload(ref) {
+            snapshot["range"] = range
+        }
+        return snapshot
+    }
+
+    private static func rangeSnapshot(_ element: AXUIElement, range: CFRange) -> [String: Any] {
+        guard let rangeValue = axRangeValue(range) else {
+            return ["status": "invalid_range"]
+        }
+        return [
+            "range": ["location": range.location, "length": range.length],
+            "bounds": parameterizedRectSnapshot(
+                element,
+                kAXBoundsForRangeParameterizedAttribute as CFString,
+                rangeValue
+            ),
+            "string": parameterizedStringSnapshot(
+                element,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                rangeValue
+            ),
+        ]
+    }
+
+    private static func rangeProbeDiagnostics(_ element: AXUIElement, range: CFRange) -> [String: Any] {
+        var diagnostics: [String: Any] = [:]
+        if range.length == 0 {
+            diagnostics["caret_or_next_character"] = rangeSnapshot(
+                element,
+                range: CFRange(location: range.location, length: 1)
+            )
+            if range.location > 0 {
+                diagnostics["previous_character"] = rangeSnapshot(
+                    element,
+                    range: CFRange(location: range.location - 1, length: 1)
+                )
+            }
+        }
+
+        let indexParameter = NSNumber(value: range.location)
+        let lineSnapshot = parameterizedNumberSnapshot(
+            element,
+            kAXLineForIndexParameterizedAttribute as CFString,
+            indexParameter
+        )
+        diagnostics["line_for_index"] = lineSnapshot
+        if let lineNumber = lineSnapshot["value"] as? NSNumber {
+            let lineParameter = NSNumber(value: lineNumber.intValue)
+            let lineRangeSnapshot = parameterizedRangeSnapshot(
+                element,
+                kAXRangeForLineParameterizedAttribute as CFString,
+                lineParameter
+            )
+            diagnostics["range_for_line"] = lineRangeSnapshot
+            if let lineRange = lineRangeSnapshot["range"] as? [String: Int],
+               let location = lineRange["location"],
+               let length = lineRange["length"] {
+                diagnostics["line_range"] = rangeSnapshot(
+                    element,
+                    range: CFRange(location: location, length: length)
+                )
+            }
+        }
+        return diagnostics
+    }
+
+    private static func markerRangeSnapshot(
+        _ element: AXUIElement,
+        markerRange: CFTypeRef
+    ) -> [String: Any] {
+        [
+            "bounds": parameterizedRectSnapshot(
+                element,
+                "AXBoundsForTextMarkerRange" as CFString,
+                markerRange
+            ),
+            "string": parameterizedStringSnapshot(
+                element,
+                "AXStringForTextMarkerRange" as CFString,
+                markerRange
+            ),
+            "length": parameterizedNumberSnapshot(
+                element,
+                "AXLengthForTextMarkerRange" as CFString,
+                markerRange
+            ),
+            "debug": parameterizedStringSnapshot(
+                element,
+                "AXTextMarkerRangeDebugDescription" as CFString,
+                markerRange
+            ),
+        ]
+    }
+
+    private static func markerSnapshot(
+        _ element: AXUIElement,
+        marker: CFTypeRef
+    ) -> [String: Any] {
+        [
+            "valid": parameterizedNumberSnapshot(
+                element,
+                "AXTextMarkerIsValid" as CFString,
+                marker
+            ),
+            "index": parameterizedNumberSnapshot(
+                element,
+                "AXIndexForTextMarker" as CFString,
+                marker
+            ),
+            "debug": parameterizedStringSnapshot(
+                element,
+                "AXTextMarkerDebugDescription" as CFString,
+                marker
+            ),
+        ]
+    }
+
+    private static func markerRangeForUnorderedMarkers(
+        _ element: AXUIElement,
+        _ first: CFTypeRef,
+        _ second: CFTypeRef
+    ) -> (AXError, CFTypeRef?) {
+        let markers = [first, second] as CFArray
+        return parameterizedValue(
+            element,
+            "AXTextMarkerRangeForUnorderedTextMarkers" as CFString,
+            markers
+        )
+    }
+
+    private static func adjacentMarkerRangeSnapshot(
+        _ element: AXUIElement,
+        marker: CFTypeRef,
+        adjacentAttribute: CFString
+    ) -> [String: Any] {
+        let (adjacentError, adjacentRef) = parameterizedValue(element, adjacentAttribute, marker)
+        var snapshot: [String: Any] = ["marker_status": axErrorCode(adjacentError)]
+        guard adjacentError == .success, let adjacentRef else {
+            return snapshot
+        }
+        snapshot["marker"] = markerSnapshot(element, marker: adjacentRef)
+        let (rangeError, rangeRef) = markerRangeForUnorderedMarkers(element, marker, adjacentRef)
+        snapshot["range_status"] = axErrorCode(rangeError)
+        if rangeError == .success, let rangeRef {
+            snapshot["range"] = markerRangeSnapshot(element, markerRange: rangeRef)
+        }
+        return snapshot
+    }
+
+    private static func textMarkerDiagnostics(
+        _ element: AXUIElement,
+        selectedRange: CFRange?
+    ) -> [String: Any] {
+        var diagnostics: [String: Any] = [:]
+        var selectedMarkerRangeRef: CFTypeRef?
+        let selectedMarkerRangeError = AXUIElementCopyAttributeValue(
+            element,
+            "AXSelectedTextMarkerRange" as CFString,
+            &selectedMarkerRangeRef
+        )
+        diagnostics["selected_marker_range_status"] = axErrorCode(selectedMarkerRangeError)
+        if selectedMarkerRangeError == .success, let selectedMarkerRangeRef {
+            diagnostics["selected_marker_range"] = markerRangeSnapshot(
+                element,
+                markerRange: selectedMarkerRangeRef
+            )
+        }
+
+        guard let selectedRange else {
+            return diagnostics
+        }
+
+        let indexParameter = NSNumber(value: selectedRange.location)
+        let (markerError, markerRef) = parameterizedValue(
+            element,
+            "AXTextMarkerForIndex" as CFString,
+            indexParameter
+        )
+        diagnostics["index_marker_status"] = axErrorCode(markerError)
+        guard markerError == .success, let markerRef else {
+            return diagnostics
+        }
+
+        diagnostics["index_marker"] = markerSnapshot(element, marker: markerRef)
+        let (lineRangeError, lineRangeRef) = parameterizedValue(
+            element,
+            "AXLineTextMarkerRangeForTextMarker" as CFString,
+            markerRef
+        )
+        diagnostics["line_marker_range_status"] = axErrorCode(lineRangeError)
+        if lineRangeError == .success, let lineRangeRef {
+            diagnostics["line_marker_range"] = markerRangeSnapshot(
+                element,
+                markerRange: lineRangeRef
+            )
+        }
+        diagnostics["next_marker_range"] = adjacentMarkerRangeSnapshot(
+            element,
+            marker: markerRef,
+            adjacentAttribute: "AXNextTextMarkerForTextMarker" as CFString
+        )
+        diagnostics["previous_marker_range"] = adjacentMarkerRangeSnapshot(
+            element,
+            marker: markerRef,
+            adjacentAttribute: "AXPreviousTextMarkerForTextMarker" as CFString
+        )
+        return diagnostics
     }
 
     private static func shortenedRole(_ role: String?) -> String? {

@@ -26,6 +26,138 @@ See also:
 
 ---
 
+## 2026-04-27 — Resolved-only target packets for paste
+
+- **Hypothesis:** The paste LLM should receive resolved target facts, not Blink's evidence trail. Geometry, roles, OCR buckets, fallback reasons, and confidence limits are Blink-side routing/debug data.
+- **Setup:** Slimmed `target_ocr_packet.txt` to `FOCUSED_FIELD_LABEL` when available, or empty when Blink has no resolved target fact. Kept OCR sections, focus/caret rects, role metadata, selected row text, completeness, and fallback reasons in `target_ocr_packet.build.json` / `run.json.target_context`. Updated the target-context prompt so the insertion contract lives in prompt instructions instead of the packet.
+- **Input type(s):** Local target OCR packets and source-packet paste requests.
+- **Target field type(s):** Google Docs pseudo-fields and generic focused fields with OCR-derived labels.
+- **Outcome:** Implemented; tests assert the paste-facing packet excludes `INSERTION_CONTRACT`, `FOCUSED_FIELD_RECT`, `LIMITS`, `COMPLETENESS`, and OCR bucket sections while preserving `focused_label_hint` and fallback decisions.
+- **Evidence / examples:** `app/python/target_context.py`, `app/Resources/target_context_prompt_ocr.txt`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/fixtures/manual_google_docs_target_20260425_205140.json`, `docs/ARTIFACT_SCHEMA.md`.
+- **Decision:** Keep target evidence inspectable, but do not ask the text-only paste model to reason over it.
+- **Next step:** Dogfood one sufficient Google Docs row and confirm `generation.request.txt` contains only the resolved label in `TARGET_CONTEXT_PACKET`.
+
+## 2026-04-27 — Top-anchored Google Docs focus bands
+
+- **Hypothesis:** Google Docs `Group` thin-line bounds behave like the top edge of the caret/line, not the visual center of the target row, so OCR focus bands should expand downward from that line.
+- **Setup:** Changed thin-line focus inflation from center-based to top-anchored. Replayed the latest live packet geometry where the raw local line was `y=726 height=2`; the synthesized band now becomes `y=726 height=40` instead of `y=707 height=40`.
+- **Input type(s):** Latest live target OCR packet plus sanitized Google Docs thin-line fixture.
+- **Target field type(s):** Google Docs pseudo-fields exposed as Chromium `Group` focus rows.
+- **Outcome:** Implemented; unit coverage now checks the downward expansion directly and confirms packet building keeps the raw local line as the band top.
+- **Evidence / examples:** `app/python/target_context.py`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/fixtures/manual_google_docs_target_20260426_150826_thin_line.json`.
+- **Decision:** Treat the local thin line as a top anchor, with only bottom clamping near the image edge.
+- **Next step:** Dogfood one row per Google Docs field and use the OCR visualizer to confirm each focus band overlays the intended label row.
+
+## 2026-04-27 — Google Docs row-label hardening and OCR visualizer
+
+- **Hypothesis:** Google Docs thin-line packets should fail closed unless row evidence identifies the focused pseudo-field, and Control Center should make OCR geometry inspectable without opening raw JSON.
+- **Setup:** Normalized caret-tainted row labels such as `Phone:|` to `Phone:`, preferred label-like OCR inside the inflated focus band, and made Google Docs thin-line packets fall back when no focused label is resolved. Added `ocr_blocks` geometry to target/source OCR build logs and a Runs-tab OCR Visualizer with source/target image selection, OCR box/text toggles, and target focus/caret overlays.
+- **Input type(s):** Local target OCR packets and native source OCR build logs.
+- **Target field type(s):** Google Docs pseudo-fields with `Group` focus and thin caret-line geometry.
+- **Outcome:** Implemented; focused tests cover caret-suffixed labels, missing focused-label fallback, and saved OCR block geometry.
+- **Evidence / examples:** `app/python/target_context.py`, `app/python/source_ocr.py`, `app/Blink/ControlCenterWindow.swift`, `app/Blink/RuntimeConfigStore.swift`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/test_hybrid_request_mode.py`.
+- **Decision:** Keep the unified target packet path. Do not address native source OCR poisoning yet.
+- **Next step:** Use the new visualizer on fresh Google Docs runs to compare the inflated focus band against OCR boxes before changing row-band sizing.
+
+## 2026-04-27 — Unify target context routing for Fast local OCR
+
+- **Hypothesis:** `source_packet_target_ocr_or_full_image` and `source_ocr_target_text_or_full_image` should differ only in source packet construction; target localization, sufficiency, fallback, prompt contract, and logging should be shared.
+- **Setup:** Routed Fast local OCR through the same `build_target_ocr_packet` / `run_source_packet_target_ocr_packet` path as Auto. Added `SOURCE_PACKET_KIND` to source-packet generation requests so shared prompts can distinguish `model_extracted_text` from rawer `native_ocr_paragraphs` without forking target logic. Removed the separate target text-only prompt from the runtime snapshot/prompt picker.
+- **Input type(s):** Model-extracted source packets and native OCR source paragraphs.
+- **Target field type(s):** Local target OCR packet with full target image fallback.
+- **Outcome:** Implemented; tests cover native source OCR using the shared target packet prompt and paste runtime, plus shared source packet kind request metadata.
+- **Evidence / examples:** `app/python/run_once.py`, `app/python/source_packet.py`, `app/Resources/target_context_prompt_ocr.txt`, `app/Resources/source_packet_target_prompt_v3_ocr.txt`, `app/Blink/RuntimeConfigStore.swift`, `app/python/tests/test_runtime_split_models.py`, `app/python/tests/test_source_packet.py`.
+- **Decision:** Keep Fast local OCR experimental as a source-prep variant, not a separate target pipeline.
+- **Next step:** Dogfood Auto and Fast local OCR back-to-back on the same Google Docs rows and compare only source-packet quality differences.
+
+## 2026-04-26 — Google Docs thin-line target label resolution
+
+- **Hypothesis:** After Google Docs accessibility support is enabled, Chrome's zero/one-pixel `Group` focus line can be inflated into a reliable OCR row band and mapped to the focused field label.
+- **Setup:** Added Google Docs thin-line handling in `target_context.py`: convert the focused AX line to screenshot coordinates, inflate it to a 40px row band, accept same-row colon labels that are left of or slightly overlapping the band, and emit `FOCUSED_FIELD_LABEL` plus `INSERTION_CONTRACT: focused_field_only` when resolved. Added sanitized fixture `manual_google_docs_target_20260426_150826_thin_line.json`.
+- **Input type(s):** Source packet / source OCR plus local target OCR.
+- **Target field type(s):** Google Docs structured document fields with accessibility-supported `Group` caret line.
+- **Outcome:** Implemented. The old `Document content` fixture still fails closed, while the new thin-line fixture resolves `Contact name:` and synthetic y-shifts resolve all five visible labels.
+- **Evidence / examples:** `app/python/target_context.py`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/fixtures/manual_google_docs_target_20260426_150826_thin_line.json`, `app/Resources/target_context_prompt_ocr.txt`, `app/Resources/target_text_only_prompt.txt`; focused checks: `python3 -m unittest app/python/tests/test_target_context_hint.py` and related runtime/source-packet tests.
+- **Decision:** Apply the focused-field contract to target-context request modes; keep baseline/full-image modes unchanged for now.
+- **Next step:** Dogfood `source_packet_target_ocr_packet`, `source_packet_target_ocr_or_full_image`, and `source_ocr_target_text_or_full_image` with the caret on each Google Docs label row.
+
+## 2026-04-26 — Chrome text-marker caret diagnostics
+
+- **Hypothesis:** Google Docs may expose a usable caret rect through Chrome/WebKit `AXTextMarker` attributes even when the standard selected-range bounds are degenerate.
+- **Setup:** Added diagnostic probes to `TargetMetadataCapture.captureCaret()` for standard range/line parameterized attributes and private Chrome text-marker attributes such as `AXSelectedTextMarkerRange`, `AXTextMarkerForIndex`, `AXLineTextMarkerRangeForTextMarker`, and adjacent marker ranges.
+- **Input type(s):** Blink.app target caret capture.
+- **Target field type(s):** Google Docs document body / Chrome text surfaces.
+- **Outcome:** Implemented as additive `caret.json` diagnostics only; paste behavior is unchanged until a live run proves a non-degenerate marker rect.
+- **Evidence / examples:** `app/Blink/TargetMetadataCapture.swift`; checks: `CONFIG=Release BLINK_SKIP_TCC_RESET=1 bash app/scripts/build.sh`, `python3 -m unittest app/python/tests/test_source_packet.py app/python/tests/test_run_once_normalize.py`, and `python3 -m unittest discover app/python/tests`.
+- **Decision:** Keep the first pass diagnostic-first so wrong-field paste behavior cannot get worse while we test whether Chrome exposes better caret geometry.
+- **Next step:** Reinstall with TCC reset, run the Google Docs fixture again, and inspect `caret.json.text_marker.*.bounds.rect` plus `caret.json.range_probe.*.bounds.rect` for a non-zero, on-window caret or line rect.
+
+## 2026-04-25 — Startup Screen Recording request and permissions window
+
+- **Hypothesis:** After a TCC reset, `CGPreflightScreenCaptureAccess` and capture-time prompts are not enough to make Blink discoverable in the Screen Recording pane before use; Blink should create the row at startup and show the in-app permissions checklist immediately.
+- **Setup:** Reintroduced `CGRequestScreenCaptureAccess()` in `AppDelegate.applicationDidFinishLaunching`, kept `IOHIDRequestAccess` for Input Monitoring registration, and made `showPermissionsWindow()` run unconditionally after menubar/hotkey setup.
+- **Input type(s):** Blink.app launch / permission setup.
+- **Target field type(s):** N/A.
+- **Outcome:** Implemented, rebuilt, installed to the canonical `~/Applications/Blink.app`, reset TCC, and relaunched. The source now contains the startup Screen Recording request and the unconditional permissions-window call.
+- **Evidence / examples:** `app/Blink/BlinkApp.swift`, `app/Blink/ScreenCapture.swift`, `docs/DOGFOOD_PLAYBOOK.md`, `app/README.md`; checks: `bash app/scripts/install_local_app.sh --reset-tcc`, bundled `python3 -m unittest discover .../Resources/tests`, and source grep for `CGRequestScreenCaptureAccess` / `showPermissionsWindow()`.
+- **Decision:** Prefer discoverability and a guided first-launch permission flow over avoiding the startup Screen Recording prompt.
+- **Next step:** On the next launch after TCC reset, confirm Blink appears in System Settings → Privacy & Security → Screen Recording and the in-app permissions window is visible.
+
+## 2026-04-25 — Image-capable fallback for Google Docs target packets
+
+- **Hypothesis:** The `[[NEEDS_REVIEW: target context needs image]]` case is the correct conservative signal for a strict OCR target packet, but Blink should automatically retry with a full target image when the target packet says the Google Docs focus context is unreliable.
+- **Setup:** Inspected the latest run sequence: `source_packet_target_ocr_packet` produced `needs_target_image` with `google_docs_degenerate_focus_rect`, and `source_packet_target_ocr_or_full_image` attempted the right visual fallback but sent the screenshot to Groq `llama-3.3-70b-versatile`, which rejected image messages. Updated `run_once.py` so full-target-image routing checks provider/model `supports_vision` metadata and uses the extractor runtime when the paste runtime is text-only.
+- **Input type(s):** Source packet plus target OCR packet, with fallback to target screenshot.
+- **Target field type(s):** Google Docs document body with unreliable AX focus rect.
+- **Outcome:** Implemented. Both `source_packet_target_ocr_packet` and `source_packet_target_ocr_or_full_image` now fall back to full target image when the target packet has `completeness: needs_target_image` or fallback reasons, and the screenshot is routed to a vision-capable runtime.
+- **Evidence / examples:** `app/python/run_once.py`, `app/python/tests/test_runtime_split_models.py`; checks: `python3 -m unittest app/python/tests/test_runtime_split_models.py app/python/tests/test_target_context_hint.py app/python/tests/test_source_packet.py`, `python3 -m compileall app/python`, `python3 -m unittest discover app/python/tests`, bundled `python3 -m unittest discover .../Resources/tests`, and `bash app/scripts/install_local_app.sh --reset-tcc`.
+- **Decision:** Keep Groq text-only paste for fast packet-sufficient cases, but reroute visual target fallback to Gemini/extractor when needed.
+- **Next step:** Re-test the same Google Docs target; the fallback run should show `fell_back_to_full_target_image` plus `full_target_image_used_extractor_runtime` instead of a Groq image-content error.
+
+## 2026-04-25 — Manual Google Docs fixture regression tests
+
+- **Hypothesis:** Synthetic unit tests are not enough for the Google Docs target ambiguity; a sanitized fixture from the manual run sequence should catch drift in the real target metadata, OCR-packet, prompt-metadata, and runtime-routing contracts.
+- **Setup:** Added `app/python/tests/fixtures/manual_google_docs_target_20260425_205140.json`, distilled from runs `20260425-205140-853`, `20260425-205246-898`, and `20260425-205156-195`. The fixture includes only JSON/text artifacts: target metadata, caret, geometry, sanitized OCR blocks, expected packet text, and the extractor/paste runtime selection.
+- **Input type(s):** Sanitized Google Docs target run artifacts.
+- **Target field type(s):** Google Docs document body with `Document content` AX metadata and a 1px focus rect.
+- **Outcome:** Implemented targeted regression coverage for `build_target_ocr_packet`, `build_target_ocr_text`, `compact_target_metadata`, `_full_target_image_role`, `_should_use_full_target_image`, and the mocked `run_once.main()` fallback branch.
+- **Evidence / examples:** `app/python/tests/fixtures/`, `app/python/tests/fixture_helpers.py`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/test_source_packet.py`, `app/python/tests/test_runtime_split_models.py`; focused checks: `python3 -m unittest app/python/tests/test_target_context_hint.py app/python/tests/test_source_packet.py app/python/tests/test_runtime_split_models.py`.
+- **Decision:** Keep live manual artifacts as small sanitized unit fixtures, not as dependencies on the local Blink run directory.
+- **Next step:** When a future manual dogfood failure has a distinct artifact shape, add one fixture at the contract boundary that failed rather than copying the whole run bundle.
+
+## 2026-04-25 — Google Docs target-focus fallback and permission prompt cleanup
+
+- **Hypothesis:** The latest Google Docs target failures are caused by unreliable AX target focus, not by a stale install: Google Docs reports the focused field as `Document content`, a 1px-high focus rect near the toolbar, and a zero-width-only focused value, so text/OCR-only target routing cannot identify the active blank line.
+- **Setup:** Inspected the latest Blink app bundles `20260425-201938-559` and `20260425-202012-949`; verified the installed app already contained the caret metadata patch; added guards that treat Google Docs `Document content` + degenerate focus rect as unreliable, strip zero-width-only `existing_text`, and route native-source text-only mode to full-target-image fallback instead of claiming a text-only hint. Also stopped calling `CGRequestScreenCaptureAccess()` at app launch so Screen Recording prompts happen at capture time rather than immediately after every TCC reset/relaunch.
+- **Input type(s):** Latest live Google Docs source/target runs, target OCR artifacts, AX `target_metadata.json`, `caret.json`, `geometry.json`, and bundled app resources.
+- **Target field type(s):** Google Docs document body used as a structured pseudo-form with labeled blank lines.
+- **Outcome:** Implemented and reinstalled. Existing latest runs were not using `baseline_full_images`; they used `source_ocr_target_text_or_full_image` and `source_packet_target_ocr_packet`, so the baseline-only caret patch was not on the critical path. New guards make this failure mode explicit as `google_docs_degenerate_focus_rect` / `needs_target_image` instead of building a confident target packet around toolbar text.
+- **Evidence / examples:** `app/python/target_context.py`, `app/python/source_packet.py`, `app/python/run_once.py`, `app/Blink/BlinkApp.swift`, `app/python/tests/test_target_context_hint.py`, `app/python/tests/test_source_packet.py`; local and bundled checks: `python3 -m unittest discover app/python/tests`, `python3 -m compileall app/python`, bundled `python3 -m unittest discover .../Resources/tests`, and `bash app/scripts/install_local_app.sh --reset-tcc`.
+- **Decision:** Keep text-only routing conservative for Google Docs document bodies until Blink has a reliable caret/line signal there. This avoids broad wrong pastes when the active line cannot be proven.
+- **Next step:** Re-test one Google Docs target run. If it now returns `[[NEEDS_REVIEW: target context needs image]]` in `source_packet_target_ocr_packet`, switch to an image-capable target mode/model for this scenario or add a separate visual-caret strategy.
+
+## 2026-04-25 — Baseline caret-context metadata for Google Docs
+
+- **Hypothesis:** Baseline source-image + target-image mode needs explicit AX caret context in `TARGET_METADATA_JSON` for Google Docs, where the focused AX value is the whole document and the screenshot caret is too small to disambiguate the intended blank line.
+- **Setup:** Added caret-aware split rendering to `app/python/source_packet.py` behind `caret_format="split"`: `focused_field.caret`, `text_before_caret`, `text_after_caret`, and `text_selected` for selection replacement. Threaded `caret.json` into the baseline instruction builder in `app/python/run_once.py`, kept OCR/hybrid request modes on their existing metadata path, and updated the baseline prompt copy to tell the model to insert between the split fields.
+- **Input type(s):** AX target metadata with `focused_value` plus `caret.json`; existing baseline field-run replay and synthetic Google-Docs-shaped unit fixtures.
+- **Target field type(s):** Google Docs / WebKit contenteditable documents and ordinary text fields on the baseline full-image path.
+- **Outcome:** Implemented and locally verified. Unsupported/missing caret falls back to the prior `existing_text` metadata. Offset carets window to 600 chars before and 300 chars after; `line_only` carets fall back to line-split context. Baseline skipped replay now writes caret-aware `target_metadata.prompt.json` when caret capture is present.
+- **Evidence / examples:** `app/python/source_packet.py`, `app/python/run_once.py`, `app/Resources/prompt.txt`, `app/python/tests/test_source_packet.py`, `app/python/tests/test_run_once_normalize.py`; local checks: `python3 -m unittest discover app/python/tests`, `python3 -m compileall app/python`, and skipped replay bundle `.context/caret-replay/baseline-skip-replay-3/`.
+- **Decision:** Keep v1 as the explicit split-key format rather than an inline marker so the request is inspectable and future prompt-format A/Bs can slot in behind `caret_format`.
+- **Next step:** Dogfood the same structured Google Doc manually in baseline mode and compare each labeled blank line against the earlier noisy outputs; only revisit OCR/hybrid if the retest shows the same caret ambiguity there too.
+
+## 2026-04-24 — Blink.app host-side profiling in run bundles
+
+- **Hypothesis:** Mirroring Swift-side wall-clock phases into each Blink.app run bundle will make live latency investigations materially easier than relying on Python/model timings alone.
+- **Setup:** Added Swift-side profiling around source capture, optional source-packet prep, target metadata/caret/screenshot capture, temp artifact prep, Python wall time, and paste insertion. Persisted the full record as `host_profile.json` beside each run, and mirrored the headline `host_*` timing keys into `run.json.timings` so Control Center can summarize them immediately.
+- **Input type(s):** Blink.app live dogfood trials across baseline and source-packet request modes.
+- **Target field type(s):** Any live focused text field captured by the tester app.
+- **Outcome:** Every successful bundled run can now answer both "how long did the model call take?" and "how long did the live app spend before/after the model call?" without separate profiler tooling.
+- **Evidence / examples:** `app/Blink/TrialCoordinator.swift`, `app/Blink/ControlCenterWindow.swift`, `docs/ARTIFACT_SCHEMA.md`, `docs/DOGFOOD_PLAYBOOK.md`.
+- **Decision:** Treat `run.json` + `host_profile.json` as the default latency evidence surface for Blink.app dogfood sessions.
+- **Next step:** Re-run a live dogfood session and compare the new `host_pre_python_ms`, `host_python_wall_ms`, and `host_run_target_total_ms` breakdown against the offline sweep numbers.
+
 ## 2026-04-20 — Repository initialization
 
 - **Hypothesis:** A clean operating framework will improve experiment quality and reduce repo chaos.
@@ -240,3 +372,100 @@ See also:
 - **Evidence / examples:** `scratchpad/benchmark_target_context.py`, `scratchpad/target_context_prompt_ocr.txt`, `scratchpad/target_context_prompt_crop.txt`, `scratchpad/sweeps/target-context-20260424-102428/summary.md`, `scratchpad/sweeps/target-context-20260424-102428/benchmark.json`, `scratchpad/sweeps/target-context-20260424-102428/20260421-140159-935-conductor-axtextarea/target_ocr_packet.txt`, `scratchpad/sweeps/target-context-20260424-102428/20260421-200834-043-microsoft-edge-axtextarea/target_ocr_packet.txt`.
 - **Decision:** Keep the OCR target packet as a promising latency lever, but do not treat it as ready for product routing. The latency result is encouraging: once source packets are in place, a local OCR packet can beat the full target image on target-only latency. The current packet format and prompt are still too lossy and too conservative in the wrong places, especially when focused bounds are missing. The focused-crop path is not the next bet; it is slower than the OCR packet and usually slower than the full target image once crop-building overhead is included.
 - **Next step:** Iterate on the target OCR packet rather than the crop path. Tighten the packet around the exact text nearest the focused field, reduce irrelevant neighboring OCR spans, and add a clearer routing rule for missing `focused_bounds` so the OCR-or-full-image fallback path only uses the OCR packet when AX plus OCR evidence is actually strong.
+
+
+## 2026-04-24 — Source-side Vision OCR inspection before packet integration
+
+- **Hypothesis:** Running local Vision OCR directly over source screenshots, then postprocessing it with simple deterministic grouping, will preserve more literal source content than the current model-extracted packet path while making sidebar / toolbar noise directly inspectable.
+- **Setup:** Added `scratchpad/benchmark_source_ocr.py` as a scratchpad-only experiment runner. It accepts source image or run-bundle globs, runs local Vision OCR, writes raw block artifacts plus deterministic postprocessed views (`ocr.filtered.json`, `ocr.paragraphs.json`, `ocr.sections.json`, `ocr.packet.txt`), and renders `preview.html` overlays per source. Ran it over 12 recent Blink app run bundles under `~/Library/Application Support/Blink/runs/`, writing artifacts to `scratchpad/sweeps/source-ocr-20260424-1543/`.
+- **Input type(s):** Recent Blink app source screenshots, including repeated Google Doc startup-application captures and a Cloudflare dashboard page.
+- **Target field type(s):** None; this was source-side OCR inspection only.
+- **Outcome:** The experiment was useful immediately. Across 12 sources, raw Vision OCR averaged `51.92` blocks / `2021.08` chars per screenshot; the simple dominant-column filter reduced that to `31.67` blocks / `1851.58` chars on average, dropping about `20.25` blocks while retaining most document text. On the Google Doc captures, the filtered packet usually preserved the major content sections (`description`, `team`, `other information`, `founder profile`) and dropped most browser/sidebar chrome; for example, run `20260424-150813-405` kept `1938/2176` chars after filtering. On the noisiest Cloudflare dashboard case (`20260424-144133-644`), the filter dropped `42/58` blocks and cut retained chars to `538/1050`, successfully keeping the main registration cards while shedding most left-nav noise. The remaining failure mode is visible selection/UI residue: in the selected-text Google Doc case (`20260424-150934-843`), the filtered packet still leaked `*/ Refine 8G` into the final grouped section, so the current grouping is good enough for inspection but not yet clean enough for product use.
+- **Evidence / examples:** `scratchpad/benchmark_source_ocr.py`, `scratchpad/sweeps/source-ocr-20260424-1543/summary.md`, `scratchpad/sweeps/source-ocr-20260424-1543/index.html`, `scratchpad/sweeps/source-ocr-20260424-1543/20260424-144133-644/preview.html`, `scratchpad/sweeps/source-ocr-20260424-1543/20260424-150813-405/ocr.packet.txt`, `scratchpad/sweeps/source-ocr-20260424-1543/20260424-150934-843/ocr.packet.txt`.
+- **Decision:** Keep source-side Vision OCR exploration open and keep it outside the product path for now. The experiment validated that local OCR is a strong literal evidence source, but it also showed that naive grouping still leaks UI affordances and selection chrome. Treat the current runner as an inspection tool, not yet as a packet generator for the shipping app.
+- **Next step:** Expand the inspection corpus with a few more non-doc source types, then tighten the deterministic grouping around header/body separation and explicit chrome dropping (especially selection toolbars) before comparing a Vision-OCR packet against the current model-extracted source packet on the same sources.
+
+
+## 2026-04-24 — Cross-model bake-off on the v3.1 source-packet extraction prompt
+
+- **Hypothesis:** Some non-Gemini model (Claude Haiku 4.5, Qwen-3-VL-30b ± thinking, Kimi K2.5, Llama-4-Scout, GPT-5 mini) or a different Gemini variant (2.5 Flash Lite, 3 Flash, Flash Lite high-resolution) can match or beat Gemini 3.1 Flash Lite preview on v3.1 extraction quality (salient recall, source-kind accuracy, can_answer accuracy, candidate-field loose recall) and/or extraction latency.
+- **Setup:** Built `scratchpad/bench_extract_cross_model.py` — a single-image extraction harness that loads each `scratchpad/eval_configs/*.json` config through the existing `providers/` dispatch layer (existing `benchmark_source_packet.py` is hard-coded Gemini-only; existing `eval_sweep.py` is the legacy two-image sweep), writes per-fixture `source_packet.txt` outputs, then scores via `compare_source_packets.py`. Ran v3.1 extraction prompt across 12 configs × 9 fixtures with `--max-output-tokens 2048` overriding every config's per-config cap (several configs ship with `512`/`768`) so each model gets equal headroom for fair comparison; this means cost is not faithful to any individual config's official cap. Sweep dir: `scratchpad/sweeps/v3-1-cross-model-20260424-1750/`.
+- **Input type(s):** The existing 9-fixture corpus (Conductor chats, AX-textarea forms, marketplace listing, terminal log) under `scratchpad/fixtures/`.
+- **Target field type(s):** None. Source-side extraction only — no target image is sent.
+- **Outcome:** Five distinct findings, ranked by significance.
+  1. **`flash-lite-high-minimal` strictly dominates the current `flash-lite-low-minimal` baseline.** Same Gemini 3.1 Flash Lite preview model, but `MEDIA_RESOLUTION_HIGH` instead of `LOW`. Salient recall went from `64/66` to `65/66` (`+1`), source-kind from `8/9` to `9/9` (`+1`), candidate-field loose recall from `19/28` to `20/28` (`+1`), can_answer held at `6/9`. Latency cost: `+1220 ms` mean (`2128 ms` → `3348 ms`). For the production extractor where extraction is amortized over reuse, this is a clear win.
+  2. **`qwen3-vl-30b-thinking` is the only model that nails the chat-completeness gap.** can_answer accuracy `8/9` (`0.889`), beating every Gemini variant including the v3.1-baseline `6/9`. The Conductor-chat fixtures where v3.1 misclassifies "messages above visible top" as `sufficient` are exactly where this model wins. Cost is severe: `~36 s` mean extraction latency. Practical reading: explicit reasoning budget (not just prompt wording) is what closes the chat-completeness gap; worth a follow-up to test thinking-on Gemini variants on the same metric.
+  3. **`gemini-3-flash` hit a confusing can_answer regression.** Quality on the literal-content metrics is tied for best (salient `65/66`, source-kind `9/9`, loose `20/28`), but can_answer collapsed to `1/9` — even worse than refined-v3 (`2/9`). The newer model appears to over-confidently mark every fixture `sufficient`. Not ready for use without prompt re-tuning specific to it.
+  4. **`claude-haiku-4.5-openrouter` clean source-kind but slow.** `9/9` source-kind, `63/66` salient (slight regression vs baseline), `5/9` can_answer, but `~10 s` mean latency makes it impractical for the live path.
+  5. **Kimi K2.5 routing is broken across both providers tested.** `kimi-k2.5-cloudflare` streams 2052 chunks but emits zero `delta.content` (likely puts content in a non-standard streaming field; `finish_reason: length`). `kimi-k2.5-openrouter-baseten` 429-rate-limited on every fixture. Both ship as `0/66` salient — confirmed harness limitation for Cloudflare path, real upstream issue for OpenRouter/BaseTen path. Not blocking.
+  6. **`llama-4-scout-groq` is the latency winner** (`1867 ms` mean, beating baseline by `~261 ms`) but pays for it in candidate-field loose recall (`16/28`, worst non-broken config).
+- **Evidence / examples:** `scratchpad/sweeps/v3-1-cross-model-20260424-1750/summary.md`, `scratchpad/sweeps/v3-1-cross-model-20260424-1750/summary.json`, per-config `gold_packet_compare.md` files, and per-fixture `source_packet.txt` / `run.json` artifacts. Smoke-test reproduction of the v3.1 baseline (salient `64/66`, source-kind `8/9`, loose `19/28`, can_answer `6/9`) is at `scratchpad/sweeps/v3-1-cross-model-smoke/`.
+- **Decision:** Promote `flash-lite-high-minimal` as the new default for v3.1 extraction (strict quality win at +1.2 s latency cost, amortized over reuse). Hold `qwen3-vl-30b-thinking` as a candidate for fixing the 3-of-9 chat can_answer gap, but not in the production path until thinking-on Gemini variants have been tested on the same chat fixtures (which is a much smaller follow-up). Do not promote `gemini-3-flash` despite its quality numbers — the can_answer regression to `1/9` is a real product hazard.
+- **Next step:** Two follow-ups. (1) Run a small thinking-on Gemini sweep (Gemini 3.1 Flash Lite + thinking_budget non-zero, plus a Gemini 3 Flash with thinking) against the same 9 fixtures and check whether the chat can_answer score moves toward Qwen-thinking's `8/9` — if yes, that's a cheaper fix than swapping providers. (2) Investigate the Kimi-Cloudflare empty-stream issue — the model may be emitting to `delta.reasoning_content` or similar; if so, the OpenAI-SDK adapter could be extended once and unblock that route for any reasoning model. Out of scope for this experiment but worth a small ticket.
+
+
+## 2026-04-25 — Split extractor vs paste model
+
+- **Hypothesis:** Routing the source-packet extract (Stage A, image input) and the paste-time generation (Stage B, text only when using `source_packet_target_ocr_packet`) to *different* providers lets us pair a strong vision model (Gemini 3.1 Flash Lite) with a fast text-only paste model (e.g. Groq `llama-3.3-70b-versatile`), halving Stage B latency without losing source-image quality.
+- **Setup:** Reshaped `~/.blink/runtime-config.json` from v1 (single `selected_provider_preset_id` + `model`) to v2 (`extractor` + `paste` `ProviderModelSelection` rows), with transparent migration from v1 on first read. Control Center now renders two rows ("Source packet extractor", "Paste-time model") with their own preset/model pickers. The Python runtime resolves two settings dicts and memoizes one runtime per role; routing follows: Stage A (`build_source_packet`) → extractor; baseline / native-OCR single-call modes → extractor (extractor "owns the source-image path"); two-call paste sites (`run_source_packet_target_full_image` / `_ocr_packet`) → paste. v1 fallbacks preserve `./sweep` replay of historic bundles. `run.json.runtime` is reshaped to expose `runtime.extractor.{model,provider_preset_id,base_url}` and `runtime.paste.{...}` (no `schema_version` bump per `docs/ARTIFACT_SCHEMA.md` Rule 2).
+- **Input type(s):** Existing live-capture flow; this change is pure plumbing — no new fixtures.
+- **Target field type(s):** Unchanged.
+- **Outcome:** Implemented; quality / latency measurement still TODO. Repro of the original failure (Groq llama-3.3-70b for both stages on `source_packet_target_ocr_packet`) now fails fast in Stage A (image-rejection from a text-only model) — the failure mode this split is designed to resolve. The fix path (Gemini extractor + Groq paste) is now expressible in the UI and runtime; verifying the latency / quality gain is the next step.
+- **Evidence / examples:** `app/Blink/RuntimeConfigStore.swift`, `app/Blink/ControlCenterWindow.swift`, `app/python/run_once.py`, `app/python/prepare_source.py`.
+- **Decision:** Ship the split as the default config shape (v2). All existing v1 configs migrate to v2 with both rows seeded identically, so the behavior change is opt-in by editing the second row.
+- **Next step:** Capture a small bake-off: Gemini-only baseline vs Gemini-extractor + Groq-llama-paste on `source_packet_target_ocr_packet` across the 9-fixture corpus, comparing end-to-end paste latency and extraction-quality stability.
+
+
+## 2026-04-25 — Paste-latency stopwatch, stage timings, and ⌃⇧C pre-warmed Python worker
+
+- **Hypothesis:** (1) Surfacing per-paste latency and per-stage timings makes the dominant cost localizable per fixture rather than averaging over noisy field runs. (2) Speculatively spawning a `run_once.py --wait-on-stdin` worker at ⌃⇧C source-prep time eliminates Python cold-start (~200–300 ms) on the user-visible ⌃⇧V paste path.
+- **Setup:** `FeedbackCenter` gained a `StopwatchHandle` API (start/update/stop) that adds a third monospaced-digit `NSTextField` to the existing notification panel and refreshes elapsed time at 30 Hz; `TrialCoordinator` swaps the paste-flow `notify` calls for stopwatch ones, freezing the value and dismissing 1.2 s after success / failure. `PythonRunner.startWarmWorker` spawns the resident Python with stdin piped in, waits up to 5 s for a `READY <pid>` line on stdout, and returns a handle the coordinator stashes alongside the prepared source. On ⌃⇧V the coordinator hands the handle to `runOnce`, which writes the JSON args dict to stdin and reads pasted text from the worker's stdout. A new ⌃⇧C kills any leftover unconsumed worker; on any error reading from a worker, `runOnce` falls back to a fresh spawn. Workers self-time-out at 30 s (`select` on stdin). Both `google.genai` and `openai` SDKs are eagerly imported in the worker so a Groq-paste invocation does not pay first-import latency. `run.json` gained a `timings.{python_startup_ms, target_capture_ms, target_ocr_ms, source_packet_build_ms, source_packet_reused, via_warm_worker}` block — additive only. `app/scripts/install_local_app.sh` runs `python -m compileall app/python` so the cold-spawn fallback path also avoids per-launch parser work.
+- **Input type(s):** Existing live capture flow.
+- **Target field type(s):** Unchanged.
+- **Outcome:** Implemented; in-the-wild numbers still TODO. Recent field runs averaged ~1.7–2.1 s end-to-end on `source_packet_target_ocr_packet`, ~820–1320 ms of which was the model call. The stopwatch makes the residual ~370–1260 ms (capture + Vision OCR + Python cold-start + clipboard + ⌘V) directly observable per paste. The warm worker should remove ~200–300 ms of that on hits; misses (no source set, >30 s pause) fall back transparently.
+- **Evidence / examples:** `app/Blink/FeedbackCenter.swift`, `app/Blink/PythonRunner.swift`, `app/Blink/TrialCoordinator.swift`, `app/python/run_once.py`.
+- **Decision:** Ship as the default for the tester app; no kill switch (warm-worker failure is silently soft-fallback).
+- **Next step:** Capture a few field runs back-to-back, compare `timings.via_warm_worker == true` vs `false` on the same source, and verify the expected ~200–300 ms shave. If that holds, evaluate whether `python_startup_ms`, `target_capture_ms`, or `target_ocr_ms` is the next-largest non-model contributor and target it.
+
+
+## 2026-04-25 — Dogfood fixes for Flash Lite errors, paste stopwatch latency, and YC field disambiguation
+
+- **Hypothesis:** Three small fixes will remove the current dogfood blockers: avoid sending `thinkingLevel` to Gemini 2.5 Flash Lite, stop counting clipboard-restore delay as user-visible insertion time, and add a focused-field OCR label hint to text-only target packets.
+- **Setup:** Added a narrow Gemini thinking-config compatibility guard for `gemini-2.5-flash-lite`, moved `Inserter` success completion to immediately after Cmd+V synthesis while keeping delayed clipboard restore, and threaded `focused_label_hint` from target OCR geometry into `source_packet_target_text_only` prompts. The hint starts from OCR blocks immediately above or left of the focused rect and only accepts label-like text ending in `?`, `:`, or `*`.
+- **Input type(s):** Recent YC dogfood run analysis plus unit-test fixtures that mimic a YC form with multiple question labels and blank text areas.
+- **Target field type(s):** Gemini Direct paste/extractor configs, macOS clipboard insertion, and text-only OCR target routing for web form text areas.
+- **Outcome:** Implemented. Local tests pass: `python3 -m unittest discover app/python/tests`, `scratchpad/.venv/bin/python -m unittest discover scratchpad/tests`, and `bash app/scripts/install_local_app.sh --reset-tcc`. The canonical app was rebuilt, installed to `~/Applications/Blink.app`, TCC was reset for `com.blink.tester.Blink`, and the app relaunched.
+- **Evidence / examples:** `app/python/gemini_runner.py`, `app/Blink/Inserter.swift`, `app/python/target_context.py`, `app/python/source_packet.py`, `app/python/run_once.py`, `app/Resources/target_text_only_prompt.txt`, `app/python/tests/test_gemini_thinking_config.py`, `app/python/tests/test_target_context_hint.py`.
+- **Decision:** Ship all three fixes together. Keep the thinking compatibility guard intentionally narrow to `gemini-2.5-flash-lite` for this pass, then expand only when dogfood evidence or current provider docs require it.
+- **Next step:** Dogfood the YC cofounder field again and verify `host_insert_ms < 50 ms`, no Flash Lite `thinkingLevel` 400s, and `run.json.target_context.focused_label_hint` matches the focused question.
+
+
+## 2026-04-25 — Model parameter compatibility probe across all preset/model combos
+
+- **Hypothesis:** The single `DEFAULT_SETTINGS` dict in `app/python/run_once.py` blanket-applies `thinking_level: MINIMAL` and `media_resolution: MEDIA_RESOLUTION_LOW` to every (provider, model) combo. Some combos must be rejecting these params silently or with HTTP 400. We need a comprehensive matrix before adding a denylist or per-model parameter routing.
+- **Setup:** Wrote `scratchpad/probe_model_capabilities.py` — a runner that loops over every `(preset, suggested_model)` pair from `app/Resources/provider_presets.json` and fires four 64-token probes per combo: `text_default` (baseline params), `image_default` (text + tiny 32x32 PNG), `text_no_thinking` (drop `thinking_level`), `image_no_thinking`. Reuses the production `model_runner.generate_completion` so the request shape matches what `run_once.py` would send. Probe artifacts: `scratchpad/sweeps/model-capability-probe-20260425-153623/{results.json, summary.md}`.
+- **Input type(s):** Synthetic — the same trivial `"Reply OK."` text + a 32x32 black PNG for every combo. The point is API-level parameter acceptance, not generation quality.
+- **Target field type(s):** None.
+- **Outcome:** 12 of 14 combos tested (3 OpenAI Responses combos skipped — no `OPENAI_API_KEY` in `~/.blink/.env`). Five distinct findings:
+  1. **Every Gemini 2.5 model rejects `thinking_level`**, not just `gemini-2.5-flash-lite` as the dogfood audit suggested. `gemini-2.5-flash-lite`, `gemini-2.5-flash`, and `gemini-2.5-pro` all return `400 INVALID_ARGUMENT — "Thinking level is not supported for this model."` Only `gemini-3.1-flash-lite-preview` accepts `thinking_level` natively. The fallback path in `app/python/gemini_runner.py:238–247` (which would send `thinking_budget: 0` for `MINIMAL`) is dead code today because the installed `google-genai` SDK exposes `thinking_level` on `types.ThinkingConfig`, so the `if "thinking_level" in thinking_fields` branch always wins. The right routing is by model family: Gemini 3.x → `thinking_level`, Gemini 2.5 Flash/Flash Lite → `thinking_budget` with `MINIMAL=0`, Gemini 2.5 Pro → `thinking_budget` with `MINIMAL=128`, anything else → omit.
+  2. **`google/gemini-2.5-flash-lite` works fine through OpenRouter** even though the same model fails directly through `gemini-direct`. OpenRouter sanitizes/translates the params before forwarding. So the failure is provider-shaped, not model-shaped — OpenRouter is a viable workaround for any Gemini-thinking incompatibility.
+  3. **Groq's `llama-3.3-70b-versatile` rejects images** with `Error code: 400 - {'error': {'message': 'messages[1].content must be a string', ...}}` — confirms the v2 plan's repro case. The detection rule is the model passing `text_*` probes but failing `image_*` probes. Worth surfacing as a `supports_vision: false` capability flag on the preset row so users can't pick it as the **extractor** by mistake.
+  4. **Two combos stream chunks but emit empty `output_text`**: `openai/gpt-5-mini` via OpenRouter on the image probe, and `@cf/moonshotai/kimi-k2.5` via Cloudflare on the image probe. Status reads `ok` (no API error) but `output_text_length: 0`. This matches the "Kimi-Cloudflare empty-stream issue" already noted in the 2026-04-24 cross-model bake-off — likely the model emitting to `delta.reasoning_content` instead of `delta.content`. Independent fix in `model_runner._generate_openai`'s chat-completions stream loop.
+  5. **`openai-responses` preset is dead in current setup** — no `OPENAI_API_KEY` in `~/.blink/.env`. Either drop the preset from `provider_presets.json` until a key arrives, or document the omission. OpenRouter exposes `openai/gpt-5-mini` and other OpenAI models through its `chat_completions` adapter, so the preset isn't strictly required.
+- **Evidence / examples:** `scratchpad/probe_model_capabilities.py`, `scratchpad/sweeps/model-capability-probe-20260425-153623/summary.md`, `scratchpad/sweeps/model-capability-probe-20260425-153623/results.json`. Specific failure strings:
+  - Gemini 2.5 family: `"400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'Thinking level is not supported for this model.', 'status': 'INVALID_ARGUMENT'}}"`
+  - Groq llama-3.3-70b on image: `"Error code: 400 - {'error': {'message': 'messages[1].content must be a string', 'type': 'invalid_request_error', 'param': 'messages[1].content'}}"`
+- **Decision:** The fix is two-track and small. Track 1: rewrite the Gemini thinking-config builder to dispatch by model name prefix (`gemini-3.*` → `thinking_level`, `gemini-2.5-flash*` → `thinking_budget=0` for MINIMAL, `gemini-2.5-pro` → `thinking_budget=128` for MINIMAL). Track 2: annotate each model in `provider_presets.json` with a `supports_vision` flag (`true` by default; only `groq-chat:llama-3.3-70b-versatile` is `false` today) and gate the **extractor** Control Center picker so vision-incompatible models are visibly disabled or warning-flagged when paired with a request_mode that requires image input.
+- **Next step:** Capture these as `.context/attachments/plan-v3-model-capabilities.md` and ship Track 1 first (it unblocks four of the five suggested Gemini paste models). Track 2 is a smaller UI change but requires deciding whether to auto-disable or just warn — defer until Track 1 lands.
+
+
+## 2026-04-25 — Per-model Gemini thinking routing and extractor vision warning
+
+- **Hypothesis:** Routing Gemini thinking params by model family and warning on text-only extractor selections will make the Control Center's suggested model combos safer before the user spends a live copy/paste cycle.
+- **Setup:** Replaced the SDK-field probe in `app/python/gemini_runner.py` with model-family dispatch: Gemini 3.x sends `thinking_level`, Gemini 2.5 Flash/Flash Lite sends `thinking_budget` with `MINIMAL=0`, Gemini 2.5 Pro sends `thinking_budget` with `MINIMAL=128`, and older/unknown Gemini models omit thinking config. Added `supports_vision` metadata plus a `model_overrides` entry for `groq-chat:llama-3.3-70b-versatile`, then surfaced a Control Center warning when the extractor selection is text-only and the active request mode needs an image-capable extractor.
+- **Input type(s):** Production provider preset metadata and the 2026-04-25 model capability probe findings.
+- **Target field type(s):** Runtime model selection, not a paste-quality trial.
+- **Outcome:** Implemented. The first post-fix full probe (`scratchpad/sweeps/model-capability-probe-20260425-154804/`) showed Flash and Flash Lite fixed but exposed `gemini-2.5-pro` rejecting `thinking_budget=0`; after mapping Pro `MINIMAL` to `128`, the full probe at `scratchpad/sweeps/model-capability-probe-20260425-155238/` reports all `gemini-direct` probes as `ok`. Remaining expected failures are Groq `llama-3.3-70b-versatile` image probes; OpenAI Responses remains skipped for missing `OPENAI_API_KEY`. Local Python tests and `bash app/scripts/install_local_app.sh --reset-tcc` pass.
+- **Evidence / examples:** `app/python/gemini_runner.py`, `app/python/tests/test_gemini_thinking_config.py`, `app/Resources/provider_presets.json`, `app/Blink/RuntimeConfigStore.swift`, `app/Blink/ControlCenterWindow.swift`, `scratchpad/sweeps/model-capability-probe-20260425-155238/summary.md`.
+- **Decision:** Warn rather than auto-disable text-only extractor models because `source_ocr_target_text_or_full_image` can intentionally avoid source-image extraction.
+- **Next step:** Dogfood the Control Center warning manually: Groq `llama-3.3-70b-versatile` should warn in source-packet modes and clear in `source_ocr_target_text_or_full_image`.

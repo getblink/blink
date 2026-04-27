@@ -1,0 +1,1 @@
+automatically moves context between apps on your desktop. the first version is an ai-powered copy & paste tool that uses screenshots of the source window to predict what the user wants to paste. everything is deployed locally and is open source.

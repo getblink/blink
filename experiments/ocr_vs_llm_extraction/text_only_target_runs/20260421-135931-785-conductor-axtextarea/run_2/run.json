@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:57:56.062-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 4914,
+    "source_packet_chars": 2177,
+    "target_ocr_chars": 1916,
+    "target_metadata_chars": 757
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 60,
+      "prompt_token_count": 2075,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 2075
+        }
+      ],
+      "total_token_count": 2135
+    },
+    "chunk_count": 5,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:57:56 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=502",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7VW@\\x7f\\xca\\xea\\xac\\xcd\\xa6\\x12\\xe7W\\xce\\x0bB\\xadjst\\xdc,B\\xb4\\x9dya$\\xe7e8\\x17\\xdb|\\xbd\\x98t\\x99\\xb2bw\\x95e&\\xc2\\xd6'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "xDvsafDFIYe3jMcPz5mcqA8",
+      "usage_metadata": {
+        "candidates_token_count": 60,
+        "prompt_token_count": 2075,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 2075
+          }
+        ],
+        "total_token_count": 2135
+      }
+    },
+    "output_text": "Yes.\nThis last run shows the important blocker is cleared:\n\u2022 permissions are good\n\u2022 Conductor target focus is now being found\n\u2022 AX walk and geometry are working\n\u2022 Gemini is producing a concrete output instead of NEEDS_REVIEW\nSo you're ready for another real test.",
+    "output_text_length": 263
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:57:56.062-07:00",
+    "first_chunk_at": "2026-04-24T20:57:56.581-07:00",
+    "final_chunk_at": "2026-04-24T20:57:56.692-07:00",
+    "ttft_ms": 519.03,
+    "stream_duration_ms": 111.13,
+    "model_latency_ms": 630.16,
+    "request_build_ms": 0.04
+  }
+}
