@@ -5,6 +5,7 @@ __pycache__/
 .env.local
 scratchpad/.venv/
 scratchpad/runs/
+scratchpad/tldr_runs/
 scratchpad/state/*
 !scratchpad/state/.gitkeep
 scratchpad/source/*

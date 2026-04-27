@@ -26,6 +26,18 @@ See also:
 
 ---
 
+## 2026-04-27 — TL;DR + reply suggestions v0
+
+- **Hypothesis:** A single-screenshot hotkey flow that returns a one-line TL;DR plus three paste-ready replies can validate an everyday assistant moment with less plumbing than the two-image copy-paste runner.
+- **Setup:** Added an isolated `scratchpad/tldr_reply/` package and root `./tldr` wrapper. The runner listens for `ctrl+shift+t`, captures a selected window with `screencapture -W`, calls Gemini once with JSON response schema, and renders a PyObjC overlay where `1` / `2` / `3` copy a suggestion.
+- **Input type(s):** One active-window screenshot from the live desktop.
+- **Target field type(s):** Reply contexts visible in messaging, email, docs, or similar windows; no fixture/sweep schema.
+- **Outcome:** Implementation landed. Initial dogfood confirmed the second-pass non-activating overlay keeps focus in the original app. One UX gap surfaced: after choosing a suggestion, copy-only behavior is safe but easy to forget to paste.
+- **Evidence / examples:** `tldr`, `scratchpad/tldr_reply/`, `.gitignore`, `README.md`, and `CLAUDE.md`.
+- **Decision:** Keep this as a sibling experiment that does not modify `./capture`, `./sweep`, or `Blink.app`.
+- **Next step:** Add an explicit auto-paste toggle in a later iteration so users can choose between safe copy-only mode and direct insertion at the current caret.
+
+
 ## 2026-04-20 — Repository initialization
 
 - **Hypothesis:** A clean operating framework will improve experiment quality and reduce repo chaos.

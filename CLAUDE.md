@@ -36,6 +36,7 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `DOGFOOD_PLAYBOOK.md` — clean-build + TCC reset + artifact-capture procedure for `Blink.app` dogfood sessions
 - `capture` — repo-root wrapper for the resident hotkey runner
 - `sweep` — repo-root wrapper for the offline fixture sweep
+- `tldr` — repo-root wrapper for the isolated TL;DR + reply-suggestions experiment
 - `scratchpad/`
   - `README.md` — scratchpad-specific workflow and artifact layout
   - `run_gemini_trial.py` — primary resident capture runner; also owns `normalize_for_paste()` for clipboard-side post-processing
@@ -50,6 +51,7 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `prompt.txt` — current base prompt template for the clipboard assistant
   - `import_field_runs.py` — ingests tester-exported zip/dir bundles from `Blink.app` into `field_runs/`
   - `field_runs/` — landing zone for imported tester bundles; replayable by `./sweep` like any fixture
+  - `tldr_reply/` — single-screenshot TL;DR + reply-suggestions experiment with its own hotkey loop and overlay
   - `tests/` — unit tests (e.g. `test_normalize_for_paste.py`); run with `scratchpad/.venv/bin/python -m unittest discover scratchpad/tests`
   - `fixtures` — symlink to `~/conductor/shared/blink/fixtures/` in the default shared-pool workflow, or a real directory in deliberately forked workspaces
   - `.venv/` — Python 3.11 virtualenv (gitignored)
@@ -96,6 +98,16 @@ To compare saved fixtures offline:
 ```
 
 Open `compare.html` and `summary.md` in the output directory to review the sweep.
+
+To run the isolated TL;DR + reply-suggestions experiment:
+
+```bash
+./tldr
+```
+
+While it is active, `ctrl+shift+t` captures a selected window, asks Gemini for a
+one-line summary plus three candidate replies, and shows a small overlay where
+`1` / `2` / `3` copy a suggestion to the clipboard.
 
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
 
