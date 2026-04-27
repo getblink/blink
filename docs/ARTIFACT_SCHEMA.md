@@ -30,13 +30,19 @@ Every bundle is a flat directory keyed by timestamp. For a bundle at `<bundle_di
 | `fixture.json` | yes | Sweep-replayable manifest. Primary contract. |
 | `source.png` | yes | Source screenshot (PNG). Referenced by `fixture.json.source.image_path`. |
 | `target.png` | yes | Target screenshot (PNG). Referenced by `fixture.json.target.image_path`. |
-| `output.txt` | yes | Generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. |
+| `output.txt` | yes | Raw generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. Paste-normalized text is recorded separately in `run.json.paste.text` when available. |
 | `run.json` | yes* | Live-trial request/response log. *Required for tester-loop bundles; optional for sweep-replay outputs because sweep writes its own run.json per cell.* |
+| `host_profile.json` | no | Swift-side wall-clock profiling for `Blink.app` runs: capture, artifact prep, Python wall time, and paste timing. Tester loop only. |
 | `settings.json` | no | Snapshot of the capture settings used at trial time. Mirrors `fixture.json.capture_settings`. Tester loop writes this; research loop may skip. |
 | `target_metadata.json` | no | Raw, unshortened target metadata captured at trial time. Mirrors `fixture.json.target_metadata`. Present when the emitter captures a full AX tree. |
+| `prepared_source.json` | no | Cached source-packet record captured at source time. Present for request modes that precompute source context. |
+| `source_text.json` | no | Exact local source-text capture from AX selected text or a pasteboard-preserving Cmd+C. Present when the fast local source mode attempts text capture before OCR fallback. |
+| `runtime_selection.json` | no | Runtime provider/model/request-mode snapshot for the trial. Tester loop only. |
+| `target_ocr_packet.txt` | no | Paste-facing resolved target facts used by source-packet modes before any full-target-image fallback. This should stay small, usually just `FOCUSED_FIELD_LABEL` or empty. |
+| `target_ocr_packet.build.json` | no | Target OCR packet diagnostics and Blink-side sufficiency evidence, including OCR block boxes, selected row text, fallback reasons, and focus/caret rectangles when available. |
 | `source.request.jpg` | no | Preprocessed request image for source. Referenced by `fixture.json.source.request_image_path`. Research loop writes this; tester loop may skip. |
 | `target.request.jpg` | no | Preprocessed request image for target. Same as above. |
-| `ax_focused.json`, `ax_nearby.json`, `caret.json`, `geometry.json`, `clipboard.json`, `ocr.json`, `capture.json` | no | Research-loop diagnostic files. Tester loop may omit. Sweep does not read these. |
+| `ax_focused.json`, `ax_nearby.json`, `caret.json`, `geometry.json`, `clipboard.json`, `ocr.json`, `capture.json` | no | Research-loop diagnostic files. Tester loop may emit `caret.json` when AX selected-range capture succeeds. Sweep does not read these. |
 
 Unknown files are ignored by sweep. Emitters should never overwrite or rename the required files.
 
@@ -170,6 +176,20 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
   "prompt_path": "/abs/path/to/prompt.txt",
   "settings": { /* snapshot */ },
   "target_metadata": { /* same as fixture.json.target_metadata */ },
+  "source_packet": {
+    "status": "ok",
+    "prepared": true,
+    "packet_chars": 1438,
+    "kind": "local_source_text" | "native_ocr_paragraphs" | "model_extracted_text"
+  },
+  "target_context": {
+    "mode": "target_ocr_packet" | "full_target_image", // optional; source-packet modes only
+    "completeness": "sufficient" | "needs_target_image",
+    "fallback_reasons": ["no_local_target_text"],
+    "focused_label_hint": "Contact name",              // optional
+    "packet_chars": 842,
+    "full_target_image_role": "paste" | "extractor"    // only when mode == full_target_image
+  },
   "request": {
     "model": "gemini-3.1-flash-lite-preview",
     "request_send_at": "ISO-8601",
@@ -189,6 +209,13 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
     "output_text": "…",
     "output_text_length": 123
   },
+  "paste": {
+    "text": "…",                   // normalized text actually returned on stdout for paste
+    "model_text": "…",             // raw model output; mirrors response.output_text
+    "normalized": true,
+    "caret_pos": 12,               // optional
+    "existing_text_length": 34     // optional
+  },
   "timings": {
     "request_build_ms": 12.3,
     "source_image_prepare_ms": 3.1,
@@ -198,10 +225,129 @@ Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape 
     "final_chunk_at": "ISO-8601",
     "ttft_ms": 510,
     "stream_duration_ms": 180,
-    "model_latency_ms": 690
+    "model_latency_ms": 690,
+    "host_source_capture_ms": 412.7,              // optional; mirrored from host_profile.json
+    "host_source_text_capture_ms": 41.2,          // optional; exact local text attempt before OCR fallback
+    "host_source_prepare_source_packet_ms": 1184.2,
+    "host_source_set_total_ms": 1608.4,
+    "host_target_metadata_capture_ms": 44.3,
+    "host_target_caret_capture_ms": 5.8,
+    "host_target_screenshot_capture_ms": 271.6,
+    "host_target_capture_total_ms": 321.7,
+    "host_artifact_prep_ms": 18.4,
+    "host_pre_python_ms": 347.9,
+    "host_python_wall_ms": 1028.5,
+    "host_insert_ms": 71.6,
+    "host_run_target_total_ms": 1452.9
   },
   "errors": [ /* string[] — present only on error */ ],
   "warnings": [ /* string[] */ ]
+}
+```
+
+Notes:
+
+- `timings.end_to_end_ms` is the Python helper's own wall time once `run_once.py`
+  has started. It does **not** include the Swift-side capture, temp-file, or
+  paste phases.
+- The optional `host_*` timing keys are copied into `run.json.timings` by the
+  Swift app after the trial finishes so the in-app inspector can summarize them
+  without opening extra files.
+- `source_packet.kind` distinguishes the legacy model-extracted source packet
+  from exact local source text and the deterministic native OCR paragraph packet
+  used by the hybrid mode.
+- When `source_packet.kind == "local_source_text"`, `source_text.json` is the
+  source-of-truth capture payload and `prepared_source.json.runtime_signature`
+  includes the source-text digest used to reject stale prepared packets.
+- `target_context.mode` records whether the source-packet request used the
+  shared local target OCR packet or routed to the pre-request full-target-image
+  fallback.
+- `target_context.fallback_reasons` mirrors the target packet sufficiency
+  decision. Fast local source OCR and model-extracted source packets use the
+  same target-context builder and fallback policy; they differ only in
+  `source_packet.kind`.
+- `target_ocr_packet.txt` is intentionally not a debug dump. Blink acts on
+  geometry, OCR buckets, roles, and fallback reasons before generation and keeps
+  those details in `target_ocr_packet.build.json` plus `run.json.target_context`.
+
+## `host_profile.json` schema (tester loop, optional)
+
+Emitted by the Swift side of `Blink.app` after each trial. This file records the
+wall-clock phases around the Python helper and paste insertion, and mirrors the
+headline timing numbers into `run.json.timings`.
+
+```jsonc
+{
+  "schema_version": 1,
+  "bundle_id": "YYYYMMDD-HHMMSS-mmm",
+  "recorded_at": "ISO-8601",
+  "source": {
+    "captured_at": "ISO-8601",
+    "request_mode": "baseline_full_images",
+    "capture_started_at": "ISO-8601",
+    "capture_finished_at": "ISO-8601",
+    "capture_ms": 412.7,
+    "source_text_capture_started_at": "ISO-8601",  // optional
+    "source_text_capture_finished_at": "ISO-8601", // optional
+    "source_text_capture_ms": 41.2,                // optional
+    "source_text_status": "ok",                    // optional; "ok" or "no_text"
+    "source_text_method": "ax_selected_text",      // optional; or "cmd_c"
+    "source_text_chars": 1438,                     // optional
+    "prepare_source_packet_started_at": "ISO-8601",   // optional
+    "prepare_source_packet_finished_at": "ISO-8601",  // optional
+    "prepare_source_packet_ms": 1184.2,               // optional
+    "prepared_source_packet": true,                   // optional
+    "set_source_started_at": "ISO-8601",
+    "set_source_finished_at": "ISO-8601",
+    "set_source_total_ms": 1608.4
+  },
+  "target": {
+    "request_mode": "baseline_full_images",
+    "capture_started_at": "ISO-8601",
+    "capture_finished_at": "ISO-8601",
+    "metadata_capture_started_at": "ISO-8601",
+    "metadata_capture_finished_at": "ISO-8601",
+    "metadata_capture_ms": 44.3,
+    "caret_capture_started_at": "ISO-8601",
+    "caret_capture_finished_at": "ISO-8601",
+    "caret_capture_ms": 5.8,
+    "screenshot_capture_started_at": "ISO-8601",
+    "screenshot_capture_finished_at": "ISO-8601",
+    "screenshot_capture_ms": 271.6,
+    "capture_total_ms": 321.7,
+    "artifact_prep_started_at": "ISO-8601",
+    "artifact_prep_finished_at": "ISO-8601",
+    "artifact_prep_ms": 18.4,
+    "focused_bounds_present": true
+  },
+  "python": {
+    "started_at": "ISO-8601",
+    "finished_at": "ISO-8601",
+    "wall_ms": 1028.5,
+    "status": "ok"
+  },
+  "paste": {
+    "status": "ok" | "pending" | "error" | "skipped_empty_output" | "skipped_python_failure",
+    "started_at": "ISO-8601",              // optional
+    "finished_at": "ISO-8601",             // optional
+    "insert_ms": 71.6,                     // optional
+    "error": "..."                         // optional
+  },
+  "summary": {
+    "host_source_capture_ms": 412.7,
+    "host_source_text_capture_ms": 41.2,
+    "host_source_prepare_source_packet_ms": 1184.2,
+    "host_source_set_total_ms": 1608.4,
+    "host_target_metadata_capture_ms": 44.3,
+    "host_target_caret_capture_ms": 5.8,
+    "host_target_screenshot_capture_ms": 271.6,
+    "host_target_capture_total_ms": 321.7,
+    "host_artifact_prep_ms": 18.4,
+    "host_pre_python_ms": 347.9,
+    "host_python_wall_ms": 1028.5,
+    "host_insert_ms": 71.6,
+    "host_run_target_total_ms": 1452.9
+  }
 }
 ```
 

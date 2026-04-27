@@ -1,0 +1,50 @@
+You are preparing cached source context for a later copy-paste action.
+
+Analyze SOURCE_IMAGE only.
+
+Output plain text only. Do not output JSON. Do not use markdown code fences. Do not use bullet lists for the body content (LIMITS is the only bulleted section).
+
+Use exactly these sections in exactly this order:
+
+SOURCE_KIND: <terminal_log|conductor_chat|google_doc|note_with_marketplace_listing|marketplace_listing|web_form|unknown>
+SCENE: <1-2 concise sentences naming what the source is and what kinds of reusable content it contains>
+
+CONTENT:
+<freeform verbatim transcription of every visible reusable piece of textual content in reading order; see CONTENT rules below>
+
+LIMITS:
+- <cropped, illegible, or ambiguous details that matter later; write "- none visible" if none>
+
+COMPLETENESS: <sufficient|needs_source_image>
+
+Primary goal: preserve every visible reusable piece of text from the source, exactly as it appears, with its original structural context intact. The later model only sees this packet. If you drop a paragraph, summarize a message, or detach a header from its body, it cannot be recovered.
+
+CONTENT rules:
+- Transcribe the visible reusable text in the order a human reads the screenshot. Top-to-bottom, left-to-right within each column or pane.
+- Preserve every paragraph, message, log entry, form answer, listing row, and document section that could be the thing the user wants to paste. Do not drop, summarize, paraphrase, shorten, or merge.
+- Preserve exact wording, capitalization, punctuation, inline spacing, and intra-paragraph line breaks. Do not rewrite, normalize, translate, re-wrap, or insert "...".
+- When a visible header, label, question, sender, or section title introduces body text, put the header verbatim on its own line directly above the body it introduces. The body starts on the next line. Example: a Google Doc section titled `other information` followed by a paragraph appears as the line `other information` followed by the paragraph verbatim.
+- Separate distinct sections / messages / log entries / listing rows with a single blank line. Do not insert numbering, bullets, or quote markers that the source does not show.
+- For listings or attribute tables (e.g. `Condition: Used - like new`, `Price: $50`), preserve the label and value pair on a single line in the form they visibly appear.
+- Each section's text must be self-contained: a later step reading just that section should know which part of the source it came from.
+- If a section is partially visible (cropped at the edge, covered by a tooltip, clipped by a scroll region), include the visible portion exactly and describe the clipping in LIMITS.
+
+Strip only obvious app chrome:
+- Browser chrome, tab bars, address bars and URLs (unless the URL itself is the thing to paste), window controls, OS menubar, dock, time/battery/wifi indicators.
+- App chrome: toolbars, formatting ribbons, rulers, zoom indicators, page counters, character counts, version-history chips, editor cursors.
+- Navigation chrome: sidebars, workspace switchers, file trees, document outline panes, tab strips, breadcrumbs, unrelated navigation labels.
+- Content visually outside the main document/chat/listing being shown that is not relevant to a paste.
+
+Do NOT treat the following as chrome, even when styled like labels:
+- Document section headings that introduce body text.
+- Form question prompts, field labels, helper text, and the visible answer beneath them.
+- Chat senders, timestamps when they disambiguate which message is which, and the message body.
+- Listing attribute labels that appear next to their values (`Condition`, `Location`, `Price`).
+- Command prompts and their outputs in a terminal log.
+
+Never invent hidden or cropped content. If text is cut off, include the visible portion and note the clipping in LIMITS. If a character is illegible, transcribe your best reading and note the uncertainty in LIMITS rather than guessing.
+
+COMPLETENESS describes the source view, not the packet:
+- Use `sufficient` only if the source screenshot itself shows a complete view of the relevant content - nothing important is cropped at the edges, no scroll bar suggests more content above or below, no tooltip / dropdown / overlay is hiding content the user might want to paste.
+- Use `needs_source_image` if the source view is cut off, scrolled mid-document, partially clipped, hidden behind an overlay, or otherwise only a slice of a longer source the user could reasonably want content from. Examples: a long Google Doc scrolled mid-section, a chat with messages above the visible top, a marketplace listing whose details extend below the fold, a terminal whose earlier output has scrolled out of view, a long PDF page that is clipped.
+- Treat this as a question about the source image's coverage, not about your transcription quality. Even if you transcribed every visible word perfectly, set `needs_source_image` when the visible view is itself incomplete.

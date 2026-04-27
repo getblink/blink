@@ -1,0 +1,20 @@
+SOURCE_VISION_OCR_PACKET
+RAW_BLOCK_COUNT: 36
+FILTERED_BLOCK_COUNT: 26
+PARAGRAPH_COUNT: 13
+DOMINANT_CONTENT_BAND: x=463.9..1916.1 (width=1452.2, supporting_blocks=14)
+
+SECTIONS:
+- body: https://docs.google.com/document/d/1hHWnGTdPQ... Update •••
+- header_candidate: → 8+
+  body: File Edit View Insert Format Tools Gemini Extensions Help
+- header_candidate: 100% - Normal text - Arial - - 11 + :
+  body: 1 2 3 4
+- body: yc human app
+- body: Describe what your company does in 50 characters or less.*
+- body: automatically move context between apps on your desktop.
+- body: What is your company going to make? Please describe your product and what it does or will do.
+- body: first version will be ai powered copy & paste
+- body: when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.
+- body: example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times.
+- body: everything can be deployed locally and is open source.

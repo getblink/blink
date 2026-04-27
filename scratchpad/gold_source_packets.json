@@ -1,0 +1,380 @@
+{
+  "20260421-034447-726-conductor-unknown-role": {
+    "source_kind": "note_with_marketplace_listing",
+    "source_summary": "An Obsidian note dated 2026-04-20 that includes an embedded Facebook Marketplace listing for an Apple Magic Keyboard with Numeric Keypad. The reusable source content is the visible listing title, price, condition, location, pickup option, and opening description text; the note heading and API-key text are unrelated noise.",
+    "salient_text": [
+      "Apple Magic Keyboard with Keypad - Excellent Condition",
+      "$50",
+      "Listed a week ago in San Francisco, CA",
+      "Door pickup",
+      "Used - like new",
+      "Selling my Apple Magic Keyboard with Numeric Keypad. It is in great condition, clean, and all keys are fully responsive."
+    ],
+    "candidate_fields": [
+      {
+        "field": "title",
+        "value": "Apple Magic Keyboard with Keypad - Excellent Condition",
+        "confidence": "high",
+        "evidence": "Visible listing title in the embedded Marketplace screenshot"
+      },
+      {
+        "field": "price",
+        "value": "$50",
+        "confidence": "high",
+        "evidence": "Visible current listing price"
+      },
+      {
+        "field": "condition",
+        "value": "Used - like new",
+        "confidence": "high",
+        "evidence": "Visible condition row"
+      },
+      {
+        "field": "location",
+        "value": "San Francisco, CA",
+        "confidence": "high",
+        "evidence": "Visible listing location line"
+      },
+      {
+        "field": "description",
+        "value": "Selling my Apple Magic Keyboard with Numeric Keypad. It is in great condition, clean, and all keys are fully responsive. Perfect for home office setups, coding, or data entry.",
+        "confidence": "high",
+        "evidence": "Visible opening description paragraphs"
+      }
+    ],
+    "style_notes": [
+      "Marketplace listing language is concise and factual.",
+      "Ignore unrelated note chrome, date, and API-key text outside the embedded listing."
+    ],
+    "uncertainties": [
+      "The listing continues below the fold, so later detail rows and description text are cropped."
+    ],
+    "can_answer_without_source_image": false
+  },
+  "20260421-040106-166-conductor-unknown-role": {
+    "source_kind": "conductor_chat",
+    "source_summary": "A Conductor chat view showing a user request to update markdown cross-links and a visible assistant reply describing documentation-spine cleanup. The reusable content is the assistant's summary of which root docs were updated and what stayed intentionally unchanged.",
+    "salient_text": [
+      "i like your take. please make sure all markdown files are updated accordingly and root level markdown files",
+      "Updated the Markdown tree so the repo has a clearer documentation spine.",
+      "README.md, CLAUDE.md, and AGENTS.md",
+      "./capture / ./sweep",
+      "No code or config behavior changed in this pass."
+    ],
+    "candidate_fields": [
+      {
+        "field": "message",
+        "value": "Updated the Markdown tree so the repo has a clearer documentation spine. The main work is in README.md, CLAUDE.md, and AGENTS.md. README.md is now the entrypoint with the current ./capture / ./sweep flow, while CLAUDE.md and AGENTS.md both point back to the other root docs plus the key files under docs/ and scratchpad/.",
+        "confidence": "high",
+        "evidence": "Visible assistant response paragraphs"
+      },
+      {
+        "field": "message",
+        "value": "The remaining stale mentions are only in generated artifacts like old run.json and saved fixture data, which I left alone on purpose. No code or config behavior changed in this pass.",
+        "confidence": "high",
+        "evidence": "Visible closing assistant paragraph"
+      }
+    ],
+    "style_notes": [
+      "Technical repo-maintenance response.",
+      "Concise, explanatory prose with explicit file references."
+    ],
+    "uncertainties": [
+      "Lower parts of the thread extend below the visible fold."
+    ],
+    "can_answer_without_source_image": true
+  },
+  "20260421-040120-784-conductor-unknown-role": {
+    "source_kind": "terminal_log",
+    "source_summary": "A terminal window running Blink scratchpad capture. It shows the runner status, hotkeys, and two successive capture attempts that both saved fixtures with missing target metadata and NEEDS_REVIEW paste results.",
+    "salient_text": [
+      "Blink scratchpad is running.",
+      "- set source: ctrl+shift+c",
+      "- run target: ctrl+shift+v",
+      "target metadata captured (not_found)",
+      "fixture saved (20260421-040106-166-conductor-unknown-role)",
+      "[[NEEDS_REVIEW: Target metadata indicates no focused field to populate.]]",
+      "fixture saved (20260421-040120-784-conductor-unknown-role)",
+      "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]"
+    ],
+    "candidate_fields": [
+      {
+        "field": "message",
+        "value": "Blink scratchpad is running with source loaded; the visible hotkeys are ctrl+shift+c for set source and ctrl+shift+v for run target.",
+        "confidence": "high",
+        "evidence": "Visible runner banner and hotkey lines"
+      },
+      {
+        "field": "message",
+        "value": "Two successive captures saved fixtures 20260421-040106-166-conductor-unknown-role and 20260421-040120-784-conductor-unknown-role, both with target metadata not found and NEEDS_REVIEW outputs.",
+        "confidence": "high",
+        "evidence": "Visible capture logs and Gemini outputs"
+      }
+    ],
+    "style_notes": [
+      "Machine-generated terminal log format.",
+      "Timings and fixture identifiers are important exact details."
+    ],
+    "uncertainties": [
+      "The log continues above and below the visible region."
+    ],
+    "can_answer_without_source_image": true
+  },
+  "20260421-040337-924-conductor-unknown-role": {
+    "source_kind": "terminal_log",
+    "source_summary": "A terminal log showing repeated Blink capture attempts with target metadata not found, two saved fixtures that ended in NEEDS_REVIEW, and then a later source-capture failure. The reusable content is the failure pattern and exact fixture IDs.",
+    "salient_text": [
+      "target metadata captured (not_found)",
+      "AX walk (not_found)",
+      "fixture saved (20260421-040106-166-conductor-unknown-role)",
+      "[[NEEDS_REVIEW: Target metadata indicates no focused field to populate.]]",
+      "fixture saved (20260421-040120-784-conductor-unknown-role)",
+      "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]",
+      "source capture failed (no details)"
+    ],
+    "candidate_fields": [
+      {
+        "field": "message",
+        "value": "Repeated Blink capture attempts failed because target metadata was not found, producing NEEDS_REVIEW outputs for fixtures 20260421-040106-166-conductor-unknown-role and 20260421-040120-784-conductor-unknown-role.",
+        "confidence": "high",
+        "evidence": "Visible repeated target-metadata and Gemini result lines"
+      },
+      {
+        "field": "message",
+        "value": "A later source capture failed with the exact terminal line: source capture failed (no details).",
+        "confidence": "high",
+        "evidence": "Visible terminal error line near the bottom of the screenshot"
+      }
+    ],
+    "style_notes": [
+      "Terminal log text should stay literal rather than paraphrased.",
+      "Fixture IDs and error strings matter."
+    ],
+    "uncertainties": [
+      "The tmux log is cropped and continues outside the screenshot."
+    ],
+    "can_answer_without_source_image": true
+  },
+  "20260421-041218-866-conductor-axtextarea": {
+    "source_kind": "conductor_chat",
+    "source_summary": "A Conductor chat response describing new AX focus-resolution fallbacks in Blink and the next manual validation step. The reusable content is the list of fallback probes and the recommended follow-up test.",
+    "salient_text": [
+      "subtree probe results with top fallback candidates",
+      "a focus_resolution_summary",
+      "if AXFocusedUIElement fails, it now tries:",
+      "frontmost app AXFocusedUIElement",
+      "frontmost app AXActiveElement",
+      "frontmost app AXSharedFocusElements",
+      "a bounded descendant search through the focused window subtree for likely editable/focused nodes",
+      "I also fixed the AX sibling focus comparison to use == instead of is while I was in there.",
+      "I verified the updated files compile."
+    ],
+    "candidate_fields": [
+      {
+        "field": "message",
+        "value": "If AXFocusedUIElement fails, Blink now tries frontmost app AXFocusedUIElement, frontmost app AXActiveElement, frontmost app AXSharedFocusElements, and a bounded descendant search through the focused window subtree for likely editable or focused nodes.",
+        "confidence": "high",
+        "evidence": "Visible bullet list in the assistant response"
+      },
+      {
+        "field": "message",
+        "value": "I verified the updated files compile. Next step is to run ./capture again for the Conductor target case and send either the new terminal line for target metadata captured or the newest run.json target_metadata_debug.",
+        "confidence": "high",
+        "evidence": "Visible follow-up instruction paragraph"
+      }
+    ],
+    "style_notes": [
+      "Technical debugging guidance.",
+      "Specific AX symbol names should remain exact."
+    ],
+    "uncertainties": [
+      "The thread continues below the visible fold."
+    ],
+    "can_answer_without_source_image": true
+  },
+  "20260421-135931-785-conductor-axtextarea": {
+    "source_kind": "conductor_chat",
+    "source_summary": "A Conductor chat response evaluating Blink's AX-based direction and saying the latest run cleared the main blocker. The reusable content is the long-term architecture guidance and the visible readiness-for-next-test checklist.",
+    "salient_text": [
+      "For Blink specifically, I'd treat this as the right long-term direction:",
+      "use AX to identify target field, bounds, nearby structure, and sometimes caret",
+      "use event tap only as a signal that typing/focus activity happened",
+      "add AX observers later for focused element changed, selected text changed, and value changed",
+      "always tolerate partial AX exposure and degrade gracefully to field-bounds-level context",
+      "This last run shows the important blocker is cleared:",
+      "Gemini is producing a concrete output instead of NEEDS_REVIEW",
+      "So you're ready for another real test."
+    ],
+    "candidate_fields": [
+      {
+        "field": "message",
+        "value": "For Blink specifically, the right long-term direction is to use AX to identify target field, bounds, nearby structure, and sometimes caret; use event tap only as a signal that typing or focus activity happened; add AX observers later for focused element changed, selected text changed, and value changed; and always tolerate partial AX exposure with field-bounds-level fallbacks.",
+        "confidence": "high",
+        "evidence": "Visible architecture-guidance bullets"
+      },
+      {
+        "field": "message",
+        "value": "This last run shows the important blocker is cleared: permissions are good, Conductor target focus is now being found, AX walk and geometry are working, and Gemini is producing a concrete output instead of NEEDS_REVIEW.",
+        "confidence": "high",
+        "evidence": "Visible readiness summary and bullet list"
+      }
+    ],
+    "style_notes": [
+      "Advisory, technical, and encouraging.",
+      "The message mixes architecture guidance with immediate testing advice."
+    ],
+    "uncertainties": [
+      "The later best-next-test bullets extend below the fold."
+    ],
+    "can_answer_without_source_image": true
+  },
+  "20260421-140159-935-conductor-axtextarea": {
+    "source_kind": "google_doc",
+    "source_summary": "A Google Doc draft for a YC application under the working title yc human app. The visible source contains a short company description, a fuller first-version product description centered on AI-powered copy-paste, example use cases, and a local open-source positioning statement.",
+    "salient_text": [
+      "yc human app",
+      "Describe what your company does in 50 characters or less.",
+      "automatically move context between apps on your desktop.",
+      "What is your company going to make? Please describe your product and what it does or will do.",
+      "first version will be ai powered copy & paste",
+      "when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.",
+      "example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times.",
+      "everything can be deployed locally and is open source."
+    ],
+    "candidate_fields": [
+      {
+        "field": "name",
+        "value": "yc human app",
+        "confidence": "high",
+        "evidence": "Visible doc title text near the top of the page"
+      },
+      {
+        "field": "description",
+        "value": "automatically move context between apps on your desktop.",
+        "confidence": "high",
+        "evidence": "Visible answer to the 50-character company-description prompt"
+      },
+      {
+        "field": "description",
+        "value": "first version will be ai powered copy & paste. when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.",
+        "confidence": "high",
+        "evidence": "Visible opening product-description lines"
+      },
+      {
+        "field": "description",
+        "value": "example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times. everything can be deployed locally and is open source.",
+        "confidence": "high",
+        "evidence": "Visible example-use-cases and deployment-positioning lines"
+      }
+    ],
+    "style_notes": [
+      "Rough YC-application draft written in lowercase, informal prose.",
+      "The visible copy is product-oriented and concrete rather than polished marketing."
+    ],
+    "uncertainties": [
+      "The document continues below the fold, so later paragraphs are cropped."
+    ],
+    "can_answer_without_source_image": false
+  },
+  "20260421-140702-773-conductor-axtextarea": {
+    "source_kind": "google_doc",
+    "source_summary": "A Google Doc draft for a YC application under the working title yc human app. The visible source contains a short company description, a fuller first-version product description centered on AI-powered copy-paste, example use cases, and a local open-source positioning statement.",
+    "salient_text": [
+      "yc human app",
+      "Describe what your company does in 50 characters or less.",
+      "automatically move context between apps on your desktop.",
+      "What is your company going to make? Please describe your product and what it does or will do.",
+      "first version will be ai powered copy & paste",
+      "when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.",
+      "example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times.",
+      "everything can be deployed locally and is open source."
+    ],
+    "candidate_fields": [
+      {
+        "field": "name",
+        "value": "yc human app",
+        "confidence": "high",
+        "evidence": "Visible doc title text near the top of the page"
+      },
+      {
+        "field": "description",
+        "value": "automatically move context between apps on your desktop.",
+        "confidence": "high",
+        "evidence": "Visible answer to the 50-character company-description prompt"
+      },
+      {
+        "field": "description",
+        "value": "first version will be ai powered copy & paste. when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.",
+        "confidence": "high",
+        "evidence": "Visible opening product-description lines"
+      },
+      {
+        "field": "description",
+        "value": "example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times. everything can be deployed locally and is open source.",
+        "confidence": "high",
+        "evidence": "Visible example-use-cases and deployment-positioning lines"
+      }
+    ],
+    "style_notes": [
+      "Rough YC-application draft written in lowercase, informal prose.",
+      "The visible copy is product-oriented and concrete rather than polished marketing."
+    ],
+    "uncertainties": [
+      "The document continues below the fold, so later paragraphs are cropped."
+    ],
+    "can_answer_without_source_image": false
+  },
+  "20260421-200834-043-microsoft-edge-axtextarea": {
+    "source_kind": "google_doc",
+    "source_summary": "A Google Doc startup-application draft for autocompleter.dev and Blink. The visible content includes the product URL, a longer company description, two named capabilities shipping now, the current location answer, and the beginning of the location rationale.",
+    "salient_text": [
+      "https://autocompleter.dev",
+      "What is your company going to make? Please describe your product and what it does or will do.",
+      "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment.",
+      "1. Intelligent copy-paste.",
+      "2. Contextual autocomplete.",
+      "San Francisco, USA / San Francisco, USA",
+      "Already here. This is where the density of early adopters is"
+    ],
+    "candidate_fields": [
+      {
+        "field": "name",
+        "value": "https://autocompleter.dev",
+        "confidence": "high",
+        "evidence": "Visible product link at the top of the doc body"
+      },
+      {
+        "field": "description",
+        "value": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.",
+        "confidence": "high",
+        "evidence": "Visible opening company-description paragraph"
+      },
+      {
+        "field": "message",
+        "value": "1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually.",
+        "confidence": "high",
+        "evidence": "Visible capability section for Intelligent copy-paste"
+      },
+      {
+        "field": "message",
+        "value": "2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes.",
+        "confidence": "high",
+        "evidence": "Visible opening lines of the Contextual autocomplete section"
+      },
+      {
+        "field": "location",
+        "value": "San Francisco, USA / San Francisco, USA",
+        "confidence": "high",
+        "evidence": "Visible location answer line"
+      }
+    ],
+    "style_notes": [
+      "Polished startup-application prose.",
+      "The visible section mixes narrative description with numbered capability lists."
+    ],
+    "uncertainties": [
+      "The document continues below the fold, so later sections and the full location rationale are cropped."
+    ],
+    "can_answer_without_source_image": false
+  }
+}

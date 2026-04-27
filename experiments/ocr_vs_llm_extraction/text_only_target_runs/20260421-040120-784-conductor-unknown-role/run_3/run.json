@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:57:51.592-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 4243,
+    "source_packet_chars": 2337,
+    "target_ocr_chars": 1430,
+    "target_metadata_chars": 412
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 16,
+      "prompt_token_count": 2296,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 2296
+        }
+      ],
+      "total_token_count": 2312
+    },
+    "chunk_count": 3,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:57:52 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=629",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7\\x8a\\xfd\\xdc\\x9b\\xec\\xd4\\xfa\\x9bU\\x18J\\x18\\xe2\\xc5\\xdf\\xd8\\x87\\x7f\\xc41\\xf5\\xba\\xf6\\xf3\\x82@\\x12\\xbf\\x15\\xbe`\\xd2\\x05\\x95\\xb1=;\\x98k\\x88/pg8Q'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "wDvsadeDDdPVjMcP3Mjw-AQ",
+      "usage_metadata": {
+        "candidates_token_count": 16,
+        "prompt_token_count": 2296,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 2296
+          }
+        ],
+        "total_token_count": 2312
+      }
+    },
+    "output_text": "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]",
+    "output_text_length": 72
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:57:51.592-07:00",
+    "first_chunk_at": "2026-04-24T20:57:52.241-07:00",
+    "final_chunk_at": "2026-04-24T20:57:52.302-07:00",
+    "ttft_ms": 649.57,
+    "stream_duration_ms": 60.26,
+    "model_latency_ms": 709.84,
+    "request_build_ms": 0.03
+  }
+}

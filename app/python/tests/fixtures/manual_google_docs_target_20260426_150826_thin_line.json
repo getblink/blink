@@ -1,0 +1,166 @@
+{
+  "fixture_id": "manual_google_docs_target_20260426_150826_thin_line",
+  "source_run_ids": [
+    "20260426-150826-973",
+    "20260426-150837-092",
+    "20260426-150851-593",
+    "20260426-150907-863",
+    "20260426-150917-861"
+  ],
+  "description": "Sanitized fixture distilled from manual Google Docs target runs after Docs accessibility support exposed a thin Group caret line at the active field row.",
+  "image_size_pixels": {
+    "width": 3024,
+    "height": 1790
+  },
+  "target_metadata": {
+    "status": "ok",
+    "frontmost_app": "Google Chrome",
+    "focused_app": "Google Chrome",
+    "focused_app_bundle_id": "com.google.Chrome",
+    "focused_role": "Group",
+    "focused_subrole": "AXApplicationGroup",
+    "focused_description": "",
+    "focused_label": "",
+    "focused_value": "",
+    "focused_value_preview": "",
+    "focused_bounds": {
+      "height": 0,
+      "width": 626,
+      "x": 496,
+      "y": 396
+    },
+    "permission": {
+      "accessibility_trusted": true
+    },
+    "warnings": [],
+    "_full": {}
+  },
+  "caret": {
+    "bounds": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 982
+    },
+    "range": {
+      "length": 0,
+      "location": 0
+    },
+    "status": "ok",
+    "text_marker": {
+      "line_marker_range": {
+        "bounds": {
+          "rect": {
+            "height": 1,
+            "width": 626,
+            "x": 496,
+            "y": 395
+          },
+          "status": "success"
+        }
+      }
+    }
+  },
+  "geometry": {
+    "focused_bounds_points": {
+      "height": 0,
+      "width": 626,
+      "x": 496,
+      "y": 396
+    },
+    "status": "ok",
+    "window_bounds_points": {
+      "height": 895,
+      "width": 1512,
+      "x": 0,
+      "y": 33
+    }
+  },
+  "target_ocr_payload": {
+    "status": "ok",
+    "blocks": [
+      {
+        "text": "Target - Google Docs",
+        "bbox_pixels": {
+          "x": 690,
+          "y": 18,
+          "width": 300,
+          "height": 28
+        },
+        "confidence": 0.99
+      },
+      {
+        "text": "docs.google.com/document/d/<redacted>/edit",
+        "bbox_pixels": {
+          "x": 314,
+          "y": 111,
+          "width": 2440,
+          "height": 37
+        },
+        "confidence": 0.95
+      },
+      {
+        "text": "Contact name:",
+        "bbox_pixels": {
+          "x": 791.16,
+          "y": 730.0,
+          "width": 197.79,
+          "height": 26.46
+        },
+        "confidence": 0.99
+      },
+      {
+        "text": "Phone:",
+        "bbox_pixels": {
+          "x": 791.16,
+          "y": 846.0,
+          "width": 101.12,
+          "height": 26.46
+        },
+        "confidence": 0.99
+      },
+      {
+        "text": "Email:",
+        "bbox_pixels": {
+          "x": 791.16,
+          "y": 962.0,
+          "width": 87.91,
+          "height": 26.46
+        },
+        "confidence": 0.99
+      },
+      {
+        "text": "Follow-up date:",
+        "bbox_pixels": {
+          "x": 791.16,
+          "y": 1078.0,
+          "width": 206.58,
+          "height": 30.79
+        },
+        "confidence": 0.99
+      },
+      {
+        "text": "Notes:",
+        "bbox_pixels": {
+          "x": 791.16,
+          "y": 1194.0,
+          "width": 92.3,
+          "height": 26.46
+        },
+        "confidence": 0.99
+      }
+    ]
+  },
+  "expected": {
+    "focused_label_hint": "Contact name:",
+    "focus_rect_local_pixels": {
+      "x": 992,
+      "y": 726,
+      "width": 1252,
+      "height": 40
+    },
+    "text_only_route": {
+      "mode": "text_only"
+    }
+  }
+}

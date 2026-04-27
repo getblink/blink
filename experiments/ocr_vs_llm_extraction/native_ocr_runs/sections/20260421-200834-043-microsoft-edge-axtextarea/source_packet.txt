@@ -1,0 +1,15 @@
+SOURCE_VISION_OCR_PACKET
+RAW_BLOCK_COUNT: 59
+FILTERED_BLOCK_COUNT: 37
+PARAGRAPH_COUNT: 8
+DOMINANT_CONTENT_BAND: x=852.0..2358.2 (width=1506.2, supporting_blocks=27)
+
+SECTIONS:
+- body: Tools Gemini Extensions Help
+- header_candidate: Normal text - Arial 11 + I F
+  body: 1 2 6
+- body: https://autocompleter.dev
+- body: What is your company going to make? Please describe your product and what it does or will do.
+- body: A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow. Two capabilities shipping now:
+- body: 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI). 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals. The deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every Al interaction better. Paste becomes smarter, autocomplete becomes relevant, and eventually the system can proactively surface information before you ask.
+- body: Where do you live now, and where would the company be based after YC? San Francisco, USA / San Francisco, USA Explain your decision regarding location. Already here. This is where the density of early adopters is: people who run 15 apps simultaneously and immediately understand why this exists.

@@ -1,0 +1,47 @@
+You are preparing cached source context for a later copy-paste action.
+
+Analyze SOURCE_IMAGE only.
+
+Return JSON with exactly this shape:
+{
+  "source_kind": "terminal_log|conductor_chat|google_doc|note_with_marketplace_listing|marketplace_listing|web_form|unknown",
+  "source_summary": "1-2 sentences about the reusable visible content only",
+  "salient_text": ["exact visible spans copied from the source"],
+  "candidate_fields": [
+    {
+      "field": "title|price|condition|description|phone|date|name|location|message|unknown",
+      "value": "exact visible text or a lightly joined visible span",
+      "confidence": "high|medium|low",
+      "evidence": "very short note about where it appears"
+    }
+  ],
+  "style_notes": ["short formatting or tone notes worth preserving later"],
+  "uncertainties": ["missing, cropped, or ambiguous details that matter later"],
+  "can_answer_without_source_image": true
+}
+
+Priority:
+1. Capture the exact visible content a later paste decision would need.
+2. Ignore UI chrome and app scaffolding unless it is itself the reusable content.
+3. Be conservative about hidden or cropped text.
+
+Rules:
+- JSON only.
+- Prefer exact visible spans over paraphrase.
+- `salient_text` should usually contain 4-8 exact spans that matter for later paste choices.
+- `candidate_fields` should contain at most 5 items.
+- Do not include generic UI chrome such as toolbars, sidebars, menu labels, tab names, window controls, browser chrome, file paths, local cwd strings, or timestamps unless they are clearly the main reusable content.
+- Do not invent hidden or cropped content.
+- Keep `style_notes` short and specific. Avoid generic notes like "uses a monospaced font".
+- Keep the packet compact, but not at the expense of dropping the exact value that would later be pasted.
+
+Source-specific guidance:
+- `terminal_log`: capture exact commands, errors, fixture ids, statuses, hotkeys, and outcomes. Do not turn file-system paths into semantic fields like `location`.
+- `conductor_chat`: capture decisive instructions, decisions, bullet items, and visible quoted code identifiers. Ignore sidebar labels and chat chrome.
+- `google_doc` or `web_form`: capture visible question labels plus the visible answer text. Use `description`, `message`, `name`, `location`, etc. only for text that is actually visible in the document.
+- `marketplace_listing` or `note_with_marketplace_listing`: capture listing title, price, condition, location, pickup/shipping notes, and visible description text. Ignore surrounding app chrome and unrelated note text.
+
+`can_answer_without_source_image`:
+- Set to true only if the visible packet likely contains enough exact content for later paste decisions without re-reading the source image.
+- Set to false if important text is cropped, hidden, ambiguous, or if the visible source is only a partial view of a longer document/listing and a later target could reasonably ask for content outside the visible spans.
+- If false, explain the limiting reason in `uncertainties`.

@@ -27,6 +27,11 @@ def plain_data(value: Any) -> Any:
         return None
     if hasattr(value, "model_dump"):
         return value.model_dump(exclude_none=True)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {
+            "type": type(value).__name__,
+            "length": len(value),
+        }
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
@@ -166,6 +171,49 @@ def prepare_request_image(image_path: Path, settings: dict[str, Any]) -> dict[st
     }
 
 
+def normalized_model_name(model: Any) -> str:
+    text = str(model or "").strip().lower()
+    return text.removeprefix("models/")
+
+
+def _gemini_thinking_kwargs(model: Any, level: Any) -> dict[str, Any] | None:
+    """Map Blink's logical thinking level to Gemini's per-family API shape."""
+    if level in {None, "", False}:
+        return None
+    level_text = str(level).strip()
+    if not level_text or level_text.lower() in {"none", "false"}:
+        return None
+
+    normalized = normalized_model_name(model)
+    upper = level_text.upper()
+    if normalized.startswith("gemini-3"):
+        return {"include_thoughts": False, "thinking_level": upper}
+    if normalized.startswith("gemini-2.5-pro"):
+        budget = {
+            "MINIMAL": 128,
+            "LOW": 256,
+            "MEDIUM": 1024,
+            "HIGH": 4096,
+        }.get(upper, 128)
+        return {"include_thoughts": False, "thinking_budget": budget}
+    if normalized.startswith("gemini-2.5"):
+        budget = {
+            "MINIMAL": 0,
+            "LOW": 256,
+            "MEDIUM": 1024,
+            "HIGH": 4096,
+        }.get(upper, 0)
+        return {"include_thoughts": False, "thinking_budget": budget}
+    return None
+
+
+def thinking_config_kwargs(settings: dict[str, Any]) -> dict[str, Any] | None:
+    return _gemini_thinking_kwargs(
+        settings.get("model", ""),
+        settings.get("thinking_level", "MINIMAL"),
+    )
+
+
 def build_user_parts(
     settings: dict[str, Any],
     source_path: Path,
@@ -230,15 +278,8 @@ def build_generation_config(settings: dict[str, Any], prompt_text: str) -> Any:
         "media_resolution": settings["media_resolution"],
     }
 
-    raw_thinking_level = settings.get("thinking_level", "MINIMAL")
-    if raw_thinking_level not in {None, "", False}:
-        thinking_level = str(raw_thinking_level).upper()
-        thinking_fields = getattr(types.ThinkingConfig, "model_fields", {})
-        thinking_kwargs: dict[str, Any] = {"include_thoughts": False}
-        if "thinking_level" in thinking_fields:
-            thinking_kwargs["thinking_level"] = thinking_level
-        elif thinking_level == "MINIMAL":
-            thinking_kwargs["thinking_budget"] = 0
+    thinking_kwargs = thinking_config_kwargs(settings)
+    if thinking_kwargs is not None:
         config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
 
     return types.GenerateContentConfig(**config_kwargs)

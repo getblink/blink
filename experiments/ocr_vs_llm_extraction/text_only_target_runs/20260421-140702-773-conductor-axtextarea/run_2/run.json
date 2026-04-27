@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:57:59.981-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 2520,
+    "source_packet_chars": 1021,
+    "target_ocr_chars": 603,
+    "target_metadata_chars": 832
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 46,
+      "prompt_token_count": 1581,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 1581
+        }
+      ],
+      "total_token_count": 1627
+    },
+    "chunk_count": 4,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:58:00 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=464",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7\\xbdaA\\xb0\\xba\\xb3\\xd8w\\x06:-\\xad\\xa5\\xb89\\xb6O\\\\\\xc9\\x99\\xe5\\xba@\\xcf\\xf3\\xcd\\x1f\\x02R\\xd5\\xcb\\xab>\\x0b\\xa1M.~\\x18\\x1b9T\\xe7!\\x81'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "yDvsaf_dGqWAjMcPlOvN8As",
+      "usage_metadata": {
+        "candidates_token_count": 46,
+        "prompt_token_count": 1581,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 1581
+          }
+        ],
+        "total_token_count": 1627
+      }
+    },
+    "output_text": "automatically moves context between apps on your desktop. the first version is an ai-powered copy & paste tool that uses screenshots of the source window to predict what the user wants to paste. everything is deployed locally and is open source.",
+    "output_text_length": 245
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:57:59.981-07:00",
+    "first_chunk_at": "2026-04-24T20:58:00.504-07:00",
+    "final_chunk_at": "2026-04-24T20:58:00.601-07:00",
+    "ttft_ms": 523.03,
+    "stream_duration_ms": 97.43,
+    "model_latency_ms": 620.47,
+    "request_build_ms": 0.03
+  }
+}

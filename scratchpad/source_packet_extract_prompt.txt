@@ -1,0 +1,29 @@
+You are preparing cached source context for a later copy-paste action.
+
+Analyze SOURCE_IMAGE only.
+
+Return JSON with this shape:
+{
+  "source_kind": "one short label",
+  "source_summary": "2-3 short sentences",
+  "salient_text": ["exact short strings copied from the source"],
+  "candidate_fields": [
+    {
+      "field": "title|price|condition|description|phone|date|name|location|message|unknown",
+      "value": "exact text",
+      "confidence": "high|medium|low",
+      "evidence": "very short note"
+    }
+  ],
+  "style_notes": ["tone or formatting constraints that should survive into later paste decisions"],
+  "uncertainties": ["missing or ambiguous details"],
+  "can_answer_without_source_image": true
+}
+
+Rules:
+- JSON only.
+- Prefer exact text over paraphrase when the source is legible.
+- Do not invent hidden or cropped content.
+- Include only information likely to matter across multiple target fields.
+- Keep the packet compact.
+- If critical information seems unreadable or ambiguous, set `can_answer_without_source_image` to false and explain why in `uncertainties`.
