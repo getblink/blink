@@ -19,10 +19,16 @@ the procedure. See also:
 bash app/scripts/install_local_app.sh --reset-tcc
 ```
 
-Then re-grant Input Monitoring, Accessibility, and Screen Recording when macOS
-prompts on first use.
+On relaunch, Blink opens its permissions window and immediately requests Screen
+Recording so it appears in System Settings. Re-grant Input Monitoring,
+Accessibility, and Screen Recording before trusting a dogfood run.
 
-Drop `--reset-tcc` when the bundle ID's existing grants should carry over.
+Use `--reset-tcc` after Swift app-code changes, or when System Settings still
+shows Blink enabled but the new build behaves like it lost Accessibility /
+Input Monitoring access anyway.
+
+Drop `--reset-tcc` only when the installed binary and current grants are known
+good.
 
 ## What the workspace already has
 
@@ -53,9 +59,15 @@ None of that needs to be redone per dogfood session.
 7. With `--reset-tcc`: kill Blink, reset TCC entries for
    `com.blink.tester.Blink` (All, Accessibility, ScreenCapture, ListenEvent,
    PostEvent, AppleEvents, SystemPolicyAllFiles), and nudge LaunchServices to
-   forget the old binary. `BLINK_KEEP_INSTALLED=1` is passed so the freshly
-   installed canonical app is preserved.
+   forget the old binary. This is the safe default after Swift app-code changes,
+   because macOS can keep Accessibility visually enabled while still binding the
+   grant to an older Blink build. `BLINK_KEEP_INSTALLED=1` is passed so the
+   freshly installed canonical app is preserved.
 8. Relaunch `~/Applications/Blink.app`.
+
+On launch, Blink calls the real Screen Recording request API and opens the
+in-app permissions window. This is intentional: `CGPreflightScreenCaptureAccess`
+can report an existing state, but it does not create the System Settings row.
 
 Pass `--no-launch` to install without relaunching.
 
@@ -79,7 +91,8 @@ Every trial writes a v1 bundle to:
   target.png            # target screenshot
   target_metadata.json  # accessibility tree
   settings.json         # capture settings snapshot
-  run.json              # request/response log + timings
+  run.json              # request/response log + Python timings (+ mirrored host_* timings)
+  host_profile.json     # Swift-side wall-clock profiling for capture / prep / Python / paste
   output.txt            # generated text
   stderr.log            # run_once.py stderr (added by PythonRunner.swift)
 ```
@@ -87,7 +100,10 @@ Every trial writes a v1 bundle to:
 Nothing in the workspace needs to be configured for this — capture is on by
 default. `run.json` already includes `request_build_ms`,
 `source/target_image_prepare_ms`, `ttft_ms`, `stream_duration_ms`,
-`model_latency_ms`, and `end_to_end_ms`. No profiling flag exists or is needed.
+`model_latency_ms`, and `end_to_end_ms`, plus mirrored `host_*` timing keys once
+the Swift side finishes the trial. `host_profile.json` is the fuller wall-clock
+breakdown for source capture, target capture, artifact prep, Python wall time,
+and paste insertion. No profiling flag exists or is needed.
 
 Because the runs directory is machine-wide, bundles from multiple workspaces
 interleave by timestamp. Fixture IDs stay unique so sweeps don't collide, but
@@ -110,9 +126,13 @@ python scratchpad/import_field_runs.py ~/Desktop/Blink-runs-<ts>.zip
 
 ## Troubleshooting
 
-- **Hotkeys silently do nothing after install**: TCC didn't re-prompt. Either
-  re-run with `--reset-tcc`, or open System Settings → Privacy & Security and
-  confirm the three grants for `Blink`.
+- **Hotkeys silently do nothing after install**: TCC may still be pointing at
+  the old Blink binary even if System Settings says Blink is enabled. Re-run
+  with `--reset-tcc` after Swift app-code changes, then re-grant the three
+  permissions on first use.
+- **Blink is missing from Screen Recording**: quit/relaunch the canonical
+  `~/Applications/Blink.app`. Blink requests Screen Recording on startup so
+  macOS creates the row; `CGPreflightScreenCaptureAccess` alone is not enough.
 - **`GEMINI_API_KEY is not set` in `run.json`**: `.env` didn't copy. Check
   `.context/conductor/setup-receipt.json` for `env_status: "copied"`. If
   missing, seed the canonical `.env` once at `$CONDUCTOR_ROOT_PATH/.env`, then
@@ -124,3 +144,7 @@ python scratchpad/import_field_runs.py ~/Desktop/Blink-runs-<ts>.zip
   emits stderr. A successful run with no progress lines (e.g. very old build
   from before the sidecar wiring) leaves no file. Rebuild to pick up
   `PythonRunner.swift`'s stderr persistence.
+- **You need the full live timing breakdown**: open `run.json` for the mirrored
+  `host_*` summary fields or `host_profile.json` for the full phase-by-phase
+  record. Control Center also shows the mirrored `host_*` timings in the run
+  summary for recent runs.

@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:58:02.314-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 4109,
+    "source_packet_chars": 2178,
+    "target_ocr_chars": 757,
+    "target_metadata_chars": 1110
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 290,
+      "prompt_token_count": 1887,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 1887
+        }
+      ],
+      "total_token_count": 2177
+    },
+    "chunk_count": 14,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:58:02 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=370",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7\\x94|\\x93b\\xf1\\xd6j0t\\xdf\\xfa\\xb5\\xb2l\\x82\\xe6,\\x84L\\x0f\\x1e\\\\)x$\\xa8\\xac\\x11\\xbb\\x94giJ\\xa1\\xc3\\x95?\\xe1\\xfc\\xf1\\xe3\\x8a\\x97TH'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "yjvsacSRKZLGjMcPqaWasAU",
+      "usage_metadata": {
+        "candidates_token_count": 290,
+        "prompt_token_count": 1887,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 1887
+          }
+        ],
+        "total_token_count": 2177
+      }
+    },
+    "output_text": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities shipping now:\n\n- 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI).\n- 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals.\n\nThe deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every AI interaction better. Paste becomes smarter, autocomplete becomes smarter, and eventually the system can proactively surface information before you ask.",
+    "output_text_length": 1376
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:58:02.314-07:00",
+    "first_chunk_at": "2026-04-24T20:58:02.702-07:00",
+    "final_chunk_at": "2026-04-24T20:58:03.384-07:00",
+    "ttft_ms": 388.39,
+    "stream_duration_ms": 682.28,
+    "model_latency_ms": 1070.67,
+    "request_build_ms": 0.04
+  }
+}

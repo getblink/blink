@@ -1,0 +1,83 @@
+{
+  "status": "ok",
+  "request": {
+    "model": "gemini-3.1-flash-lite-preview",
+    "request_send_at": "2026-04-24T20:57:49.494-07:00",
+    "prompt_chars": 3018,
+    "mode": "source_packet_target_text_only",
+    "instruction_chars": 3813,
+    "source_packet_chars": 1886,
+    "target_ocr_chars": 1451,
+    "target_metadata_chars": 412
+  },
+  "response": {
+    "usage_metadata": {
+      "candidates_token_count": 4,
+      "prompt_token_count": 1906,
+      "prompt_tokens_details": [
+        {
+          "modality": "TEXT",
+          "token_count": 1906
+        }
+      ],
+      "total_token_count": 1910
+    },
+    "chunk_count": 3,
+    "response_metadata": {
+      "sdk_http_response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "content-disposition": "attachment",
+          "vary": "Origin, X-Origin, Referer",
+          "transfer-encoding": "chunked",
+          "date": "Sat, 25 Apr 2026 03:57:49 GMT",
+          "server": "scaffolding on HTTPServer2",
+          "x-xss-protection": "0",
+          "x-frame-options": "SAMEORIGIN",
+          "x-content-type-options": "nosniff",
+          "server-timing": "gfet4t7; dur=483",
+          "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        }
+      },
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "",
+                "thought_signature": "b'\\x124\\n2\\x01\\x0c9\\xd6\\xc7W\\x86\\xcc\\xc3\\x8c0\\x88\\xbas<\\xb0%\\x1co\\x9b\\x8c\\xafsEE\\x85\\xcd\\x8b\\xdfn.\\xectbp\\xd5n\\xdc\\xbdu\\x1fT\\xf3\\x08\\x82G\\xcb\\xeb=\\xd9'"
+              }
+            ],
+            "role": "model"
+          },
+          "finish_reason": "STOP",
+          "index": 0
+        }
+      ],
+      "model_version": "gemini-3.1-flash-lite-preview",
+      "response_id": "vTvsaZ6tO57TjMcPs93tgAs",
+      "usage_metadata": {
+        "candidates_token_count": 4,
+        "prompt_token_count": 1906,
+        "prompt_tokens_details": [
+          {
+            "modality": "TEXT",
+            "token_count": 1906
+          }
+        ],
+        "total_token_count": 1910
+      }
+    },
+    "output_text": "[[BLANK]]",
+    "output_text_length": 9
+  },
+  "timings": {
+    "request_send_at": "2026-04-24T20:57:49.494-07:00",
+    "first_chunk_at": "2026-04-24T20:57:50.018-07:00",
+    "final_chunk_at": "2026-04-24T20:57:50.040-07:00",
+    "ttft_ms": 523.7,
+    "stream_duration_ms": 21.46,
+    "model_latency_ms": 545.16,
+    "request_build_ms": 0.05
+  }
+}

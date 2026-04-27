@@ -1,0 +1,21 @@
+SOURCE_VISION_OCR_PACKET
+RAW_BLOCK_COUNT: 44
+FILTERED_BLOCK_COUNT: 36
+PARAGRAPH_COUNT: 14
+DOMINANT_CONTENT_BAND: x=399.7..2278.2 (width=1878.5, supporting_blocks=18)
+
+SECTIONS:
+- body: → 8° gemini-screenshot-experiment origin/main ^
+- body: Start Chat Discuss Librar... +
+- body: INTERRUPTED BY USER
+- body: 25 • 5*
+- body: i like your take. please make sure all markdown files are updated accordingly and root level markdown files (readme, claude and agents.md all refer to other important markdown files and so forth so a clear tree is formed).
+- body: › 18 tool calls, 4 messages › 5]
+- body: Updated the Markdown tree so the repo has a clearer documentation spine.
+- body: The main work is in README.md, CLAUDE.md, and AGENTS.md. (README md is now the entrypoint with the current . /capture )/./ sweep flow, while CLAUDE.md and AGENTS.md both point back to the other root docs plus the key files under docs/ and scratchpad/. I also added cross-links and current-workflow notes to docs/PROJECT_BRIEF.md, docs/MANUAL_COPY_PASTE_PLAYBOOK.md, docs/EXPERIMENT_LOG.md, scratchpad/README.ma, and scratchpad/eval_configs/README.md.
+- body: I also checked for stale tracked Markdown references to the old ctri+option hotkeys and the old make_trial.py - first workflow. The remaining stale mentions are only in generated artifacts like old run. json and saved fixture data, which I left alone on purpose. No code or config behavior changed in this pass.
+- body: 2m, 14s • Ma AGENTS.md +21 - 0 Ma CLAUDE.md +48 -17 MI README.md +41 - 36 Ma EXPERIMENT_LOG.md +7 - 0
+- body: +4 more +48 - 0
+- body: Enter your plan adjustments here...
+- body: ® GPT-5.4 4 all High +
+- body: S03
