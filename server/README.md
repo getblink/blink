@@ -4,6 +4,8 @@ Small FastAPI backend for the standalone TLDR app experiment. It owns the
 Gemini call so the shipped client never carries `GEMINI_API_KEY`, and it
 reuses Blink's capability-token convention for closed dogfood.
 
+Railway should deploy this service with the service root set to `server/`.
+
 See also:
 
 - [`docs/SERVER_CONTRACT.md`](../docs/SERVER_CONTRACT.md) for the endpoint contract the Swift workspace can depend on
@@ -86,10 +88,12 @@ curl -X POST \
 
 ## Railway deploy
 
-1. Point Railway at the repo root so the `server/Procfile` command runs.
+1. Set the Railway service root directory to `server/`.
 2. Set `GEMINI_API_KEY` and `BLINK_API_TOKENS` as Railway secrets.
-3. Deploy and confirm `GET /healthz` returns `200`.
-4. Point `BLINK_PROXY_URL` at the deployed URL for dogfood clients.
+3. Use the start command from `server/Procfile`, which resolves to:
+   `uvicorn main:app --host 0.0.0.0 --port $PORT`
+4. Deploy and confirm `GET /healthz` returns `200`.
+5. Point `BLINK_PROXY_URL` at the deployed URL for dogfood clients.
 
 ## Fork note
 

@@ -9,10 +9,14 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 
-from scratchpad.env_loader import load_workspace_env
-
-from . import gemini
-from .auth import require_bearer_token
+try:
+    from . import gemini
+    from .auth import require_bearer_token
+    from .env_loader import load_workspace_env
+except ImportError:
+    import gemini  # type: ignore[no-redef]
+    from auth import require_bearer_token  # type: ignore[no-redef]
+    from env_loader import load_workspace_env  # type: ignore[no-redef]
 
 
 load_workspace_env()
