@@ -18,7 +18,13 @@ from scratchpad.gemini_runner import plain_data
 from scratchpad.hotkey import HotkeyListener
 
 from .capture import capture_active_window
-from .gemini import DEFAULT_SETTINGS, create_client, generate_tldr_and_suggestions
+from .gemini import (
+    DEFAULT_SETTINGS,
+    create_client,
+    generate_tldr_and_suggestions,
+    generate_via_proxy,
+    proxy_settings_from_env,
+)
 from .overlay import show_result_panel
 
 
@@ -59,7 +65,10 @@ class TldrReplyApp:
     def __init__(self) -> None:
         self.settings = load_settings()
         self.prompt_text = PROMPT_PATH.read_text(encoding="utf-8")
-        self.client = create_client(os.environ.get("GEMINI_API_KEY"), self.settings)
+        self.proxy_settings = proxy_settings_from_env()
+        self.client = None
+        if self.proxy_settings is None:
+            self.client = create_client(os.environ.get("GEMINI_API_KEY"), self.settings)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tldr-reply")
         self.listener = HotkeyListener()
         self.listener.register(HOTKEY, self._on_hotkey)
@@ -192,8 +201,9 @@ class TldrReplyApp:
         meta: dict[str, Any] = {
             "hotkey_at": hotkey_at,
             "run_dir": str(run_dir),
-            "model": self.settings["model"],
+            "model": None if self.proxy_settings else self.settings["model"],
             "settings": self.settings,
+            "proxy_url": None if self.proxy_settings is None else self.proxy_settings["url"],
             "chosen_index": None,
             "chosen_text": None,
             "dismissed_at": None,
@@ -209,12 +219,19 @@ class TldrReplyApp:
             return
 
         try:
-            response = generate_tldr_and_suggestions(
-                self.client,
-                self.settings,
-                self.prompt_text,
-                screenshot_path,
-            )
+            if self.proxy_settings is None:
+                response = generate_tldr_and_suggestions(
+                    self.client,
+                    self.settings,
+                    self.prompt_text,
+                    screenshot_path,
+                )
+            else:
+                response = generate_via_proxy(
+                    self.settings,
+                    screenshot_path,
+                    self.proxy_settings,
+                )
         except Exception as exc:
             response = {
                 "status": "error",
@@ -223,7 +240,10 @@ class TldrReplyApp:
                 "raw": str(exc),
                 "usage": None,
                 "duration_ms": None,
+                "model": None,
             }
+        if response.get("model"):
+            meta["model"] = response["model"]
         meta["gemini_ms"] = response.get("duration_ms")
         save_json(response_path, response)
         save_json(meta_path, meta)

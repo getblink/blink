@@ -5,12 +5,18 @@ import sys
 
 from scratchpad.env_loader import load_workspace_env
 
+from .gemini import proxy_settings_from_env
 from .runner import TldrReplyApp
 
 
 def main() -> int:
     load_workspace_env()
-    if not os.environ.get("GEMINI_API_KEY"):
+    try:
+        proxy_settings = proxy_settings_from_env()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if proxy_settings is None and not os.environ.get("GEMINI_API_KEY"):
         print("Set GEMINI_API_KEY before running ./tldr.", file=sys.stderr)
         return 1
 
