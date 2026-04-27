@@ -26,6 +26,17 @@ See also:
 
 ---
 
+## 2026-04-27 — Standalone TLDR server prep
+
+- **Hypothesis:** A tiny server-owned TLDR backend lets us dogfood the standalone Swift app without shipping a Gemini key, while keeping prompt and model iteration decoupled from app releases.
+- **Setup:** Added a new `server/` package with FastAPI `/healthz` and `/tldr` endpoints, shared bearer-token validation, a deliberate fork of the TLDR Gemini helper, Railway deployment files, and server-specific docs. Updated `scratchpad/tldr_reply/` so `./tldr` can route screenshots through `BLINK_PROXY_URL` + `BLINK_PROXY_TOKEN` and still emit the same local artifacts.
+- **Input type(s):** Single active-window screenshots from the TLDR runner or future standalone client.
+- **Target field type(s):** Reply contexts visible inside the captured window; same TLDR/reply-suggestion surface as the local experiment.
+- **Outcome:** Implementation landed. The repo now has a server contract, a proxy-capable local dogfood path, and revocable tester tokens without moving to real auth yet.
+- **Evidence / examples:** `server/`, `docs/SERVER_CONTRACT.md`, `scratchpad/tldr_reply/gemini.py`, `scratchpad/tldr_reply/runner.py`, `.env.example`, `README.md`, and `CLAUDE.md`.
+- **Decision:** Keep the backend intentionally narrow: no persistence, no per-user auth, and no coupling to `Blink.app`.
+- **Next step:** Run the endpoint locally and through Railway with a real screenshot fixture, then let the standalone Swift workspace point at the same `/tldr` contract.
+
 ## 2026-04-27 — TL;DR + reply suggestions v0
 
 - **Hypothesis:** A single-screenshot hotkey flow that returns a one-line TL;DR plus three paste-ready replies can validate an everyday assistant moment with less plumbing than the two-image copy-paste runner.

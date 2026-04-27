@@ -1,0 +1,5 @@
+fastapi
+google-genai==1.73.1
+httpx
+python-multipart
+uvicorn[standard]

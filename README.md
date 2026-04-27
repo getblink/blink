@@ -35,7 +35,9 @@ There is also a separate TL;DR + reply-suggestions experiment:
 
 It listens for `ctrl+shift+t`, captures one selected window, asks Gemini for a
 one-line summary plus three reply candidates, and shows them in a small overlay.
-Artifacts land under `scratchpad/tldr_runs/`; see
+Artifacts land under `scratchpad/tldr_runs/`; if `BLINK_PROXY_URL` and
+`BLINK_PROXY_TOKEN` are set, the request routes through the new standalone TLDR
+server instead of direct Gemini. See
 [`scratchpad/tldr_reply/`](scratchpad/tldr_reply/README.md).
 
 In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/conductor/shared/blink/fixtures/`, so new workspaces inherit the full captured corpus automatically while archived sweeps still remain self-contained.
@@ -91,6 +93,8 @@ fixtures, profiling timings, `host_profile.json`, and debug logs land per trial.
 - [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md): durable experiment history and outcomes
 - [scratchpad/README.md](scratchpad/README.md): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
 - [scratchpad/tldr_reply/README.md](scratchpad/tldr_reply/README.md): isolated TL;DR + reply-suggestions hotkey experiment
+- [server/README.md](server/README.md): Railway-ready TLDR backend for server-owned prompt/model/key handling
+- [docs/SERVER_CONTRACT.md](docs/SERVER_CONTRACT.md): HTTP contract for the standalone TLDR client
 - [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
 - [scratchpad/providers/README.md](scratchpad/providers/README.md): sweep-only provider adapters (Gemini + OpenAI-compatible)
 - [app/README.md](app/README.md): tester-deployment channel (Swift app + bundled Python)
@@ -101,6 +105,7 @@ fixtures, profiling timings, `host_profile.json`, and debug logs land per trial.
 - `docs/` contains the product brief, artifact schema, manual playbook, and experiment log
 - `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, evaluation configs, and the `field_runs/` + `import_field_runs.py` bridge from the tester app
 - `scratchpad/tldr_reply/` contains an isolated single-screenshot TL;DR + reply-suggestions experiment
+- `server/` contains the standalone TLDR backend: FastAPI app, Railway Procfile, Gemini fork, and deploy notes
 - `app/` contains the signed/notarized Swift `.app` scaffolding, production Python (`app/python/`), resources, build scripts, and the XcodeGen spec
 - `site/` is the standalone marketing landing page (Astro, static, deployed to Cloudflare Pages)
 - `capture` is the repo-root wrapper for the resident capture runner

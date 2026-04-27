@@ -13,6 +13,10 @@ The runner loads `.env` / `.env.local`, listens for `ctrl+shift+t`, asks macOS
 to select a window screenshot, sends that single image to Gemini, and shows a
 centered overlay with a one-line TL;DR plus three reply suggestions.
 
+If both `BLINK_PROXY_URL` and `BLINK_PROXY_TOKEN` are set, the runner sends the
+PNG to `POST <BLINK_PROXY_URL>/tldr` instead and uses the server-owned prompt /
+model selection. Without those vars, it keeps the direct Gemini path.
+
 Model settings are intentionally local to this experiment. The defaults live in
 `gemini.py`; optional overrides can go in `scratchpad/tldr_reply/settings.json`
 without affecting `./capture`.
@@ -31,6 +35,8 @@ Artifacts are written under `scratchpad/tldr_runs/<timestamp>/`:
 - `screenshot.png`
 - `response.json`
 - `meta.json`
+
+`meta.json` records the proxy URL when proxy mode is active.
 
 Known v0 limitations:
 
