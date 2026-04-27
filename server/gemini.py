@@ -5,13 +5,11 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from google import genai
 from google.genai import types
-
-from scratchpad.gemini_runner import plain_data
-
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "model": "gemini-3.1-flash-lite-preview",
@@ -20,6 +18,32 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "media_resolution": "MEDIA_RESOLUTION_LOW",
     "timeout_seconds": 120,
 }
+
+
+def plain_data(value: Any) -> Any:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(exclude_none=True)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): plain_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain_data(item) for item in value]
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    for attr in ("x", "y", "width", "height"):
+        if hasattr(value, attr):
+            break
+    else:
+        return str(value)
+
+    payload: dict[str, Any] = {}
+    for attr in ("x", "y", "width", "height"):
+        if hasattr(value, attr):
+            payload[attr] = float(getattr(value, attr))
+    return payload
 
 
 def create_client(api_key: str | None, settings: dict[str, Any]) -> genai.Client:
