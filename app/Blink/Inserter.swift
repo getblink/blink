@@ -48,8 +48,8 @@ enum Inserter {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
                 restore(pasteboard: pasteboard, items: savedItems)
-                completion(.success(()))
             }
+            completion(.success(()))
         }
     }
 

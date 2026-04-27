@@ -1,0 +1,18 @@
+SOURCE_VISION_OCR_PACKET
+RAW_BLOCK_COUNT: 74
+FILTERED_BLOCK_COUNT: 36
+PARAGRAPH_COUNT: 11
+DOMINANT_CONTENT_BAND: x=1261.6..1828.2 (width=566.6, supporting_blocks=22)
+
+SECTIONS:
+- body: A" →
+- body: Apple Magic Keyboard with Keypad - Excellent Condition $50 $70 Listed a week ago in San Francisco, CA • Door pickup
+- body: & Edit
+- body: Details Condition Used - like new Color White Is Wireless (Y/N) Yes Has Bluetooth (Y/N) Yes Selling my Apple Magic Keyboard with Numeric Keypad. It is in great condition, clean, and all keys are fully responsive. Perfect for home office setups, coding, or data entry.
+- body: Details - Full-size layout with numeric keypad and denimont navination
+- body: Mark as sold
+- header_candidate: Mark as pending
+  body: Offer shipping
+- body: Boost listing
+- body: # A" ≥ Update •• Chat
+- body: Perfect for home office setups, coding, or data Mataile entry. 0 backlinks 0- 24 words

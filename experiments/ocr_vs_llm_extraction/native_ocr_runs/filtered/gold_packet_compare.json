@@ -1,0 +1,213 @@
+{
+  "gold_path": "/Users/henryz2004/conductor/workspaces/blink/prague/scratchpad/gold_source_packets.json",
+  "pred_dir": "/Users/henryz2004/conductor/workspaces/blink/prague/experiments/ocr_vs_llm_extraction/native_ocr_runs/filtered",
+  "summary": {
+    "packet_formats": [
+      "text"
+    ],
+    "fixture_count": 9,
+    "salient_text_recall": 0.985,
+    "candidate_field_strict_recall": null,
+    "candidate_field_loose_recall": 0.714,
+    "source_kind_accuracy": 0.0,
+    "can_answer_accuracy": 0.0,
+    "salient_text_total": 66,
+    "salient_text_matches": 65,
+    "candidate_field_total": 28,
+    "candidate_field_strict_matches": null,
+    "candidate_field_loose_only_matches": 20,
+    "source_kind_matches": 0,
+    "can_answer_matches": 0
+  },
+  "results": {
+    "20260421-034447-726-conductor-unknown-role": {
+      "packet_format": "text",
+      "salient_text_total": 6,
+      "salient_text_matches": 6,
+      "salient_text_misses": [],
+      "candidate_fields_total": 5,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 5,
+      "candidate_fields_misses": [],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": false,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 634
+    },
+    "20260421-040106-166-conductor-unknown-role": {
+      "packet_format": "text",
+      "salient_text_total": 5,
+      "salient_text_matches": 5,
+      "salient_text_misses": [],
+      "candidate_fields_total": 2,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 2,
+      "candidate_fields_misses": [],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": true,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 1380
+    },
+    "20260421-040120-784-conductor-unknown-role": {
+      "packet_format": "text",
+      "salient_text_total": 8,
+      "salient_text_matches": 7,
+      "salient_text_misses": [
+        "fixture saved (20260421-040120-784-conductor-unknown-role)"
+      ],
+      "candidate_fields_total": 2,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 0,
+      "candidate_fields_misses": [
+        {
+          "field": "message",
+          "value": "Blink scratchpad is running with source loaded; the visible hotkeys are ctrl+shift+c for set source and ctrl+shift+v for run target.",
+          "confidence": "high",
+          "evidence": "Visible runner banner and hotkey lines"
+        },
+        {
+          "field": "message",
+          "value": "Two successive captures saved fixtures 20260421-040106-166-conductor-unknown-role and 20260421-040120-784-conductor-unknown-role, both with target metadata not found and NEEDS_REVIEW outputs.",
+          "confidence": "high",
+          "evidence": "Visible capture logs and Gemini outputs"
+        }
+      ],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": true,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 2128
+    },
+    "20260421-040337-924-conductor-unknown-role": {
+      "packet_format": "text",
+      "salient_text_total": 7,
+      "salient_text_matches": 7,
+      "salient_text_misses": [],
+      "candidate_fields_total": 2,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 0,
+      "candidate_fields_misses": [
+        {
+          "field": "message",
+          "value": "Repeated Blink capture attempts failed because target metadata was not found, producing NEEDS_REVIEW outputs for fixtures 20260421-040106-166-conductor-unknown-role and 20260421-040120-784-conductor-unknown-role.",
+          "confidence": "high",
+          "evidence": "Visible repeated target-metadata and Gemini result lines"
+        },
+        {
+          "field": "message",
+          "value": "A later source capture failed with the exact terminal line: source capture failed (no details).",
+          "confidence": "high",
+          "evidence": "Visible terminal error line near the bottom of the screenshot"
+        }
+      ],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": true,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 2287
+    },
+    "20260421-041218-866-conductor-axtextarea": {
+      "packet_format": "text",
+      "salient_text_total": 9,
+      "salient_text_matches": 9,
+      "salient_text_misses": [],
+      "candidate_fields_total": 2,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 0,
+      "candidate_fields_misses": [
+        {
+          "field": "message",
+          "value": "If AXFocusedUIElement fails, Blink now tries frontmost app AXFocusedUIElement, frontmost app AXActiveElement, frontmost app AXSharedFocusElements, and a bounded descendant search through the focused window subtree for likely editable or focused nodes.",
+          "confidence": "high",
+          "evidence": "Visible bullet list in the assistant response"
+        },
+        {
+          "field": "message",
+          "value": "I verified the updated files compile. Next step is to run ./capture again for the Conductor target case and send either the new terminal line for target metadata captured or the newest run.json target_metadata_debug.",
+          "confidence": "high",
+          "evidence": "Visible follow-up instruction paragraph"
+        }
+      ],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": true,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 1007
+    },
+    "20260421-135931-785-conductor-axtextarea": {
+      "packet_format": "text",
+      "salient_text_total": 8,
+      "salient_text_matches": 8,
+      "salient_text_misses": [],
+      "candidate_fields_total": 2,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 0,
+      "candidate_fields_misses": [
+        {
+          "field": "message",
+          "value": "For Blink specifically, the right long-term direction is to use AX to identify target field, bounds, nearby structure, and sometimes caret; use event tap only as a signal that typing or focus activity happened; add AX observers later for focused element changed, selected text changed, and value changed; and always tolerate partial AX exposure with field-bounds-level fallbacks.",
+          "confidence": "high",
+          "evidence": "Visible architecture-guidance bullets"
+        },
+        {
+          "field": "message",
+          "value": "This last run shows the important blocker is cleared: permissions are good, Conductor target focus is now being found, AX walk and geometry are working, and Gemini is producing a concrete output instead of NEEDS_REVIEW.",
+          "confidence": "high",
+          "evidence": "Visible readiness summary and bullet list"
+        }
+      ],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": true,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 1816
+    },
+    "20260421-140159-935-conductor-axtextarea": {
+      "packet_format": "text",
+      "salient_text_total": 8,
+      "salient_text_matches": 8,
+      "salient_text_misses": [],
+      "candidate_fields_total": 4,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 4,
+      "candidate_fields_misses": [],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": false,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 877
+    },
+    "20260421-140702-773-conductor-axtextarea": {
+      "packet_format": "text",
+      "salient_text_total": 8,
+      "salient_text_matches": 8,
+      "salient_text_misses": [],
+      "candidate_fields_total": 4,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 4,
+      "candidate_fields_misses": [],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": false,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 877
+    },
+    "20260421-200834-043-microsoft-edge-axtextarea": {
+      "packet_format": "text",
+      "salient_text_total": 7,
+      "salient_text_matches": 7,
+      "salient_text_misses": [],
+      "candidate_fields_total": 5,
+      "candidate_fields_strict_matches": null,
+      "candidate_fields_loose_only_matches": 5,
+      "candidate_fields_misses": [],
+      "source_kind_match": false,
+      "can_answer_match": false,
+      "gold_can_answer_without_source_image": false,
+      "pred_can_answer_without_source_image": null,
+      "pred_packet_chars": 1851
+    }
+  }
+}

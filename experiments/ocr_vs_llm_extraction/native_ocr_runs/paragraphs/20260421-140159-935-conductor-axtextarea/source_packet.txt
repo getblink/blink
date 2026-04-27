@@ -1,0 +1,25 @@
+https://docs.google.com/document/d/1hHWnGTdPQ... Update •••
+
+→ 8+
+
+File Edit View Insert Format Tools Gemini Extensions Help
+
+100% - Normal text - Arial - - 11 + :
+
+1 2 3 4
+
+yc human app
+
+Describe what your company does in 50 characters or less.*
+
+automatically move context between apps on your desktop.
+
+What is your company going to make? Please describe your product and what it does or will do.
+
+first version will be ai powered copy & paste
+
+when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste.
+
+example use cases - filling out application fields from a resume pdf or google doc. copy and pasting from an image. relisting items on ecommerce platforms w/out having to switch between two tabs dozens of times.
+
+everything can be deployed locally and is open source.

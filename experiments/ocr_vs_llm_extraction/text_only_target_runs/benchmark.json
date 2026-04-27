@@ -1,0 +1,325 @@
+{
+  "generated_at": "2026-04-24T20:58:04.555-07:00",
+  "config_path": "/Users/henryz2004/conductor/workspaces/blink/prague/scratchpad/eval_configs/flash-lite-low-minimal.json",
+  "source_packet_sweep": "/Users/henryz2004/conductor/workspaces/blink/prague/scratchpad/sweeps/source-packet-v3-ocr-refined-20260424-164555",
+  "target_prompt_path": "/Users/henryz2004/conductor/workspaces/blink/prague/experiments/ocr_vs_llm_extraction/text_only_target_prompt.txt",
+  "summary": {
+    "fixture_count": 9,
+    "runs_per_fixture": 3,
+    "request_path_ms_avg": 636.51,
+    "request_path_ms_median": 556.78,
+    "request_path_ms_min": 467.17,
+    "request_path_ms_max": 1168.52,
+    "ttft_ms_avg": 489.48,
+    "exact_match_baseline_rate": 0.0,
+    "exact_match_with_image_rate": 0.111
+  },
+  "results": [
+    {
+      "fixture_id": "20260421-034447-726-conductor-unknown-role",
+      "baseline_output": "AlzaSyBDxgT25Gq66UHaIINrqEb_cUeEcYswYXo",
+      "with_image_output": "Selling my Apple Magic Keyboard with Numeric Keypad. It is in great condition, clean, and all keys are fully responsive. Perfect for home office setups, coding, or data entry.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 601.39,
+          "ttft_ms": 600.23,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 522.13,
+          "ttft_ms": 521.18,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 521.47,
+          "ttft_ms": 520.95,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-040106-166-conductor-unknown-role",
+      "baseline_output": "Looks good. The documentation spine is much clearer now. I've verified that all root-level markdown files (README, CLAUDE, AGENTS) are updated and correctly cross-linked to the docs/ and scratchpad/ directories. I also cleaned up the stale references to the old hotkeys and make_trial.py.",
+      "with_image_output": "Updated the Markdown tree so the repo has a clearer documentation spine.\n\nThe main work is in README.md, CLAUDE.md, and AGENTS.md. README.md is now the entrypoint with the current ./capture / ./sweep flow, while CLAUDE.md and AGENTS.md both point back to the other root docs plus the key files under docs/ and scratchpad/. I also added cross-links and current-workflow notes to docs/PROJECT_BRIEF.md, docs/MANUAL_COPY_PASTE_PLAYBOOK.md, docs/EXPERIMENT_LOG.md, scratchpad/README.md, and scratchpad/eval_configs/README.md.\n\nI also checked for stale tracked Markdown references to the old ctrl+option hotkeys and the old make_trial.py - first workflow. The remaining stale mentions are only in generated artifacts like old run.json and saved fixture data, which I left alone on purpose. No code or config behavior changed in this pass.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 521.45,
+          "ttft_ms": 521.1,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 545.21,
+          "ttft_ms": 523.7,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 503.8,
+          "ttft_ms": 501.4,
+          "output_text": "[[BLANK]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-040120-784-conductor-unknown-role",
+      "baseline_output": "Updated the Markdown tree so the repo has a clearer documentation spine.\n\nThe main work is in README.md, CLAUDE.md, and AGENTS.md. README.md is now the entrypoint with the current ./capture / ./sweep flow, while CLAUDE.md and AGENTS.md both point back to the other root docs plus the key files under docs/ and scratchpad/. I also added cross-links and current-workflow notes to docs/PROJECT_BRIEF.md, docs/MANUAL_COPY_PASTE_PLAYBOOK.md, docs/EXPERIMENT_LOG.md, scratchpad/README.md, and scratchpad/eval_configs/README.md.\n\nI also checked for stale tracked Markdown references to the old ctrl+option hotkeys and the old make_trial.py - first workflow. The remaining stale mentions are only in generated artifacts like old run.json and saved fixture data, which I left alone on purpose. No code or config behavior changed in this pass.",
+      "with_image_output": "ran it again.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 519.9,
+          "ttft_ms": 519.1,
+          "output_text": "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 520.22,
+          "ttft_ms": 408.18,
+          "output_text": "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 709.87,
+          "ttft_ms": 649.57,
+          "output_text": "[[NEEDS_REVIEW: No specific input field identified in target metadata.]]",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-040337-924-conductor-unknown-role",
+      "baseline_output": "The logs show that the `target` metadata is consistently returning `not_found` because Conductor is the frontmost app at the time of capture. To fix this, ensure you click into the actual destination field in the target app before triggering the shortcut, and select the target window rather than Conductor in the screenshot picker.",
+      "with_image_output": "I understand. I will ensure the target application is focused before triggering the capture to avoid the \"Conductor\" metadata issue.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 718.26,
+          "ttft_ms": 651.44,
+          "output_text": "/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/runs",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 477.99,
+          "ttft_ms": 416.66,
+          "output_text": "/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/runs",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 551.86,
+          "ttft_ms": 501.29,
+          "output_text": "/Users/henryz2004/conductor/workspaces/blink/kyiv/scratchpad/runs",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-041218-866-conductor-axtextarea",
+      "baseline_output": "I've run ./capture and attached the new terminal line and the updated run.json. Let me know if this helps determine if Conductor's subtree is accessible.",
+      "with_image_output": "- the new terminal line for target metadata captured ,or\n- the newest run.json 's target_metadata_debug",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 467.17,
+          "ttft_ms": 402.86,
+          "output_text": "the new terminal line for target metadata captured, or the newest run.json's target_metadata_debug",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 468.15,
+          "ttft_ms": 416.08,
+          "output_text": "the new terminal line for target metadata captured, or the newest run.json's target_metadata_debug",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 497.16,
+          "ttft_ms": 466.07,
+          "output_text": "the new terminal line for target metadata captured, or the newest run.json's target_metadata_debug",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-135931-785-conductor-axtextarea",
+      "baseline_output": "That sounds like a solid plan. I'm ready for the next test\u2014let's see how it handles a labeled form field.",
+      "with_image_output": "Yes.\nThis last run shows the important blocker is cleared:\n\u2022 permissions are good\n\u2022 Conductor target focus is now being found\n\u2022 AX walk and geometry are working\n\u2022 Gemini is producing a concrete output instead of NEEDS_REVIEW\n\nSo you're ready for another real test.\nBest next test:\n\u2022 keep Conductor as target if you want to validate the fixed AX path there\n\u2022 use a source with a very obvious short payload, so it's easy to judge whether Blink copied the right thing\n\u2022 then try one labeled form field in another app, like Chrome, to compare \"generic text area\" vs \"semantically labeled field\"\n\nWhat I'd watch for in the next run:\n\u2022 target metadata captured (ok - AXTextArea) or another real role\n\u2022 fixture slug not unknown-role\n\u2022 output quality, not just whether metadata exists\n\u2022 whether the model starts over-copying visible source text when the target field lacks a semantic label\n\nIf you send me the next run after that, I can help separate:\n\u2022 capture/metadata issues\n\u2022 prompt/context issues\n\u2022 model judgment issues",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 561.73,
+          "ttft_ms": 433.64,
+          "output_text": "Yes.\nThis last run shows the important blocker is cleared:\n\u2022 permissions are good\n\u2022 Conductor target focus is now being found\n\u2022 AX walk and geometry are working\n\u2022 Gemini is producing a concrete output instead of NEEDS_REVIEW\nSo you're ready for another real test.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 630.2,
+          "ttft_ms": 519.03,
+          "output_text": "Yes.\nThis last run shows the important blocker is cleared:\n\u2022 permissions are good\n\u2022 Conductor target focus is now being found\n\u2022 AX walk and geometry are working\n\u2022 Gemini is producing a concrete output instead of NEEDS_REVIEW\nSo you're ready for another real test.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 664.4,
+          "ttft_ms": 510.05,
+          "output_text": "Yes.\nThis last run shows the important blocker is cleared:\n\u2022 permissions are good\n\u2022 Conductor target focus is now being found\n\u2022 AX walk and geometry are working\n\u2022 Gemini is producing a concrete output instead of NEEDS_REVIEW\nSo you're ready for another real test.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-140159-935-conductor-axtextarea",
+      "baseline_output": "is an AI-powered copy-and-paste tool that automatically moves context between apps on your desktop. It allows users to fill out application fields from resumes or documents by capturing information from images and predicting the correct placement.",
+      "with_image_output": "automatically moves context between apps on your desktop. first version will be ai powered copy & paste. when user copies something, app takes screenshot of current window. when pasting, we use the source capture and target information to predict what the user wants to paste. everything can be deployed locally and is open source.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 545.84,
+          "ttft_ms": 376.32,
+          "output_text": "automatically moves context between apps on your desktop. our first version is an ai-powered copy & paste tool that uses screenshots to predict what the user wants to paste, enabling seamless data transfer between applications.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 828.61,
+          "ttft_ms": 660.55,
+          "output_text": "automatically moves context between apps on your desktop. our first version is an ai-powered copy & paste tool that uses screenshots to predict what the user wants to paste, enabling seamless data transfer between applications.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 598.22,
+          "ttft_ms": 454.86,
+          "output_text": "automatically moves context between apps on your desktop. our first version is an ai-powered copy & paste tool that uses screenshots to predict what the user wants to paste, enabling seamless data transfer between applications.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-140702-773-conductor-axtextarea",
+      "baseline_output": "is an AI-powered copy-and-paste tool that automatically moves context between apps on your desktop. It can be deployed locally and is open source.",
+      "with_image_output": "is an AI-powered copy & paste tool that automatically moves context between apps on your desktop. It takes a screenshot of the current window when you copy, and uses that context to predict what you want to paste. Everything is open source and can be deployed locally.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 642.65,
+          "ttft_ms": 400.26,
+          "output_text": "automatically moves context between apps on your desktop. the first version is an ai-powered copy & paste tool that uses screenshots of the source window to predict what the user wants to paste. everything is deployed locally and is open source.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 620.5,
+          "ttft_ms": 523.03,
+          "output_text": "automatically moves context between apps on your desktop. the first version is an ai-powered copy & paste tool that uses screenshots of the source window to predict what the user wants to paste. everything is deployed locally and is open source.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 556.78,
+          "ttft_ms": 425.33,
+          "output_text": "automatically moves context between apps on your desktop. the first version is an ai-powered copy & paste tool that uses screenshots of the source window to predict what the user wants to paste. everything is deployed locally and is open source.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": false
+        }
+      ]
+    },
+    {
+      "fixture_id": "20260421-200834-043-microsoft-edge-axtextarea",
+      "baseline_output": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities:\n1. Intelligent copy-paste: Extracts information from any app (receipts, marketplace listings, etc.) and fills fields contextually.\n2. Contextual autocomplete: A global hotkey triggers suggestions based on the focused text field and your recent activity across apps.",
+      "with_image_output": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities shipping now:\n\n- 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI).\n- 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals.\n\nThe deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every AI interaction better. Paste becomes smarter, autocomplete becomes smarter, and eventually the system can proactively surface information before you ask.",
+      "runs": [
+        {
+          "run": 1,
+          "status": "ok",
+          "request_path_ms": 1151.5,
+          "ttft_ms": 452.88,
+          "output_text": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities shipping now:\n\n- 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI).\n- 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals.\n\nThe deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every AI interaction better. Paste becomes smarter, autocomplete becomes smarter, and eventually the system can proactively surface information before you ask.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": true
+        },
+        {
+          "run": 2,
+          "status": "ok",
+          "request_path_ms": 1070.71,
+          "ttft_ms": 388.39,
+          "output_text": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities shipping now:\n\n- 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI).\n- 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals.\n\nThe deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every AI interaction better. Paste becomes smarter, autocomplete becomes smarter, and eventually the system can proactively surface information before you ask.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": true
+        },
+        {
+          "run": 3,
+          "status": "ok",
+          "request_path_ms": 1168.52,
+          "ttft_ms": 451.7,
+          "output_text": "A macOS app that continuously observes what you're doing across all your apps and uses that context to help you in the moment. Not a chatbot you switch to. Not a copilot locked inside one app. A system-wide layer that understands your workflow.\n\nTwo capabilities shipping now:\n\n- 1. Intelligent copy-paste. You look at a receipt, switch to an expense form, and paste. The system knows what you were looking at and extracts the right fields. You read a Marketplace listing, open a new form to relist it, and paste. Title, price, condition, description all filled contextually. Works across any pair of apps. Uses screenshot + OCR capture, not clipboard, so it works on content you can't select (images, PDFs, screen shares, non-selectable UI).\n- 2. Contextual autocomplete. A global hotkey triggers suggestions based on the focused text field, the current app, and what you've been doing across other apps in the last few minutes. Suggestions stream into a floating overlay near your cursor. Works in browsers, native apps, chat, email, terminals.\n\nThe deeper product is the context layer underneath both: a continuous, privacy-local model of what you've recently seen and done across your desktop. That context makes every AI interaction better. Paste becomes smarter, autocomplete becomes smarter, and eventually the system can proactively surface information before you ask.",
+          "exact_match_baseline": false,
+          "exact_match_with_image": true
+        }
+      ]
+    }
+  ]
+}

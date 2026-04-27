@@ -53,12 +53,14 @@ bash app/scripts/install_local_app.sh
 
 That script builds a self-contained Release app, installs it to
 `~/Applications/Blink.app`, and hides duplicate build products so Spotlight and
-TCC only see one local Blink install. Use `--reset-tcc` when you explicitly
-want a fresh permissions flow.
+TCC only see one local Blink install. After Swift app-code changes, reinstall
+with `--reset-tcc` before trusting Accessibility/Input Monitoring again; we
+have seen System Settings keep the toggle enabled while the grant is still
+effectively attached to the older binary.
 
 See [`docs/DOGFOOD_PLAYBOOK.md`](docs/DOGFOOD_PLAYBOOK.md) for the full "clean
 build + clean permissions + capture everything" procedure, including where
-fixtures, profiling timings, and debug logs land per trial.
+fixtures, profiling timings, `host_profile.json`, and debug logs land per trial.
 
 ## Current focus
 

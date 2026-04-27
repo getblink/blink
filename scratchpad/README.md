@@ -141,6 +141,118 @@ The rendered sweep outputs surface the three model timings that matter most for 
 - `ttft_ms`
 - `stream_duration_ms`
 
+For source-packet latency experiments, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --out scratchpad/sweeps/source-packet-{auto-timestamp}
+```
+
+That benchmark compares the current two-image request against a cached
+source-packet flow, writes per-fixture artifacts plus `benchmark.json`
+and `summary.md`, and reports amortized latency estimates for reuse
+counts such as 1, 3, and 5 target pastes per source capture.
+
+For prompt-variant runs, pass explicit prompt paths and, if the packet
+schema becomes more verbose, raise the packet response ceiling so the
+JSON does not truncate mid-object:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --extract-prompt-path scratchpad/source_packet_extract_prompt_v2.txt \
+  --target-prompt-path scratchpad/source_packet_target_prompt_v2.txt \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/source-packet-v2-{auto-timestamp}
+```
+
+For an OCR-biased plain-text packet that preserves exact visible spans
+instead of emitting JSON fields, switch the packet format to `text` and
+use the v3 OCR prompts:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_packet.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --extract-prompt-path scratchpad/source_packet_extract_prompt_v3_ocr.txt \
+  --target-prompt-path scratchpad/source_packet_target_prompt_v3_ocr.txt \
+  --packet-format text \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/source-packet-v3-ocr-{auto-timestamp}
+```
+
+That variant writes `source_packet.txt` instead of `source_packet.json`
+and treats a literal `COMPLETENESS: needs_source_image` line as the
+packet's self-reported insufficiency signal.
+
+Human-authored gold packets for the current fixture corpus live in
+`scratchpad/gold_source_packets.json`. To compare a benchmark run's
+generated packets against that gold corpus, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/compare_source_packets.py \
+  --pred-dir scratchpad/sweeps/source-packet-20260423-204225
+```
+
+That writes `gold_packet_compare.json` and `gold_packet_compare.md`
+inside the benchmark directory so prompt revisions can be judged against
+the same hand-authored packet target. The comparison tool accepts either
+JSON packets (`source_packet.json`) or OCR-style text packets
+(`source_packet.txt`).
+
+For a source-side Vision OCR inspection run that does not call the model,
+use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_source_ocr.py \
+  --inputs 'scratchpad/fixtures/*' \
+  --out scratchpad/sweeps/source-ocr-{auto-timestamp}
+```
+
+That experiment accepts either fixture/run-bundle directories containing
+`source.png` or direct image-file globs. It writes:
+
+- `benchmark.json` and `summary.md` at the sweep root
+- per-source `ocr.raw.json`, `ocr.blocks.json`, `ocr.filtered.json`,
+  `ocr.paragraphs.json`, and `ocr.sections.json`
+- per-source `ocr.raw.txt`, `ocr.filtered.txt`, `ocr.paragraphs.txt`,
+  and `ocr.packet.txt`
+- per-source `preview.html` with OCR box overlays on the original
+  screenshot
+
+The current postprocessing stays intentionally literal: it keeps the raw
+Vision OCR blocks, infers a dominant content column, groups the kept
+blocks into paragraphs, and emits a deterministic packet candidate so
+noise from sidebars / toolbars can be inspected directly before any model
+integration.
+
+For target-side latency experiments on top of cached source packets, use:
+
+```bash
+scratchpad/.venv/bin/python scratchpad/benchmark_target_context.py \
+  --fixtures 'scratchpad/fixtures/*' \
+  --config scratchpad/eval_configs/flash-lite-low-minimal.json \
+  --max-output-tokens 2048 \
+  --out scratchpad/sweeps/target-context-{auto-timestamp}
+```
+
+That benchmark reuses the OCR-style source packet, then compares four
+target-side modes:
+
+- source packet + full target image
+- source packet + local target OCR packet
+- source packet + focused target crop
+- source packet + OCR packet with fallback to the full target image
+
+Each fixture directory includes the generated `target_ocr_packet.txt`,
+`target_ocr_packet.build.json`, `target_crop.build.json`, and, when the
+crop succeeds, `target.focused_crop.png`. The aggregate `summary.md`
+reports target-only latency, fallback counts, and amortized request-path
+estimates for repeated pastes from the same source packet.
+
 ## What `run_gemini_trial.py` profiles
 
 - queue delay between hotkey and work starting
