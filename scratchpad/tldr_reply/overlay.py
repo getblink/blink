@@ -20,9 +20,21 @@ SUGGESTION_FONT_SIZE = 16.5
 FOOTER_FONT_SIZE = 13.5
 TLDR_LINE_SPACING = 5.0
 SUGGESTION_COLLAPSED_HEIGHT = 58.0
-SUGGESTION_LINE_SPACING = 3.0
+SUGGESTION_LINE_SPACING = 5.0
 SUGGESTION_PADDING_X = 20.0
-SUGGESTION_PADDING_Y = 12.0
+SUGGESTION_NUMBER_X = 22.0
+SUGGESTION_NUMBER_WIDTH = 26.0
+SUGGESTION_NUMBER_HEIGHT = 24.0
+SUGGESTION_TEXT_X = 66.0
+SUGGESTION_COLLAPSED_TEXT_HEIGHT = 24.0
+# Match the natural top/bottom gap of the collapsed pill so the first line of
+# text stays at the same screen position when the pill expands downward.
+SUGGESTION_PADDING_Y = (SUGGESTION_COLLAPSED_HEIGHT - SUGGESTION_COLLAPSED_TEXT_HEIGHT) / 2.0
+
+ENTRANCE_DURATION = 0.18
+ENTRANCE_STAGGER = 0.035
+ENTRANCE_FOOTER_DELAY_PADDING = 0.04
+EXPAND_DURATION = 0.22
 
 
 def _color(red: float, green: float, blue: float, alpha: float) -> AppKit.NSColor:
@@ -62,7 +74,10 @@ class ReplyPanel(AppKit.NSPanel):
         background: AppKit.NSView,
         option_cards: list[AppKit.NSView],
         option_tints: list[AppKit.NSView],
+        option_numbers: list[AppKit.NSTextField],
         option_labels: list[AppKit.NSTextField],
+        option_texts: list[str],
+        option_collapsed_texts: list[str],
         collapsed_frames: list[Foundation.NSRect],
         expanded_frames: list[Foundation.NSRect],
         footer_views: list[AppKit.NSView],
@@ -70,7 +85,10 @@ class ReplyPanel(AppKit.NSPanel):
         self._background = background
         self._option_cards = option_cards
         self._option_tints = option_tints
+        self._option_numbers = option_numbers
         self._option_labels = option_labels
+        self._option_texts = option_texts
+        self._option_collapsed_texts = option_collapsed_texts
         self._collapsed_frames = collapsed_frames
         self._expanded_frames = expanded_frames
         self._footer_views = footer_views
@@ -134,27 +152,13 @@ class ReplyPanel(AppKit.NSPanel):
             frame.size.width,
             target_height,
         )
-        self.setFrame_display_animate_(new_frame, False, False)
-        self._background.setFrame_(
-            Foundation.NSMakeRect(0, 0, new_frame.size.width, target_height)
-        )
 
+        # Compute per-card geometry before the animation group so text/mode
+        # swaps are synchronous and the label reflows into its final size
+        # during the animated frame interpolation.
         card_id_set = {id(c) for c in option_cards}
         footer_id_set = {id(v) for v in self._footer_views}
-        for subview, base_frame in self._base_subview_frames:
-            sid = id(subview)
-            if sid in card_id_set:
-                continue
-            if sid in footer_id_set:
-                subview.setFrameOrigin_(Foundation.NSMakePoint(base_frame.origin.x, 0))
-            else:
-                subview.setFrameOrigin_(
-                    Foundation.NSMakePoint(
-                        base_frame.origin.x,
-                        base_frame.origin.y + height_delta,
-                    )
-                )
-
+        card_geometries = []
         for card_index, card in enumerate(option_cards):
             source_frame = collapsed_frames[card_index]
             is_expanded = card_index == index
@@ -166,42 +170,114 @@ class ReplyPanel(AppKit.NSPanel):
             card_y = source_frame.origin.y + (
                 height_delta if card_index < index else 0.0
             )
-            card.setFrame_(
-                Foundation.NSMakeRect(
-                    source_frame.origin.x,
-                    card_y,
-                    source_frame.size.width,
-                    card_height,
-                )
-            )
-            card.layer().setCornerRadius_(card_height / 2.0)
-            tint = self._option_tints[card_index]
-            if tint.layer() is not None:
-                tint.layer().setCornerRadius_(card_height / 2.0)
             label = self._option_labels[card_index]
             label.setLineBreakMode_(
                 AppKit.NSLineBreakByWordWrapping
                 if is_expanded
-                else AppKit.NSLineBreakByTruncatingTail
+                else AppKit.NSLineBreakByClipping
             )
             label.setUsesSingleLineMode_(not is_expanded)
-            label_y = SUGGESTION_PADDING_Y if is_expanded else 0.0
-            label_height = (
-                card_height - (SUGGESTION_PADDING_Y * 2)
-                if is_expanded
-                else card_height
-            )
-            label.setFrame_(
-                Foundation.NSMakeRect(
-                    SUGGESTION_PADDING_X,
-                    label_y,
-                    source_frame.size.width - (SUGGESTION_PADDING_X * 2),
-                    label_height,
+            number = self._option_numbers[card_index]
+            text_width = source_frame.size.width - SUGGESTION_TEXT_X - SUGGESTION_PADDING_X
+            label_text = self._option_texts[card_index]
+            label_font = AppKit.NSFont.systemFontOfSize_(SUGGESTION_FONT_SIZE)
+            if is_expanded:
+                _set_label_text(label, label_text, label_font, LIGHT_TEXT, SUGGESTION_LINE_SPACING)
+                label_height = _measure_height(label_text, text_width, label_font, SUGGESTION_LINE_SPACING)
+                label_y = SUGGESTION_PADDING_Y
+                number_y = label_y + label_height - SUGGESTION_NUMBER_HEIGHT
+            else:
+                label.setStringValue_(self._option_collapsed_texts[card_index])
+                label.setFont_(label_font)
+                label.setTextColor_(LIGHT_TEXT)
+                label_height = SUGGESTION_COLLAPSED_TEXT_HEIGHT
+                label_y = (card_height - label_height) / 2.0
+                number_y = (card_height - SUGGESTION_NUMBER_HEIGHT) / 2.0
+            card_geometries.append((
+                card,
+                source_frame,
+                card_y,
+                card_height,
+                label,
+                text_width,
+                label_y,
+                label_height,
+                number,
+                number_y,
+            ))
+
+        # If entrance timers were cancelled, bring TLDR and footer to full
+        # opacity so they aren't invisible during the expansion.
+        for subview, _ in self._base_subview_frames:
+            if id(subview) not in card_id_set:
+                subview.setAlphaValue_(1.0)
+
+        AppKit.NSAnimationContext.beginGrouping()
+        try:
+            ctx = AppKit.NSAnimationContext.currentContext()
+            ctx.setDuration_(EXPAND_DURATION)
+            ctx.setTimingFunction_(
+                Quartz.CAMediaTimingFunction.functionWithName_(
+                    Quartz.kCAMediaTimingFunctionEaseInEaseOut
                 )
             )
+            self.animator().setFrame_display_(new_frame, True)
+            self._background.animator().setFrame_(
+                Foundation.NSMakeRect(0, 0, new_frame.size.width, target_height)
+            )
+            for subview, base_frame in self._base_subview_frames:
+                sid = id(subview)
+                if sid in card_id_set:
+                    continue
+                if sid in footer_id_set:
+                    subview.animator().setFrameOrigin_(
+                        Foundation.NSMakePoint(base_frame.origin.x, 0)
+                    )
+                else:
+                    subview.animator().setFrameOrigin_(
+                        Foundation.NSMakePoint(
+                            base_frame.origin.x,
+                            base_frame.origin.y + height_delta,
+                        )
+                    )
+            for (
+                card, source_frame, card_y, card_height,
+                label, text_width, label_y, label_height,
+                number, number_y,
+            ) in card_geometries:
+                corner_radius = source_frame.size.height / 2.0
+                card.layer().setCornerRadius_(corner_radius)
+                tint = self._option_tints[option_cards.index(card)]
+                if tint.layer() is not None:
+                    tint.layer().setCornerRadius_(corner_radius)
+                card.animator().setFrame_(
+                    Foundation.NSMakeRect(
+                        source_frame.origin.x,
+                        card_y,
+                        source_frame.size.width,
+                        card_height,
+                    )
+                )
+                number.animator().setFrame_(
+                    Foundation.NSMakeRect(
+                        SUGGESTION_NUMBER_X,
+                        number_y,
+                        SUGGESTION_NUMBER_WIDTH,
+                        SUGGESTION_NUMBER_HEIGHT,
+                    )
+                )
+                label.animator().setFrame_(
+                    Foundation.NSMakeRect(
+                        SUGGESTION_TEXT_X,
+                        label_y,
+                        text_width,
+                        label_height,
+                    )
+                )
+        finally:
+            AppKit.NSAnimationContext.endGrouping()
 
         self._expanded_index = index
-        self.displayIfNeeded()
         return True
 
 
@@ -225,7 +301,14 @@ def _make_label(
     )
     label.setUsesSingleLineMode_(single_line)
     if line_spacing:
+        # Encode the line break mode in the paragraph style: the attributed
+        # string's paragraph style overrides any label-level setLineBreakMode_.
         paragraph = AppKit.NSMutableParagraphStyle.alloc().init()
+        paragraph.setLineBreakMode_(
+            AppKit.NSLineBreakByTruncatingTail
+            if single_line
+            else AppKit.NSLineBreakByWordWrapping
+        )
         paragraph.setLineSpacing_(line_spacing)
         attributed = Foundation.NSAttributedString.alloc().initWithString_attributes_(
             text,
@@ -243,33 +326,87 @@ def _make_label(
     return label
 
 
+def _wrapping_paragraph_style(line_spacing: float) -> AppKit.NSMutableParagraphStyle:
+    paragraph = AppKit.NSMutableParagraphStyle.alloc().init()
+    paragraph.setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+    if line_spacing:
+        paragraph.setLineSpacing_(line_spacing)
+    return paragraph
+
+
+def _set_label_text(
+    label: AppKit.NSTextField,
+    text: str,
+    font: AppKit.NSFont,
+    color: AppKit.NSColor,
+    line_spacing: float,
+) -> None:
+    attributed = Foundation.NSAttributedString.alloc().initWithString_attributes_(
+        text,
+        {
+            AppKit.NSFontAttributeName: font,
+            AppKit.NSForegroundColorAttributeName: color,
+            AppKit.NSParagraphStyleAttributeName: _wrapping_paragraph_style(line_spacing),
+        },
+    )
+    label.setAttributedStringValue_(attributed)
+
+
 def _measure_height(
     text: str,
     width: float,
     font: AppKit.NSFont,
     line_spacing: float = 0.0,
 ) -> float:
-    attributes: dict[Any, Any] = {AppKit.NSFontAttributeName: font}
-    if line_spacing:
-        paragraph = AppKit.NSMutableParagraphStyle.alloc().init()
-        paragraph.setLineSpacing_(line_spacing)
-        attributes[AppKit.NSParagraphStyleAttributeName] = paragraph
-    string = Foundation.NSAttributedString.alloc().initWithString_attributes_(
+    # Measure with the same cell that NSTextField uses to draw, so the
+    # height we reserve matches what actually renders. boundingRectWithSize
+    # tends to underestimate slightly (per Apple's docs and the objc.io
+    # string-rendering writeup); cellSizeForBounds is the renderer-of-record.
+    attributed = Foundation.NSAttributedString.alloc().initWithString_attributes_(
         text,
-        attributes,
+        {
+            AppKit.NSFontAttributeName: font,
+            AppKit.NSParagraphStyleAttributeName: _wrapping_paragraph_style(line_spacing),
+        },
     )
-    bounds = string.boundingRectWithSize_options_(
-        Foundation.NSMakeSize(width, 1000),
-        AppKit.NSStringDrawingUsesLineFragmentOrigin
-        | AppKit.NSStringDrawingUsesFontLeading,
+    cell = AppKit.NSTextFieldCell.alloc().init()
+    cell.setBezeled_(False)
+    cell.setEditable_(False)
+    cell.setSelectable_(False)
+    cell.setDrawsBackground_(False)
+    cell.setWraps_(True)
+    cell.setUsesSingleLineMode_(False)
+    cell.setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+    cell.setAttributedStringValue_(attributed)
+    size = cell.cellSizeForBounds_(
+        Foundation.NSMakeRect(0, 0, width, 1.0e6)
     )
-    return max(20.0, math.ceil(float(bounds.size.height)) + 2.0)
+    return math.ceil(float(size.height))
 
 
 def _measure_width(text: str, font: AppKit.NSFont) -> float:
     string = Foundation.NSString.stringWithString_(text)
     size = string.sizeWithAttributes_({AppKit.NSFontAttributeName: font})
     return float(size.width)
+
+
+def _collapsed_single_line_text(text: str, width: float, font: AppKit.NSFont) -> str:
+    if _measure_width(text, font) <= width:
+        return text
+    suffix = "..."
+    available = max(0.0, width - _measure_width(suffix, font))
+    low = 0
+    high = len(text)
+    best = ""
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = text[:mid].rstrip()
+        if _measure_width(candidate, font) <= available:
+            best = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return f"{best}{suffix}" if best else suffix
 
 
 def _make_card(
@@ -345,6 +482,74 @@ def _make_card(
     return card, tint, label
 
 
+def _make_suggestion_card(
+    frame: Foundation.NSRect,
+    index: int,
+    text: str,
+    collapsed_text: str,
+    font: AppKit.NSFont,
+) -> tuple[AppKit.NSVisualEffectView, AppKit.NSView, AppKit.NSTextField, AppKit.NSTextField]:
+    corner_radius = frame.size.height / 2.0
+    card = AppKit.NSVisualEffectView.alloc().initWithFrame_(frame)
+    card.setAppearance_(LIGHT_GLASS_APPEARANCE)
+    card.setMaterial_(AppKit.NSVisualEffectMaterialPopover)
+    card.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+    card.setState_(AppKit.NSVisualEffectStateActive)
+    card.setWantsLayer_(True)
+    layer = card.layer()
+    layer.setCornerRadius_(corner_radius)
+    layer.setMasksToBounds_(True)
+    layer.setBorderWidth_(0.0)
+    layer.setBackgroundColor_(Quartz.CGColorCreateGenericRGB(0.0, 0.0, 0.0, 0.0))
+
+    tint = AppKit.NSView.alloc().initWithFrame_(
+        Foundation.NSMakeRect(0, 0, frame.size.width, frame.size.height)
+    )
+    tint.setWantsLayer_(True)
+    tint.layer().setCornerRadius_(corner_radius)
+    tint.layer().setMasksToBounds_(True)
+    tint.layer().setBackgroundColor_(SUGGESTION_TINT)
+    tint.setAutoresizingMask_(
+        AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
+    )
+    card.addSubview_(tint)
+
+    number = _make_label(
+        Foundation.NSMakeRect(
+            SUGGESTION_NUMBER_X,
+            (frame.size.height - SUGGESTION_NUMBER_HEIGHT) / 2.0,
+            SUGGESTION_NUMBER_WIDTH,
+            SUGGESTION_NUMBER_HEIGHT,
+        ),
+        str(index),
+        AppKit.NSFont.systemFontOfSize_weight_(
+            SUGGESTION_FONT_SIZE,
+            AppKit.NSFontWeightSemibold,
+        ),
+        LIGHT_SECONDARY_TEXT,
+        single_line=True,
+    )
+    number.setAlignment_(AppKit.NSTextAlignmentCenter)
+    card.addSubview_(number)
+
+    text_width = frame.size.width - SUGGESTION_TEXT_X - SUGGESTION_PADDING_X
+    label = _make_label(
+        Foundation.NSMakeRect(
+            SUGGESTION_TEXT_X,
+            (frame.size.height - SUGGESTION_COLLAPSED_TEXT_HEIGHT) / 2.0,
+            text_width,
+            SUGGESTION_COLLAPSED_TEXT_HEIGHT,
+        ),
+        collapsed_text,
+        font,
+        LIGHT_TEXT,
+        single_line=True,
+    )
+    label.setLineBreakMode_(AppKit.NSLineBreakByClipping)
+    card.addSubview_(label)
+    return card, tint, number, label
+
+
 def show_result_panel(
     tldr: str,
     suggestions: list[str],
@@ -360,7 +565,7 @@ def show_result_panel(
     summary_label_width = content_width - (CARD_PADDING_X * 2)
     suggestion_padding_x = SUGGESTION_PADDING_X
     suggestion_padding_y = SUGGESTION_PADDING_Y
-    suggestion_label_width = content_width - (suggestion_padding_x * 2)
+    suggestion_label_width = content_width - SUGGESTION_TEXT_X - suggestion_padding_x
 
     tldr_height = (
         _measure_height(tldr, summary_label_width, summary_font, TLDR_LINE_SPACING)
@@ -371,7 +576,7 @@ def show_result_panel(
         max(
             SUGGESTION_COLLAPSED_HEIGHT,
             _measure_height(
-                f"{index}.  {text}",
+                text,
                 suggestion_label_width,
                 suggestion_font,
                 SUGGESTION_LINE_SPACING,
@@ -431,12 +636,16 @@ def show_result_panel(
         corner_radius=24.0,
         line_spacing=TLDR_LINE_SPACING,
     )
+    tldr_card.setAlphaValue_(0.0)
     background.addSubview_(tldr_card)
     y -= CARD_GAP
 
     option_cards: list[AppKit.NSView] = []
     option_tints: list[AppKit.NSView] = []
+    option_numbers: list[AppKit.NSTextField] = []
     option_labels: list[AppKit.NSTextField] = []
+    option_texts: list[str] = []
+    option_collapsed_texts: list[str] = []
     collapsed_frames: list[Foundation.NSRect] = []
     expanded_frames: list[Foundation.NSRect] = []
     option_start_y = y
@@ -450,26 +659,27 @@ def show_result_panel(
             content_width,
             expanded_row_heights[index - 1],
         )
-        card, tint, label = _make_card(
-            final_frame,
-            f"{index}.  {text}",
+        collapsed_text = _collapsed_single_line_text(
+            text,
+            suggestion_label_width,
             suggestion_font,
-            LIGHT_TEXT,
-            AppKit.NSVisualEffectMaterialPopover,
-            padding_x=suggestion_padding_x,
-            padding_y=suggestion_padding_y,
-            tint_color=SUGGESTION_TINT,
-            corner_radius=row_height / 2.0,
-            line_spacing=SUGGESTION_LINE_SPACING,
-            single_line=True,
-            appearance=LIGHT_GLASS_APPEARANCE,
+        )
+        card, tint, number, label = _make_suggestion_card(
+            final_frame,
+            index,
+            text,
+            collapsed_text,
+            suggestion_font,
         )
         card.setAlphaValue_(0.0)
         card.setFrameOrigin_(Foundation.NSMakePoint(0, option_start_y - row_height))
         background.addSubview_(card)
         option_cards.append(card)
         option_tints.append(tint)
+        option_numbers.append(number)
         option_labels.append(label)
+        option_texts.append(text)
+        option_collapsed_texts.append(collapsed_text)
         collapsed_frames.append(final_frame)
         expanded_frames.append(expanded_frame)
         y -= CARD_GAP
@@ -500,6 +710,7 @@ def show_result_panel(
             single_line=True,
             appearance=LIGHT_GLASS_APPEARANCE,
         )
+        pill.setAlphaValue_(0.0)
         background.addSubview_(pill)
         footer_views.append(pill)
         pill_x += pill_width + FOOTER_PILL_GAP
@@ -508,11 +719,44 @@ def show_result_panel(
         background,
         option_cards,
         option_tints,
+        option_numbers,
         option_labels,
+        option_texts,
+        option_collapsed_texts,
         collapsed_frames,
         expanded_frames,
         footer_views,
     )
+
+    def _ease_out_fade(view: AppKit.NSView) -> None:
+        NSAnimationContext = AppKit.NSAnimationContext
+        NSAnimationContext.beginGrouping()
+        try:
+            context = NSAnimationContext.currentContext()
+            context.setDuration_(ENTRANCE_DURATION)
+            context.setTimingFunction_(
+                Quartz.CAMediaTimingFunction.functionWithName_(
+                    Quartz.kCAMediaTimingFunctionEaseOut
+                )
+            )
+            view.animator().setAlphaValue_(1.0)
+        finally:
+            NSAnimationContext.endGrouping()
+
+    tldr_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+        0.0,
+        False,
+        lambda _timer, _card=tldr_card: _ease_out_fade(_card),
+    )
+    panel.register_show_timer(tldr_timer)
+
+    footer_delay = ENTRANCE_STAGGER * len(option_cards) + ENTRANCE_FOOTER_DELAY_PADDING
+    footer_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+        footer_delay,
+        False,
+        lambda _timer, _views=footer_views: [_ease_out_fade(v) for v in _views],
+    )
+    panel.register_show_timer(footer_timer)
 
     for delay_index, (card, final_frame) in enumerate(zip(option_cards, collapsed_frames)):
         def animate_option(
@@ -524,7 +768,7 @@ def show_result_panel(
             NSAnimationContext.beginGrouping()
             try:
                 context = NSAnimationContext.currentContext()
-                context.setDuration_(0.22)
+                context.setDuration_(ENTRANCE_DURATION)
                 context.setTimingFunction_(
                     Quartz.CAMediaTimingFunction.functionWithName_(
                         Quartz.kCAMediaTimingFunctionEaseOut
@@ -536,7 +780,7 @@ def show_result_panel(
                 NSAnimationContext.endGrouping()
 
         timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
-            0.045 * delay_index,
+            ENTRANCE_STAGGER * delay_index,
             False,
             animate_option,
         )

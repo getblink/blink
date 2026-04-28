@@ -48,6 +48,23 @@ SAMPLE_SUGGESTIONS = [
     "Billing pipeline was on track; the slip is squarely on the auth side.",
     "Both contributed, but auth was roughly 80% of the slip — happy to write a longer note that separates dependency risk from implementation work.",
 ]
+LAB_SUGGESTION_LINE_SPACING = 5.0
+LAB_COLLAPSED_TEXT_HEIGHT = 24.0
+LAB_NUMBER_HEIGHT = 24.0
+LAB_PILL_HEIGHT = 62.0
+# Match the natural top/bottom gap of the collapsed pill so the first line of
+# text stays at the same screen position when the pill expands downward.
+LAB_SUGGESTION_VERTICAL_PADDING = (LAB_PILL_HEIGHT - LAB_COLLAPSED_TEXT_HEIGHT) / 2.0
+
+ENTRANCE_DURATION = 0.18
+ENTRANCE_STAGGER = 0.035
+ENTRANCE_FOOTER_DELAY_PADDING = 0.04
+EXPAND_DURATION = 0.22
+BLOB_MERGE_SPACING = 6.0  # < pill_gap (8pt) so final positions separate; stacked (0pt) merge
+BLOB_MATERIALIZE_DELAY = 0.03
+BLOB_FANOUT_DURATION = 0.22
+BLOB_FANOUT_STAGGER = 0.07
+
 
 
 class LabPanel(AppKit.NSPanel):
@@ -59,6 +76,7 @@ class LabPanel(AppKit.NSPanel):
 
     def keyDown_(self, event):
         if event.keyCode() == 53:  # Esc
+            self._invalidate_timers()
             AppKit.NSApp.terminate_(None)
             return
         if event.keyCode() in (18, 19, 20):  # 1, 2, 3
@@ -67,29 +85,63 @@ class LabPanel(AppKit.NSPanel):
         objc.super(LabPanel, self).keyDown_(event)
 
     @objc.python_method
+    def _register_timer(self, timer: Any) -> None:
+        timers = getattr(self, "_show_timers", None)
+        if timers is None:
+            self._show_timers = [timer]
+        else:
+            timers.append(timer)
+
+    @objc.python_method
+    def _invalidate_timers(self) -> None:
+        for timer in getattr(self, "_show_timers", []):
+            try:
+                timer.invalidate()
+            except Exception:
+                pass
+        self._show_timers = []
+
+    @objc.python_method
     def configureExpansion(
         self,
         background: AppKit.NSView,
         pills: list[AppKit.NSView],
+        numbers: list[AppKit.NSTextField],
         labels: list[AppKit.NSTextField],
+        suggestion_texts: list[str],
+        collapsed_label_texts: list[str],
         collapsed_frames: list[Foundation.NSRect],
         expanded_frames: list[Foundation.NSRect],
         summary_frame: Foundation.NSRect,
         hint_frame: Foundation.NSRect,
+        pill_container: AppKit.NSView | None = None,
+        base_container_frame: Foundation.NSRect | None = None,
+        summary_view: AppKit.NSView | None = None,
+        hint_view: AppKit.NSView | None = None,
+        pill_contents: list[AppKit.NSView] | None = None,
     ) -> None:
         self._background = background
         self._pills = pills
+        self._numbers = numbers
         self._labels = labels
+        self._suggestion_texts = suggestion_texts
+        self._collapsed_label_texts = collapsed_label_texts
         self._collapsed_frames = collapsed_frames
         self._expanded_frames = expanded_frames
         self._summary_frame = summary_frame
         self._hint_frame = hint_frame
+        self._pill_container = pill_container
+        self._base_container_frame = base_container_frame
+        self._summary_view = summary_view
+        self._hint_view = hint_view
+        self._pill_contents = pill_contents or []
         frame = self.frame()
         self._base_height = float(frame.size.height)
         self._base_top_y = float(frame.origin.y + frame.size.height)
 
     @objc.python_method
     def expandSuggestion_(self, index: int) -> None:
+        self._invalidate_timers()
         if not hasattr(self, "_pills") or index >= len(self._pills):
             return
         height_delta = (
@@ -98,26 +150,30 @@ class LabPanel(AppKit.NSPanel):
         )
         target_height = self._base_height + height_delta
         frame = self.frame()
-        self.setFrame_display_animate_(
-            Foundation.NSMakeRect(
-                frame.origin.x,
-                self._base_top_y - target_height,
-                frame.size.width,
-                target_height,
-            ),
-            False,
-            False,
+        new_panel_frame = Foundation.NSMakeRect(
+            frame.origin.x,
+            self._base_top_y - target_height,
+            frame.size.width,
+            target_height,
         )
-        self._background.setFrame_(
-            Foundation.NSMakeRect(0, 0, frame.size.width, target_height)
-        )
-        summary = self._background.subviews()[0]
-        summary.setFrameOrigin_(
-            Foundation.NSMakePoint(
-                self._summary_frame.origin.x,
-                self._summary_frame.origin.y + height_delta,
-            )
-        )
+
+        # If entrance timers were cancelled, bring all views to full opacity.
+        summary_view = getattr(self, "_summary_view", None) or self._background.subviews()[0]
+        hint_view = getattr(self, "_hint_view", None) or self._background.subviews()[-1]
+        summary_view.setAlphaValue_(1.0)
+        hint_view.setAlphaValue_(1.0)
+        container = getattr(self, "_pill_container", None)
+        if container is not None:
+            container.setAlphaValue_(1.0)
+        for pill in self._pills:
+            pill.setAlphaValue_(1.0)
+        for content in getattr(self, "_pill_contents", []):
+            content.setAlphaValue_(1.0)
+
+        # Compute per-pill geometry and swap label text/mode synchronously
+        # before the animation group so text reflows into the correct size
+        # during the animated frame interpolation.
+        pill_geometries = []
         for pill_index, pill in enumerate(self._pills):
             source = self._collapsed_frames[pill_index]
             is_expanded = pill_index == index
@@ -127,35 +183,73 @@ class LabPanel(AppKit.NSPanel):
                 else source.size.height
             )
             pill_y = source.origin.y + (height_delta if pill_index < index else 0.0)
-            pill.setFrame_(
-                Foundation.NSMakeRect(
-                    source.origin.x,
-                    pill_y,
-                    source.size.width,
-                    pill_height,
-                )
-            )
-            pill.layer().setCornerRadius_(pill_height / 2.0)
             label = self._labels[pill_index]
+            label_text = self._suggestion_texts[pill_index]
+            collapsed_text = self._collapsed_label_texts[pill_index]
+            label_font = label.font() or AppKit.NSFont.systemFontOfSize_(16.0)
             label.setLineBreakMode_(
-                AppKit.NSLineBreakByWordWrapping
-                if is_expanded
-                else AppKit.NSLineBreakByTruncatingTail
+                AppKit.NSLineBreakByWordWrapping if is_expanded else AppKit.NSLineBreakByClipping
             )
             label.setUsesSingleLineMode_(not is_expanded)
-            label_y = 14 if is_expanded else (pill_height - 22) / 2
-            label_height = pill_height - 28 if is_expanded else 22
-            label.setFrame_(
-                Foundation.NSMakeRect(
-                    52,
-                    label_y,
-                    source.size.width - 76,
-                    label_height,
+            if is_expanded:
+                _set_label_text(label, label_text, label_font, AppKit.NSColor.labelColor(), LAB_SUGGESTION_LINE_SPACING)
+                label_height = _measure_text_height(label_text, source.size.width - 92, label_font, LAB_SUGGESTION_LINE_SPACING)
+                label_y = LAB_SUGGESTION_VERTICAL_PADDING
+                number_y = label_y + label_height - LAB_NUMBER_HEIGHT
+            else:
+                label.setStringValue_(collapsed_text)
+                label.setFont_(label_font)
+                label.setTextColor_(AppKit.NSColor.labelColor())
+                label_height = LAB_COLLAPSED_TEXT_HEIGHT
+                label_y = (pill_height - label_height) / 2
+                number_y = (pill_height - LAB_NUMBER_HEIGHT) / 2
+            pill_geometries.append((pill, source, pill_y, pill_height, label, label_y, label_height, self._numbers[pill_index], number_y))
+
+        container_frame = getattr(self, "_base_container_frame", None)
+        new_container_frame = None
+        if container is not None and container_frame is not None:
+            new_container_frame = Foundation.NSMakeRect(
+                container_frame.origin.x,
+                container_frame.origin.y,
+                container_frame.size.width,
+                container_frame.size.height + height_delta,
+            )
+
+        AppKit.NSAnimationContext.beginGrouping()
+        try:
+            ctx = AppKit.NSAnimationContext.currentContext()
+            ctx.setDuration_(EXPAND_DURATION)
+            ctx.setTimingFunction_(
+                Quartz.CAMediaTimingFunction.functionWithName_(
+                    Quartz.kCAMediaTimingFunctionEaseInEaseOut
                 )
             )
-        hint = self._background.subviews()[-1]
-        hint.setFrame_(self._hint_frame)
-        self.displayIfNeeded()
+            self.animator().setFrame_display_(new_panel_frame, True)
+            self._background.animator().setFrame_(
+                Foundation.NSMakeRect(0, 0, frame.size.width, target_height)
+            )
+            summary_view.animator().setFrameOrigin_(
+                Foundation.NSMakePoint(
+                    self._summary_frame.origin.x,
+                    self._summary_frame.origin.y + height_delta,
+                )
+            )
+            if container is not None and new_container_frame is not None:
+                container.animator().setFrame_(new_container_frame)
+            for pill, source, pill_y, pill_height, label, label_y, label_height, number, number_y in pill_geometries:
+                _set_corner_radius(pill, source.size.height / 2.0)
+                pill.animator().setFrame_(
+                    Foundation.NSMakeRect(source.origin.x, pill_y, source.size.width, pill_height)
+                )
+                number.animator().setFrame_(
+                    Foundation.NSMakeRect(20, number_y, 28, LAB_NUMBER_HEIGHT)
+                )
+                label.animator().setFrame_(
+                    Foundation.NSMakeRect(68, label_y, source.size.width - 92, label_height)
+                )
+            hint_view.animator().setFrame_(self._hint_frame)
+        finally:
+            AppKit.NSAnimationContext.endGrouping()
 
 
 def _center_frame(width: float, height: float) -> Foundation.NSRect:
@@ -180,17 +274,95 @@ def _make_panel(width: float, height: float) -> LabPanel:
     return panel
 
 
-def _measure_text_height(text: str, width: float, font: AppKit.NSFont) -> float:
-    string = Foundation.NSAttributedString.alloc().initWithString_attributes_(
+def _set_corner_radius(view: AppKit.NSView, radius: float) -> None:
+    if hasattr(view, "setCornerRadius_"):
+        view.setCornerRadius_(radius)
+        return
+    layer = view.layer()
+    if layer is not None:
+        layer.setCornerRadius_(radius)
+
+
+def _wrapping_paragraph_style(line_spacing: float) -> AppKit.NSMutableParagraphStyle:
+    paragraph = AppKit.NSMutableParagraphStyle.alloc().init()
+    paragraph.setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+    if line_spacing:
+        paragraph.setLineSpacing_(line_spacing)
+    return paragraph
+
+
+def _set_label_text(
+    label: AppKit.NSTextField,
+    text: str,
+    font: AppKit.NSFont,
+    color: AppKit.NSColor,
+    line_spacing: float,
+) -> None:
+    attributed = Foundation.NSAttributedString.alloc().initWithString_attributes_(
         text,
-        {AppKit.NSFontAttributeName: font},
+        {
+            AppKit.NSFontAttributeName: font,
+            AppKit.NSForegroundColorAttributeName: color,
+            AppKit.NSParagraphStyleAttributeName: _wrapping_paragraph_style(line_spacing),
+        },
     )
-    bounds = string.boundingRectWithSize_options_(
-        Foundation.NSMakeSize(width, 1000),
-        AppKit.NSStringDrawingUsesLineFragmentOrigin
-        | AppKit.NSStringDrawingUsesFontLeading,
+    label.setAttributedStringValue_(attributed)
+
+
+def _measure_text_height(
+    text: str,
+    width: float,
+    font: AppKit.NSFont,
+    line_spacing: float = 0.0,
+) -> float:
+    # cellSizeForBounds is the same path NSTextField uses to draw, so the
+    # measured height matches the rendered height. boundingRectWithSize tends
+    # to underestimate slightly per Apple's docs.
+    attributed = Foundation.NSAttributedString.alloc().initWithString_attributes_(
+        text,
+        {
+            AppKit.NSFontAttributeName: font,
+            AppKit.NSParagraphStyleAttributeName: _wrapping_paragraph_style(line_spacing),
+        },
     )
-    return max(22.0, math.ceil(float(bounds.size.height)) + 2.0)
+    cell = AppKit.NSTextFieldCell.alloc().init()
+    cell.setBezeled_(False)
+    cell.setEditable_(False)
+    cell.setSelectable_(False)
+    cell.setDrawsBackground_(False)
+    cell.setWraps_(True)
+    cell.setUsesSingleLineMode_(False)
+    cell.setLineBreakMode_(AppKit.NSLineBreakByWordWrapping)
+    cell.setAttributedStringValue_(attributed)
+    size = cell.cellSizeForBounds_(
+        Foundation.NSMakeRect(0, 0, width, 1.0e6)
+    )
+    return math.ceil(float(size.height))
+
+
+def _measure_text_width(text: str, font: AppKit.NSFont) -> float:
+    string = Foundation.NSString.stringWithString_(text)
+    size = string.sizeWithAttributes_({AppKit.NSFontAttributeName: font})
+    return float(size.width)
+
+
+def _collapsed_single_line_text(text: str, width: float, font: AppKit.NSFont) -> str:
+    if _measure_text_width(text, font) <= width:
+        return text
+    suffix = "..."
+    available = max(0.0, width - _measure_text_width(suffix, font))
+    low = 0
+    high = len(text)
+    best = ""
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = text[:mid].rstrip()
+        if _measure_text_width(candidate, font) <= available:
+            best = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return f"{best}{suffix}" if best else suffix
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +373,11 @@ def _measure_text_height(text: str, width: float, font: AppKit.NSFont) -> float:
 # absent from the AppKit bridge, so we feature-detect rather than version-check.
 _GLASS_CLASS = getattr(AppKit, "NSGlassEffectView", None)
 LIQUID_GLASS_AVAILABLE = _GLASS_CLASS is not None
+_GLASS_CONTAINER_CLASS = getattr(AppKit, "NSGlassEffectContainerView", None)
+LIQUID_GLASS_CONTAINER_AVAILABLE = _GLASS_CONTAINER_CLASS is not None
+# .regular = the more opaque/frosted style; .clear is the more transparent
+# variant. Default style isn't documented; setting explicitly is safer.
+_GLASS_STYLE_REGULAR = getattr(AppKit, "NSGlassEffectViewStyleRegular", None)
 
 
 def make_glass_pane(
@@ -220,6 +397,8 @@ def make_glass_pane(
     if _GLASS_CLASS is not None:
         outer = _GLASS_CLASS.alloc().initWithFrame_(frame)
         outer.setCornerRadius_(corner_radius)
+        if _GLASS_STYLE_REGULAR is not None:
+            outer.setStyle_(_GLASS_STYLE_REGULAR)
         if tint_color is not None:
             outer.setTintColor_(tint_color)
         content = AppKit.NSView.alloc().initWithFrame_(
@@ -265,12 +444,16 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     rather than a list trapped inside one big card."""
     width = 560.0
     summary_height = 132.0
-    pill_height = 62.0
+    pill_height = LAB_PILL_HEIGHT
     pill_gap = 8.0
     section_gap = 14.0
     hint_height = 20.0
     hint_top_gap = 12.0
     suggestion_font = AppKit.NSFont.systemFontOfSize_(16.0)
+    number_font = AppKit.NSFont.systemFontOfSize_weight_(
+        16.0,
+        AppKit.NSFontWeightSemibold,
+    )
 
     pill_count = len(suggestions)
     total_height = (
@@ -292,14 +475,49 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     )
     panel.setContentView_(background)
 
-    # --- summary card ---------------------------------------------------
+    # --- compute layout up front so the glass container can wrap the
+    # summary card and pills together (so they merge into one blob) -----
     summary_y = total_height - summary_height
-    summary_frame = Foundation.NSMakeRect(0, summary_y, width, summary_height)
+    pills_top_y = summary_y - section_gap
+    pills_bottom_y = (
+        pills_top_y - pill_count * pill_height - max(0, pill_count - 1) * pill_gap
+    )
+
+    if LIQUID_GLASS_CONTAINER_AVAILABLE:
+        # Container covers the TLDR card AND the pills so the pills can merge
+        # with the TLDR's glass shape and appear to peel off it.
+        container_height_initial = total_height - pills_bottom_y
+        container_frame_bg = Foundation.NSMakeRect(
+            0, pills_bottom_y, width, container_height_initial
+        )
+        pill_container = _GLASS_CONTAINER_CLASS.alloc().initWithFrame_(container_frame_bg)
+        pill_container.setSpacing_(BLOB_MERGE_SPACING)
+        pill_container.setWantsLayer_(True)
+        pill_container.setAlphaValue_(0.0)
+        background.addSubview_(pill_container)
+        use_container = True
+        glass_parent = pill_container
+    else:
+        pill_container = None
+        container_frame_bg = None
+        container_height_initial = 0.0
+        use_container = False
+        glass_parent = background
+
+    # --- summary card ---------------------------------------------------
+    if use_container:
+        summary_frame = Foundation.NSMakeRect(
+            0, summary_y - pills_bottom_y, width, summary_height
+        )
+    else:
+        summary_frame = Foundation.NSMakeRect(0, summary_y, width, summary_height)
     summary_glass, summary_content = make_glass_pane(
         summary_frame,
         corner_radius=24.0,
     )
-    background.addSubview_(summary_glass)
+    if not use_container:
+        summary_glass.setAlphaValue_(0.0)
+    glass_parent.addSubview_(summary_glass)
 
     status_text = (
         "Liquid Glass: ON (NSGlassEffectView)"
@@ -336,61 +554,105 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     summary_content.addSubview_(summary)
 
     # --- suggestion pills ----------------------------------------------
-    y = summary_y - section_gap
+    # Pills go into the same container as the TLDR card so they can merge
+    # with the TLDR's glass shape during the entrance animation. The
+    # container was created above (alongside the summary card).
+    pill_parent = glass_parent
+
+    # All pills start stacked INSIDE the TLDR card (their bottom edge flush
+    # with the TLDR's bottom edge, so the pill bodies extend up into the
+    # TLDR's interior and are fully overlapped by the TLDR's glass shape).
+    # The container's merge effect absorbs them into the TLDR — visually
+    # there's just the TLDR card. As each pill slides downward in the fan-out,
+    # it pulls a glass tendril out of the TLDR's bottom edge, then detaches
+    # once it crosses BLOB_MERGE_SPACING.
+    if use_container:
+        tldr_bottom_local = summary_y - pills_bottom_y
+        blob_start_local_y = tldr_bottom_local
+    else:
+        blob_start_local_y = 0.0
+
+    y = pills_top_y
     pills: list[AppKit.NSView] = []
+    pill_contents: list[AppKit.NSView] = []
+    numbers: list[AppKit.NSTextField] = []
     labels: list[AppKit.NSTextField] = []
+    suggestion_texts: list[str] = []
+    collapsed_label_texts: list[str] = []
     collapsed_frames: list[Foundation.NSRect] = []
     expanded_frames: list[Foundation.NSRect] = []
-    for index, text in enumerate(suggestions, start=1):
+
+    for loop_i, (index, text) in enumerate(enumerate(suggestions, start=1)):
         y -= pill_height
-        collapsed_frame = Foundation.NSMakeRect(0, y, width, pill_height)
-        expanded_height = max(
+        exp_height = max(
             pill_height,
-            _measure_text_height(text, width - 76, suggestion_font) + 28,
+            _measure_text_height(text, width - 92, suggestion_font, LAB_SUGGESTION_LINE_SPACING)
+            + (LAB_SUGGESTION_VERTICAL_PADDING * 2),
         )
-        expanded_frame = Foundation.NSMakeRect(
-            0,
-            y - (expanded_height - pill_height),
-            width,
-            expanded_height,
-        )
+        exp_delta = exp_height - pill_height
+
+        if use_container:
+            local_y = y - pills_bottom_y
+            collapsed_frame = Foundation.NSMakeRect(0, local_y, width, pill_height)
+            expanded_frame = Foundation.NSMakeRect(0, local_y - exp_delta, width, exp_height)
+            # All pills (including pill 1) start at the blob anchor at TLDR bottom.
+            initial_frame = Foundation.NSMakeRect(0, blob_start_local_y, width, pill_height)
+        else:
+            collapsed_frame = Foundation.NSMakeRect(0, y, width, pill_height)
+            expanded_frame = Foundation.NSMakeRect(0, y - exp_delta, width, exp_height)
+            initial_frame = collapsed_frame
+
         pill_glass, pill_content = make_glass_pane(
-            collapsed_frame,
+            initial_frame,
             corner_radius=pill_height / 2.0,
         )
-        background.addSubview_(pill_glass)
+        if use_container:
+            # Hide the contentView (number + label) until the pill emerges from
+            # inside the TLDR. Otherwise the text renders ON TOP of the merged
+            # glass shape and overlays the TLDR's own content.
+            pill_content.setAlphaValue_(0.0)
+        else:
+            pill_glass.setAlphaValue_(0.0)
+        pill_parent.addSubview_(pill_glass)
         pills.append(pill_glass)
+        pill_contents.append(pill_content)
+        suggestion_texts.append(text)
         collapsed_frames.append(collapsed_frame)
         expanded_frames.append(expanded_frame)
 
         number = AppKit.NSTextField.alloc().initWithFrame_(
-            Foundation.NSMakeRect(20, (pill_height - 22) / 2, 24, 22)
+            Foundation.NSMakeRect(20, (pill_height - LAB_NUMBER_HEIGHT) / 2, 28, LAB_NUMBER_HEIGHT)
         )
         number.setEditable_(False)
         number.setSelectable_(False)
         number.setBezeled_(False)
         number.setDrawsBackground_(False)
         number.setStringValue_(str(index))
-        number.setFont_(
-            AppKit.NSFont.systemFontOfSize_weight_(13.0, AppKit.NSFontWeightSemibold)
-        )
+        number.setFont_(number_font)
         number.setTextColor_(AppKit.NSColor.secondaryLabelColor())
+        number.setAlignment_(AppKit.NSTextAlignmentCenter)
+        number.setLineBreakMode_(AppKit.NSLineBreakByClipping)
+        number.setUsesSingleLineMode_(True)
         pill_content.addSubview_(number)
+        numbers.append(number)
 
         label = AppKit.NSTextField.alloc().initWithFrame_(
-            Foundation.NSMakeRect(52, (pill_height - 22) / 2, width - 76, 22)
+            Foundation.NSMakeRect(68, (pill_height - LAB_COLLAPSED_TEXT_HEIGHT) / 2, width - 92, LAB_COLLAPSED_TEXT_HEIGHT)
         )
+        label_width = width - 92
+        collapsed_text = _collapsed_single_line_text(text, label_width, suggestion_font)
         label.setEditable_(False)
         label.setSelectable_(False)
         label.setBezeled_(False)
         label.setDrawsBackground_(False)
-        label.setStringValue_(text)
+        label.setStringValue_(collapsed_text)
         label.setFont_(suggestion_font)
         label.setTextColor_(AppKit.NSColor.labelColor())
-        label.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
+        label.setLineBreakMode_(AppKit.NSLineBreakByClipping)
         label.setUsesSingleLineMode_(True)
         pill_content.addSubview_(label)
         labels.append(label)
+        collapsed_label_texts.append(collapsed_text)
 
         if index < pill_count:
             y -= pill_gap
@@ -407,16 +669,118 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     hint.setFont_(AppKit.NSFont.systemFontOfSize_(12.0))
     hint.setTextColor_(AppKit.NSColor.tertiaryLabelColor())
     hint.setAlignment_(AppKit.NSTextAlignmentCenter)
+    hint.setAlphaValue_(0.0)
     background.addSubview_(hint)
+
     panel.configureExpansion(
         background,
         pills,
+        numbers,
         labels,
+        suggestion_texts,
+        collapsed_label_texts,
         collapsed_frames,
         expanded_frames,
         summary_frame,
         hint.frame(),
+        pill_container=pill_container,
+        base_container_frame=container_frame_bg,
+        summary_view=summary_glass,
+        hint_view=hint,
+        pill_contents=pill_contents,
     )
+
+    # --- Entrance animation ---
+    def _lab_ease_out_fade(view: AppKit.NSView) -> None:
+        NSAnimationContext = AppKit.NSAnimationContext
+        NSAnimationContext.beginGrouping()
+        try:
+            ctx = NSAnimationContext.currentContext()
+            ctx.setDuration_(ENTRANCE_DURATION)
+            ctx.setTimingFunction_(
+                Quartz.CAMediaTimingFunction.functionWithName_(Quartz.kCAMediaTimingFunctionEaseOut)
+            )
+            view.animator().setAlphaValue_(1.0)
+        finally:
+            NSAnimationContext.endGrouping()
+
+    if use_container:
+        # t=0: the whole container (summary + merged pill blob, all merged into
+        # one liquid-glass shape) and the hint fade in together.
+        def _materialize(_t: Any, _pc: AppKit.NSView = pill_container, _h: AppKit.NSView = hint) -> None:
+            _lab_ease_out_fade(_pc)
+            _lab_ease_out_fade(_h)
+
+        mat_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            0.0, False, _materialize
+        )
+        panel._register_timer(mat_timer)
+
+        # Sequential cascade: pill 0 drops from inside the TLDR to its final
+        # position, then pill 1 emerges from pill 0's final position and drops
+        # to its own, then pill 2 from pill 1's. Linear timing → constant
+        # velocity. Pills 1+ teleport to the previous pill's final position
+        # right before their drop starts (synchronous, no animation), so they
+        # appear to peel off the previous pill's glass shape.
+        prev_local_y = blob_start_local_y
+        cumulative_delay = ENTRANCE_DURATION + BLOB_MATERIALIZE_DELAY
+        for fanout_i in range(len(pills)):
+            final_local_y = collapsed_frames[fanout_i].origin.y
+            pill_to_move = pills[fanout_i]
+            content_to_reveal = pill_contents[fanout_i]
+            teleport_y = None if fanout_i == 0 else prev_local_y
+
+            def _make_fanout(
+                p: AppKit.NSView = pill_to_move,
+                fy: float = final_local_y,
+                c: AppKit.NSView = content_to_reveal,
+                tele_y: float | None = teleport_y,
+                w: float = width,
+                ph: float = pill_height,
+            ) -> Any:
+                def _do_fanout(_t: Any) -> None:
+                    if tele_y is not None:
+                        p.setFrame_(Foundation.NSMakeRect(0.0, tele_y, w, ph))
+                    NSAnimationContext = AppKit.NSAnimationContext
+                    NSAnimationContext.beginGrouping()
+                    try:
+                        ctx = NSAnimationContext.currentContext()
+                        ctx.setDuration_(BLOB_FANOUT_DURATION)
+                        ctx.setTimingFunction_(
+                            Quartz.CAMediaTimingFunction.functionWithName_(Quartz.kCAMediaTimingFunctionLinear)
+                        )
+                        p.animator().setFrame_(Foundation.NSMakeRect(0.0, fy, w, ph))
+                        c.animator().setAlphaValue_(1.0)
+                    finally:
+                        NSAnimationContext.endGrouping()
+                return _do_fanout
+
+            fanout_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+                cumulative_delay, False, _make_fanout()
+            )
+            panel._register_timer(fanout_timer)
+            cumulative_delay += BLOB_FANOUT_DURATION
+            prev_local_y = final_local_y
+    else:
+        # Fallback: fade summary and hint, stagger pills individually.
+        sum_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            0.0, False, lambda _t, _sg=summary_glass: _lab_ease_out_fade(_sg)
+        )
+        panel._register_timer(sum_timer)
+
+        for stagger_i, pill in enumerate(pills):
+            pill_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+                ENTRANCE_STAGGER * stagger_i,
+                False,
+                lambda _t, _p=pill: _lab_ease_out_fade(_p),
+            )
+            panel._register_timer(pill_timer)
+
+        footer_delay = ENTRANCE_STAGGER * len(pills) + ENTRANCE_FOOTER_DELAY_PADDING
+        hint_timer = Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            footer_delay, False, lambda _t, _h=hint: _lab_ease_out_fade(_h)
+        )
+        panel._register_timer(hint_timer)
 
     return panel
 
@@ -466,6 +830,17 @@ def main() -> int:
         action="store_true",
         help="Use the longer multi-line sample TLDR instead of the short one.",
     )
+    parser.add_argument(
+        "--time-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier for all animation durations and delays. e.g. 5 = 5x slower (great for inspecting the blob morph), 0.5 = 2x faster.",
+    )
+    parser.add_argument(
+        "--slow",
+        action="store_true",
+        help="Shortcut for --time-scale 6.",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -479,6 +854,21 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+
+    time_scale = args.time_scale
+    if args.slow and time_scale == 1.0:
+        time_scale = 6.0
+    if time_scale != 1.0:
+        global ENTRANCE_DURATION, ENTRANCE_STAGGER, ENTRANCE_FOOTER_DELAY_PADDING
+        global EXPAND_DURATION, BLOB_MATERIALIZE_DELAY, BLOB_FANOUT_DURATION, BLOB_FANOUT_STAGGER
+        ENTRANCE_DURATION *= time_scale
+        ENTRANCE_STAGGER *= time_scale
+        ENTRANCE_FOOTER_DELAY_PADDING *= time_scale
+        EXPAND_DURATION *= time_scale
+        BLOB_MATERIALIZE_DELAY *= time_scale
+        BLOB_FANOUT_DURATION *= time_scale
+        BLOB_FANOUT_STAGGER *= time_scale
+        print(f"animations scaled to {time_scale}x", file=sys.stderr)
 
     tldr = SAMPLE_TLDR_LONG if args.long_tldr else SAMPLE_TLDR_SHORT
 
