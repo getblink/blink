@@ -83,6 +83,7 @@ class TldrReplyApp:
         self._current_meta: dict[str, Any] | None = None
         self._current_meta_path: Path | None = None
         self._current_suggestions: list[str] = []
+        self._expanded_choice_index: int | None = None
         self._signal_timer = None
 
     def run(self) -> None:
@@ -135,8 +136,15 @@ class TldrReplyApp:
                 return False
             if index >= len(self._current_suggestions):
                 return True
+            if self._expanded_choice_index != index:
+                self._expanded_choice_index = index
+                panel = self._panel
+                if panel is not None:
+                    self._dispatch_main(lambda: panel.expand_suggestion(index))
+                return True
             text = self._current_suggestions[index]
             self._panel_open = False
+            self._expanded_choice_index = None
         self._dispatch_main(lambda: self._finish_choice(index, text))
         return True
 
@@ -145,15 +153,34 @@ class TldrReplyApp:
             if not self._panel_open:
                 return False
             self._panel_open = False
+            self._expanded_choice_index = None
         self._dispatch_main(self._finish_dismiss)
         return True
 
     def _dispatch_main(self, callback: Any) -> None:
         Foundation.NSOperationQueue.mainQueue().addOperationWithBlock_(callback)
 
+    def _notify(self, message: str) -> None:
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e",
+                (
+                    f'display notification "{safe_message}" '
+                    'with title "Blink TLDR" sound name ""'
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def _close_panel(self) -> None:
         panel = self._panel
         if panel is not None:
+            if hasattr(panel, "invalidate_show_timers"):
+                panel.invalidate_show_timers()
             panel.close()
         self._panel = None
 
@@ -176,6 +203,7 @@ class TldrReplyApp:
             self._current_meta = None
             self._current_meta_path = None
             self._current_suggestions = []
+            self._expanded_choice_index = None
         print(f"[tldr] Copied suggestion {index + 1} to clipboard.")
 
     def _finish_dismiss(self) -> None:
@@ -189,6 +217,7 @@ class TldrReplyApp:
             self._current_meta = None
             self._current_meta_path = None
             self._current_suggestions = []
+            self._expanded_choice_index = None
         print("[tldr] Dismissed without changing clipboard.")
 
     def _run_once(self, hotkey_at: str) -> None:
@@ -217,6 +246,8 @@ class TldrReplyApp:
         if capture["status"] != "ok":
             print(f"[tldr] Capture {capture['status']}; no request sent.")
             return
+
+        self._notify("Screenshot captured. Summarizing...")
 
         try:
             if self.proxy_settings is None:
@@ -257,6 +288,7 @@ class TldrReplyApp:
             self._current_meta = meta
             self._current_meta_path = meta_path
             self._current_suggestions = suggestions
+            self._expanded_choice_index = None
 
         def show() -> None:
             self._panel = show_result_panel(
