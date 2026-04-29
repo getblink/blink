@@ -12,6 +12,7 @@ from typing import Any
 
 import AppKit
 import Foundation
+import Quartz
 from PyObjCTools import AppHelper
 
 from scratchpad.gemini_runner import plain_data
@@ -75,6 +76,8 @@ class TldrReplyApp:
         self.listener.register("1", lambda: self._on_choice_hotkey(0))
         self.listener.register("2", lambda: self._on_choice_hotkey(1))
         self.listener.register("3", lambda: self._on_choice_hotkey(2))
+        self.listener.register("return", self._on_enter_hotkey)
+        self.listener.register("enter", self._on_enter_hotkey)
         self.listener.register("escape", self._on_escape_hotkey)
         self._lock = threading.Lock()
         self._active_future: Future[None] | None = None
@@ -83,11 +86,18 @@ class TldrReplyApp:
         self._current_meta: dict[str, Any] | None = None
         self._current_meta_path: Path | None = None
         self._current_suggestions: list[str] = []
+        self._expanded_choice_index: int | None = None
+        self._previous_app: Any = None
         self._signal_timer = None
 
     def run(self) -> None:
         app = AppKit.NSApplication.sharedApplication()
-        app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+        # Regular activation policy (matches ui_lab) avoids the AppKit glass
+        # outline that the accessory + non-activating-panel context renders
+        # around NSGlassEffectView/NSGlassEffectContainerView. Tradeoff: the
+        # panel now steals focus from the target app and Blink shows in the
+        # dock for the lifetime of the runner.
+        app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
         AppHelper.installMachInterrupt()
@@ -135,9 +145,33 @@ class TldrReplyApp:
                 return False
             if index >= len(self._current_suggestions):
                 return True
+            if self._expanded_choice_index != index:
+                self._expanded_choice_index = index
+                panel = self._panel
+                if panel is not None:
+                    self._dispatch_main(lambda: panel.expand_suggestion(index))
+                return True
             text = self._current_suggestions[index]
             self._panel_open = False
+            self._expanded_choice_index = None
         self._dispatch_main(lambda: self._finish_choice(index, text))
+        return True
+
+    def _on_enter_hotkey(self) -> bool:
+        with self._lock:
+            if not self._panel_open:
+                return False
+            index = self._expanded_choice_index
+            if index is None:
+                # No option highlighted yet — let Enter propagate so the
+                # underlying app sees a normal Return keystroke.
+                return False
+            if index >= len(self._current_suggestions):
+                return True
+            text = self._current_suggestions[index]
+            self._panel_open = False
+            self._expanded_choice_index = None
+        self._dispatch_main(lambda: self._finish_insert(index, text))
         return True
 
     def _on_escape_hotkey(self) -> bool:
@@ -145,17 +179,56 @@ class TldrReplyApp:
             if not self._panel_open:
                 return False
             self._panel_open = False
+            self._expanded_choice_index = None
         self._dispatch_main(self._finish_dismiss)
         return True
 
     def _dispatch_main(self, callback: Any) -> None:
-        Foundation.NSOperationQueue.mainQueue().addOperationWithBlock_(callback)
+        def run_callback() -> None:
+            callback()
+            return None
+
+        self._main_queue().addOperationWithBlock_(run_callback)
+
+    def _main_queue(self) -> Any:
+        return Foundation.NSOperationQueue.mainQueue()
+
+    def _notify(self, message: str) -> None:
+        safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e",
+                (
+                    f'display notification "{safe_message}" '
+                    'with title "Blink TLDR" sound name ""'
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     def _close_panel(self) -> None:
         panel = self._panel
         if panel is not None:
             panel.close()
         self._panel = None
+        self._restore_previous_app()
+
+    def _restore_previous_app(self) -> None:
+        previous_app = self._previous_app
+        self._previous_app = None
+        if previous_app is None:
+            return
+        if previous_app.isTerminated():
+            return
+        own_pid = AppKit.NSRunningApplication.currentApplication().processIdentifier()
+        if previous_app.processIdentifier() == own_pid:
+            return
+        previous_app.activateWithOptions_(
+            AppKit.NSApplicationActivateIgnoringOtherApps
+        )
 
     def _finish_choice(self, index: int, text: str) -> None:
         self._close_panel()
@@ -176,7 +249,38 @@ class TldrReplyApp:
             self._current_meta = None
             self._current_meta_path = None
             self._current_suggestions = []
+            self._expanded_choice_index = None
         print(f"[tldr] Copied suggestion {index + 1} to clipboard.")
+
+    def _finish_insert(self, index: int, text: str) -> None:
+        # Same copy/close/log path as a regular choice, then synthesize Cmd+V
+        # into whatever app the panel restored focus to. The 150ms delay
+        # gives `_restore_previous_app`'s async activateWithOptions_: time
+        # to land before the keystroke is posted.
+        self._finish_choice(index, text)
+        Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            0.15,
+            False,
+            lambda _timer: self._synthesize_cmd_v(),
+        )
+
+    def _synthesize_cmd_v(self) -> None:
+        source = Quartz.CGEventSourceCreate(
+            Quartz.kCGEventSourceStateCombinedSessionState
+        )
+        if source is None:
+            print("[tldr] CGEventSource creation failed; paste skipped.")
+            return
+        v_keycode = 9  # kVK_ANSI_V
+        down = Quartz.CGEventCreateKeyboardEvent(source, v_keycode, True)
+        up = Quartz.CGEventCreateKeyboardEvent(source, v_keycode, False)
+        if down is None or up is None:
+            print("[tldr] CGEventCreateKeyboardEvent failed; paste skipped.")
+            return
+        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, down)
+        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, up)
 
     def _finish_dismiss(self) -> None:
         self._close_panel()
@@ -189,6 +293,7 @@ class TldrReplyApp:
             self._current_meta = None
             self._current_meta_path = None
             self._current_suggestions = []
+            self._expanded_choice_index = None
         print("[tldr] Dismissed without changing clipboard.")
 
     def _run_once(self, hotkey_at: str) -> None:
@@ -217,6 +322,8 @@ class TldrReplyApp:
         if capture["status"] != "ok":
             print(f"[tldr] Capture {capture['status']}; no request sent.")
             return
+
+        self._notify("Screenshot captured. Summarizing...")
 
         try:
             if self.proxy_settings is None:
@@ -257,8 +364,16 @@ class TldrReplyApp:
             self._current_meta = meta
             self._current_meta_path = meta_path
             self._current_suggestions = suggestions
+            self._expanded_choice_index = None
 
         def show() -> None:
+            # Capture frontmost before show_result_panel calls
+            # NSApp.activateIgnoringOtherApps_; that's the app the user was in
+            # when picking the screenshot target, and the one to restore focus
+            # to once the panel closes.
+            self._previous_app = (
+                AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+            )
             self._panel = show_result_panel(
                 str(response.get("tldr") or ""),
                 suggestions,
