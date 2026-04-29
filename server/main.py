@@ -7,7 +7,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+import httpx
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import StreamingResponse
 
 try:
     from . import gemini
@@ -24,6 +26,25 @@ load_workspace_env()
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
+
+# Upstream Gemini API. The /v1beta proxy below forwards everything under this
+# prefix, swapping the client's bearer token for the server's GEMINI_API_KEY.
+GEMINI_UPSTREAM = "https://generativelanguage.googleapis.com"
+PROXY_TIMEOUT_SECONDS = 120.0
+# Headers we drop on the way to upstream (auth/host/transport) and on the way
+# back to client (transport/connection).
+_HOP_BY_HOP = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
+}
 
 app = FastAPI(title="Blink TLDR Server")
 logger = logging.getLogger("blink.tldr.server")
@@ -157,3 +178,89 @@ async def tldr(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="schema_mismatch: Gemini returned an incomplete response",
     )
+
+
+async def _proxy_to_gemini(
+    request: Request,
+    upstream_path: str,
+    token_id: str,
+) -> StreamingResponse:
+    real_api_key = os.environ.get("GEMINI_API_KEY")
+    if not real_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="server misconfigured: GEMINI_API_KEY is empty",
+        )
+
+    body = await request.body()
+    target_url = f"{GEMINI_UPSTREAM}/{upstream_path}"
+
+    forward_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _HOP_BY_HOP
+        and key.lower() not in {"authorization", "x-goog-api-key", "cookie"}
+    }
+    forward_headers["x-goog-api-key"] = real_api_key
+
+    client = httpx.AsyncClient(timeout=PROXY_TIMEOUT_SECONDS)
+    upstream_request = client.build_request(
+        request.method,
+        target_url,
+        params=request.query_params,
+        content=body,
+        headers=forward_headers,
+    )
+    try:
+        upstream = await client.send(upstream_request, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        _log_request(
+            token_id=token_id,
+            status_name="proxy_upstream_error",
+            duration_ms=None,
+            usage_tokens=None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Gemini upstream error: {_sanitized_error_message(exc)}",
+        ) from exc
+
+    response_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() not in _HOP_BY_HOP
+    }
+
+    async def iterate() -> Any:
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    _log_request(
+        token_id=token_id,
+        status_name=f"proxy_{upstream.status_code}",
+        duration_ms=None,
+        usage_tokens=None,
+    )
+    return StreamingResponse(
+        iterate(),
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.api_route(
+    "/v1beta/{path:path}",
+    methods=["GET", "POST"],
+)
+async def gemini_proxy(
+    path: str,
+    request: Request,
+    token_id: str = Depends(require_bearer_token),
+) -> StreamingResponse:
+    return await _proxy_to_gemini(request, f"v1beta/{path}", token_id)

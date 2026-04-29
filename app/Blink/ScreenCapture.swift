@@ -80,9 +80,14 @@ enum ScreenCapture {
             throw CaptureError.underlying(error)
         }
 
+        // windowLayer == 0 excludes menu-bar (25), status (24), and other
+        // non-app-layer windows. Without this filter, fullscreen apps often
+        // expose a 37pt-tall helper at y=0 that gets picked over the real
+        // window, producing blank-sliver captures.
         let candidates = content.windows.filter { window in
             window.owningApplication?.processID == pid
                 && window.isOnScreen
+                && window.windowLayer == 0
                 && window.frame.width > 0
                 && window.frame.height > 0
         }
@@ -152,7 +157,12 @@ enum ScreenCapture {
     ) -> SCWindow? {
         guard !candidates.isEmpty else { return nil }
         guard let preferredGlobalRect, !preferredGlobalRect.isNull, !preferredGlobalRect.isEmpty else {
-            return candidates.first
+            // No focused-field hint: pick the largest window. Z-order alone is
+            // unreliable across Spaces and fullscreen, where transient helpers
+            // can land on top of the real content window.
+            return candidates.max { lhs, rhs in
+                lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+            }
         }
 
         let preferredCenter = CGPoint(

@@ -74,6 +74,31 @@ fi
 # site-packages is at python/lib/python3.11/site-packages/, target is python/lib/python-packages/
 echo "../../python-packages" > "$SITE_PACKAGES_DIR/blink-site.pth"
 
+# Inject proxy URL/token into the built bundle's Info.plist so the shipped DMG
+# works without per-machine setup. The committed Info.plist keeps empty
+# defaults; the live values come from config.env (gitignored). Must run before
+# the ad-hoc resign below so the signature seals the modified plist.
+INFO_PLIST="$APP_PATH/Contents/Info.plist"
+if [[ -n "${BLINK_PROXY_URL:-}" ]]; then
+    echo "[blink] stamping BlinkProxyURL into Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :BlinkProxyURL ${BLINK_PROXY_URL}" "$INFO_PLIST"
+fi
+if [[ -n "${BLINK_PROXY_TOKEN:-}" ]]; then
+    echo "[blink] stamping BlinkProxyToken into Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :BlinkProxyToken ${BLINK_PROXY_TOKEN}" "$INFO_PLIST"
+fi
+
+# Xcode signs the bundle before we rsync python-dist + run_once.py into
+# Contents/Resources/, so the on-disk seal is now invalid ("a sealed resource
+# is missing or invalid"). Re-seal ad-hoc here so the bundle is launchable
+# as-is. scripts/sign.sh will overwrite this with a Developer ID signature
+# for distribution builds.
+echo "[blink] re-signing bundle ad-hoc after resource copy"
+xattr -cr "$APP_PATH"
+codesign --force --deep --sign - --options runtime --timestamp=none \
+    --entitlements "$APP_DIR/Blink/Blink.entitlements" "$APP_PATH"
+codesign --verify --deep --strict "$APP_PATH"
+
 echo "[blink] build complete → $APP_PATH"
 
 # Reset TCC so the freshly-built binary gets a clean first-launch experience
