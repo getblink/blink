@@ -35,20 +35,19 @@ SUGGESTION_COLLAPSED_TEXT_HEIGHT = 24.0
 SUGGESTION_PADDING_Y = (SUGGESTION_COLLAPSED_HEIGHT - SUGGESTION_COLLAPSED_TEXT_HEIGHT) / 2.0
 
 # Per-card "↵ Enter to insert" affordance. Shown only on the highlighted
-# card, on the right side, aligned with the number's vertical position.
+# card. Sits at the bottom-right of the pill in a footer strip that's
+# kept clear of the body text by SUGGESTION_BOTTOM_PADDING_EXPANDED.
 ENTER_HINT_TEXT = "⏎ Enter to insert"
 ENTER_HINT_FONT_SIZE = 12.0
 ENTER_HINT_WIDTH = 140.0
-ENTER_HINT_HEIGHT = 24.0
+ENTER_HINT_HEIGHT = 18.0
 ENTER_HINT_RIGHT_INSET = 24.0
+ENTER_HINT_BOTTOM_INSET = 4.0
+# Multi-line cards grow their bottom padding so wrapped text doesn't
+# crowd the hint footer. Top padding stays at SUGGESTION_PADDING_Y.
+SUGGESTION_BOTTOM_PADDING_EXPANDED = 28.0
 
 EXPAND_DURATION = 0.22
-
-# Drop-shadow values for glass cards. Stronger than the default macOS
-# window shadow so suggestion text reads cleanly over busy backgrounds.
-CARD_SHADOW_OPACITY = 0.45
-CARD_SHADOW_RADIUS = 22.0
-CARD_SHADOW_OFFSET_Y = -10.0
 
 
 # Match the UI lab's Liquid Glass feature gating. macOS versions before the
@@ -231,7 +230,11 @@ class ReplyPanel(AppKit.NSPanel):
                     SUGGESTION_LINE_SPACING,
                 )
                 label_height = _measure_height(label_text, text_width, label_font, SUGGESTION_LINE_SPACING)
-                label_y = SUGGESTION_PADDING_Y
+                # Bottom of card reserves SUGGESTION_BOTTOM_PADDING_EXPANDED
+                # for the hint footer; the label sits above it. Top padding
+                # comes out as SUGGESTION_PADDING_Y because the card's height
+                # is sized to label_height + top + bottom padding.
+                label_y = SUGGESTION_BOTTOM_PADDING_EXPANDED
                 number_y = label_y + label_height - SUGGESTION_NUMBER_HEIGHT
             else:
                 label.setStringValue_(self._option_collapsed_texts[card_index])
@@ -332,19 +335,12 @@ class ReplyPanel(AppKit.NSPanel):
                     )
                 )
                 if ci < len(enter_hints):
-                    enter_hint_x = (
-                        source_frame.size.width
-                        - ENTER_HINT_RIGHT_INSET
-                        - ENTER_HINT_WIDTH
-                    )
-                    enter_hint_y = (
-                        number_y
-                        + (SUGGESTION_NUMBER_HEIGHT - ENTER_HINT_HEIGHT) / 2.0
-                    )
                     enter_hints[ci].animator().setFrame_(
                         Foundation.NSMakeRect(
-                            enter_hint_x,
-                            enter_hint_y,
+                            source_frame.size.width
+                            - ENTER_HINT_RIGHT_INSET
+                            - ENTER_HINT_WIDTH,
+                            ENTER_HINT_BOTTOM_INSET,
                             ENTER_HINT_WIDTH,
                             ENTER_HINT_HEIGHT,
                         )
@@ -486,17 +482,6 @@ def _collapsed_single_line_text(text: str, width: float, font: AppKit.NSFont) ->
     return f"{best}{suffix}" if best else suffix
 
 
-def _apply_card_shadow(view: AppKit.NSView) -> None:
-    view.setWantsLayer_(True)
-    layer = view.layer()
-    if layer is None:
-        return
-    layer.setShadowColor_(Quartz.CGColorCreateGenericRGB(0.0, 0.0, 0.0, 1.0))
-    layer.setShadowOpacity_(CARD_SHADOW_OPACITY)
-    layer.setShadowRadius_(CARD_SHADOW_RADIUS)
-    layer.setShadowOffset_(Foundation.NSMakeSize(0.0, CARD_SHADOW_OFFSET_Y))
-
-
 def _make_glass_pane(
     frame: Foundation.NSRect,
     corner_radius: float = 22.0,
@@ -510,7 +495,6 @@ def _make_glass_pane(
         if tint_color is not None:
             outer.setTintColor_(tint_color)
         _suppress_glass_outline(outer)
-        _apply_card_shadow(outer)
         content = AppKit.NSView.alloc().initWithFrame_(
             Foundation.NSMakeRect(0, 0, frame.size.width, frame.size.height)
         )
@@ -632,7 +616,7 @@ def _make_suggestion_card(
     enter_hint = _make_label(
         Foundation.NSMakeRect(
             frame.size.width - ENTER_HINT_RIGHT_INSET - ENTER_HINT_WIDTH,
-            (frame.size.height - ENTER_HINT_HEIGHT) / 2.0,
+            ENTER_HINT_BOTTOM_INSET,
             ENTER_HINT_WIDTH,
             ENTER_HINT_HEIGHT,
         ),
@@ -664,7 +648,19 @@ def show_result_panel(
     suggestion_padding_y = SUGGESTION_PADDING_Y
     suggestion_label_width = content_width - SUGGESTION_TEXT_X - suggestion_padding_x
 
-    summary_height = SUMMARY_MIN_HEIGHT
+    summary_label_width = content_width - 48.0
+    tldr_text_y = HINT_INSET_BOTTOM + HINT_HEIGHT + HINT_TO_TEXT_GAP
+    summary_height = max(
+        SUMMARY_MIN_HEIGHT,
+        _measure_height(
+            tldr,
+            summary_label_width,
+            summary_font,
+            TLDR_LINE_SPACING,
+        )
+        + tldr_text_y
+        + TLDR_TOP_INSET,
+    )
     row_heights = [SUGGESTION_COLLAPSED_HEIGHT for _ in display_suggestions]
     expanded_row_heights = [
         max(
@@ -675,9 +671,10 @@ def show_result_panel(
                 suggestion_font,
                 SUGGESTION_LINE_SPACING,
             )
-            + (suggestion_padding_y * 2),
+            + suggestion_padding_y
+            + SUGGESTION_BOTTOM_PADDING_EXPANDED,
         )
-        for index, text in enumerate(display_suggestions, start=1)
+        for text in display_suggestions
     ]
     stack_height = (
         sum(row_heights)
@@ -740,7 +737,6 @@ def show_result_panel(
     hint.setAlignment_(AppKit.NSTextAlignmentCenter)
     tldr_content.addSubview_(hint)
 
-    tldr_text_y = HINT_INSET_BOTTOM + HINT_HEIGHT + HINT_TO_TEXT_GAP
     tldr_label = _make_label(
         Foundation.NSMakeRect(
             24.0,

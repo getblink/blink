@@ -68,18 +68,20 @@ class ChoiceHotkeyTests(unittest.TestCase):
 
 
 class EnterHotkeyTests(unittest.TestCase):
-    def test_enter_with_no_selection_is_noop(self) -> None:
+    def test_enter_with_no_selection_passes_through(self) -> None:
         app = _make_app(mock.Mock(), ["a", "b"])
 
         result = app._on_enter_hotkey()
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         self.assertTrue(app._panel_open)
         self.assertEqual(len(app._dispatched), 0)
 
-    def test_enter_with_selection_copies(self) -> None:
+    def test_enter_with_selection_inserts(self) -> None:
         app = _make_app(mock.Mock(), ["first", "second"])
         app._expanded_choice_index = 1
+        app._finish_insert = mock.Mock()  # type: ignore[method-assign]
+        app._finish_choice = mock.Mock()  # type: ignore[method-assign]
 
         result = app._on_enter_hotkey()
 
@@ -87,6 +89,12 @@ class EnterHotkeyTests(unittest.TestCase):
         self.assertFalse(app._panel_open)
         self.assertIsNone(app._expanded_choice_index)
         self.assertEqual(len(app._dispatched), 1)
+
+        # The dispatched callback should call _finish_insert (paste path),
+        # not _finish_choice (clipboard-only).
+        app._dispatched[0]()
+        app._finish_insert.assert_called_once_with(1, "second")
+        app._finish_choice.assert_not_called()
 
     def test_enter_without_panel_open_passes_event_through(self) -> None:
         app = _make_app(None, [])

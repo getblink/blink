@@ -12,6 +12,7 @@ from typing import Any
 
 import AppKit
 import Foundation
+import Quartz
 from PyObjCTools import AppHelper
 
 from scratchpad.gemini_runner import plain_data
@@ -162,14 +163,15 @@ class TldrReplyApp:
                 return False
             index = self._expanded_choice_index
             if index is None:
-                # An option must be highlighted first; the hint surfaces this.
-                return True
+                # No option highlighted yet — let Enter propagate so the
+                # underlying app sees a normal Return keystroke.
+                return False
             if index >= len(self._current_suggestions):
                 return True
             text = self._current_suggestions[index]
             self._panel_open = False
             self._expanded_choice_index = None
-        self._dispatch_main(lambda: self._finish_choice(index, text))
+        self._dispatch_main(lambda: self._finish_insert(index, text))
         return True
 
     def _on_escape_hotkey(self) -> bool:
@@ -249,6 +251,36 @@ class TldrReplyApp:
             self._current_suggestions = []
             self._expanded_choice_index = None
         print(f"[tldr] Copied suggestion {index + 1} to clipboard.")
+
+    def _finish_insert(self, index: int, text: str) -> None:
+        # Same copy/close/log path as a regular choice, then synthesize Cmd+V
+        # into whatever app the panel restored focus to. The 150ms delay
+        # gives `_restore_previous_app`'s async activateWithOptions_: time
+        # to land before the keystroke is posted.
+        self._finish_choice(index, text)
+        Foundation.NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+            0.15,
+            False,
+            lambda _timer: self._synthesize_cmd_v(),
+        )
+
+    def _synthesize_cmd_v(self) -> None:
+        source = Quartz.CGEventSourceCreate(
+            Quartz.kCGEventSourceStateCombinedSessionState
+        )
+        if source is None:
+            print("[tldr] CGEventSource creation failed; paste skipped.")
+            return
+        v_keycode = 9  # kVK_ANSI_V
+        down = Quartz.CGEventCreateKeyboardEvent(source, v_keycode, True)
+        up = Quartz.CGEventCreateKeyboardEvent(source, v_keycode, False)
+        if down is None or up is None:
+            print("[tldr] CGEventCreateKeyboardEvent failed; paste skipped.")
+            return
+        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, down)
+        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, up)
 
     def _finish_dismiss(self) -> None:
         self._close_panel()
