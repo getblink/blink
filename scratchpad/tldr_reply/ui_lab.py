@@ -52,6 +52,7 @@ LAB_SUGGESTION_LINE_SPACING = 5.0
 LAB_COLLAPSED_TEXT_HEIGHT = 24.0
 LAB_NUMBER_HEIGHT = 24.0
 LAB_PILL_HEIGHT = 62.0
+SHADOW_BLEED = 36.0
 # Match the natural top/bottom gap of the collapsed pill so the first line of
 # text stays at the same screen position when the pill expands downward.
 LAB_SUGGESTION_VERTICAL_PADDING = (LAB_PILL_HEIGHT - LAB_COLLAPSED_TEXT_HEIGHT) / 2.0
@@ -83,6 +84,12 @@ class LabPanel(AppKit.NSPanel):
             self.expandSuggestion_(event.keyCode() - 18)
             return
         objc.super(LabPanel, self).keyDown_(event)
+
+    def animationResizeTime_(self, frame):
+        # Defensive fallback if a future path animates panel resizing again.
+        # The current expansion path sets the panel frame synchronously so the
+        # TLDR can be pinned before suggestion rows animate downward.
+        return EXPAND_DURATION
 
     @objc.python_method
     def _register_timer(self, timer: Any) -> None:
@@ -215,6 +222,43 @@ class LabPanel(AppKit.NSPanel):
                 container_frame.size.height + height_delta,
             )
 
+        self.setFrame_display_(new_panel_frame, True)
+        self._background.setFrame_(
+            Foundation.NSMakeRect(0, 0, frame.size.width, target_height)
+        )
+        summary_view.setFrameOrigin_(
+            Foundation.NSMakePoint(
+                self._summary_frame.origin.x,
+                self._summary_frame.origin.y + height_delta,
+            )
+        )
+        hint_view.setFrameOrigin_(
+            Foundation.NSMakePoint(
+                self._hint_frame.origin.x,
+                self._hint_frame.origin.y + height_delta,
+            )
+        )
+        if container is not None and new_container_frame is not None:
+            container.setFrame_(new_container_frame)
+        for pill, source, pill_y, _pill_height, label, _label_y, _label_height, _number, _number_y in pill_geometries:
+            start_y = pill_y if pill_y > source.origin.y else source.origin.y + height_delta
+            pill.setFrame_(
+                Foundation.NSMakeRect(
+                    source.origin.x,
+                    start_y,
+                    source.size.width,
+                    source.size.height,
+                )
+            )
+            label.setFrame_(
+                Foundation.NSMakeRect(
+                    68,
+                    (source.size.height - LAB_COLLAPSED_TEXT_HEIGHT) / 2,
+                    source.size.width - 92,
+                    LAB_COLLAPSED_TEXT_HEIGHT,
+                )
+            )
+
         AppKit.NSAnimationContext.beginGrouping()
         try:
             ctx = AppKit.NSAnimationContext.currentContext()
@@ -224,18 +268,6 @@ class LabPanel(AppKit.NSPanel):
                     Quartz.kCAMediaTimingFunctionEaseInEaseOut
                 )
             )
-            self.animator().setFrame_display_(new_panel_frame, True)
-            self._background.animator().setFrame_(
-                Foundation.NSMakeRect(0, 0, frame.size.width, target_height)
-            )
-            summary_view.animator().setFrameOrigin_(
-                Foundation.NSMakePoint(
-                    self._summary_frame.origin.x,
-                    self._summary_frame.origin.y + height_delta,
-                )
-            )
-            if container is not None and new_container_frame is not None:
-                container.animator().setFrame_(new_container_frame)
             for pill, source, pill_y, pill_height, label, label_y, label_height, number, number_y in pill_geometries:
                 _set_corner_radius(pill, source.size.height / 2.0)
                 pill.animator().setFrame_(
@@ -380,6 +412,23 @@ LIQUID_GLASS_CONTAINER_AVAILABLE = _GLASS_CONTAINER_CLASS is not None
 _GLASS_STYLE_REGULAR = getattr(AppKit, "NSGlassEffectViewStyleRegular", None)
 
 
+def _suppress_glass_outline(view: AppKit.NSView) -> None:
+    if hasattr(view, "hideActiveFirstResponderIndication"):
+        view.hideActiveFirstResponderIndication()
+    if hasattr(view, "setFocusRingType_") and hasattr(AppKit, "NSFocusRingTypeNone"):
+        view.setFocusRingType_(AppKit.NSFocusRingTypeNone)
+    if hasattr(view, "setShadow_"):
+        shadow = AppKit.NSShadow.alloc().init()
+        shadow.setShadowColor_(AppKit.NSColor.clearColor())
+        shadow.setShadowBlurRadius_(0.0)
+        shadow.setShadowOffset_(Foundation.NSMakeSize(0.0, 0.0))
+        view.setShadow_(shadow)
+    layer = view.layer() if hasattr(view, "layer") else None
+    if layer is not None:
+        layer.setBorderWidth_(0.0)
+        layer.setBorderColor_(Quartz.CGColorCreateGenericRGB(0, 0, 0, 0))
+
+
 def make_glass_pane(
     frame: Foundation.NSRect,
     corner_radius: float = 22.0,
@@ -401,6 +450,7 @@ def make_glass_pane(
             outer.setStyle_(_GLASS_STYLE_REGULAR)
         if tint_color is not None:
             outer.setTintColor_(tint_color)
+        _suppress_glass_outline(outer)
         content = AppKit.NSView.alloc().initWithFrame_(
             Foundation.NSMakeRect(0, 0, frame.size.width, frame.size.height)
         )
@@ -417,6 +467,7 @@ def make_glass_pane(
     outer.setWantsLayer_(True)
     outer.layer().setCornerRadius_(corner_radius)
     outer.layer().setMasksToBounds_(True)
+    _suppress_glass_outline(outer)
     if tint_color is not None:
         components = tint_color.colorUsingColorSpace_(
             AppKit.NSColorSpace.sRGBColorSpace()
@@ -456,7 +507,7 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     )
 
     pill_count = len(suggestions)
-    total_height = (
+    content_height = (
         summary_height
         + section_gap
         + pill_count * pill_height
@@ -464,10 +515,14 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
         + hint_top_gap
         + hint_height
     )
+    panel_width = width + (SHADOW_BLEED * 2.0)
+    panel_height = content_height + (SHADOW_BLEED * 2.0)
+    content_x = SHADOW_BLEED
+    content_bottom = SHADOW_BLEED
 
-    panel = _make_panel(width, total_height)
+    panel = _make_panel(panel_width, panel_height)
     background = AppKit.NSView.alloc().initWithFrame_(
-        Foundation.NSMakeRect(0, 0, width, total_height)
+        Foundation.NSMakeRect(0, 0, panel_width, panel_height)
     )
     background.setWantsLayer_(True)
     background.layer().setBackgroundColor_(
@@ -475,49 +530,48 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     )
     panel.setContentView_(background)
 
-    # --- compute layout up front so the glass container can wrap the
-    # summary card and pills together (so they merge into one blob) -----
-    summary_y = total_height - summary_height
+    # --- compute layout up front so the summary can stay pinned while the
+    # suggestion stack gets its own resizing glass container. ---------------
+    summary_y = content_bottom + content_height - summary_height
     pills_top_y = summary_y - section_gap
     pills_bottom_y = (
         pills_top_y - pill_count * pill_height - max(0, pill_count - 1) * pill_gap
     )
 
+    container_origin_y = pills_bottom_y
     if LIQUID_GLASS_CONTAINER_AVAILABLE:
-        # Container covers the TLDR card AND the pills so the pills can merge
-        # with the TLDR's glass shape and appear to peel off it.
-        container_height_initial = total_height - pills_bottom_y
+        # Keep the TLDR outside the resizing suggestion stack. The container is
+        # only for the pills, so expansion can add space below the summary
+        # without making the TLDR participate in the glass-stack relayout.
+        container_height_initial = pills_top_y - pills_bottom_y
+        container_origin_y = pills_bottom_y - SHADOW_BLEED
         container_frame_bg = Foundation.NSMakeRect(
-            0, pills_bottom_y, width, container_height_initial
+            0,
+            container_origin_y,
+            panel_width,
+            container_height_initial + (SHADOW_BLEED * 2.0),
         )
         pill_container = _GLASS_CONTAINER_CLASS.alloc().initWithFrame_(container_frame_bg)
         pill_container.setSpacing_(BLOB_MERGE_SPACING)
         pill_container.setWantsLayer_(True)
+        _suppress_glass_outline(pill_container)
         pill_container.setAlphaValue_(0.0)
         background.addSubview_(pill_container)
         use_container = True
-        glass_parent = pill_container
     else:
         pill_container = None
         container_frame_bg = None
         container_height_initial = 0.0
         use_container = False
-        glass_parent = background
 
     # --- summary card ---------------------------------------------------
-    if use_container:
-        summary_frame = Foundation.NSMakeRect(
-            0, summary_y - pills_bottom_y, width, summary_height
-        )
-    else:
-        summary_frame = Foundation.NSMakeRect(0, summary_y, width, summary_height)
+    summary_frame = Foundation.NSMakeRect(content_x, summary_y, width, summary_height)
     summary_glass, summary_content = make_glass_pane(
         summary_frame,
         corner_radius=24.0,
     )
-    if not use_container:
-        summary_glass.setAlphaValue_(0.0)
-    glass_parent.addSubview_(summary_glass)
+    summary_glass.setAlphaValue_(0.0)
+    background.addSubview_(summary_glass)
 
     status_text = (
         "Liquid Glass: ON (NSGlassEffectView)"
@@ -554,21 +608,13 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
     summary_content.addSubview_(summary)
 
     # --- suggestion pills ----------------------------------------------
-    # Pills go into the same container as the TLDR card so they can merge
-    # with the TLDR's glass shape during the entrance animation. The
-    # container was created above (alongside the summary card).
-    pill_parent = glass_parent
+    pill_parent = pill_container if use_container else background
 
-    # All pills start stacked INSIDE the TLDR card (their bottom edge flush
-    # with the TLDR's bottom edge, so the pill bodies extend up into the
-    # TLDR's interior and are fully overlapped by the TLDR's glass shape).
-    # The container's merge effect absorbs them into the TLDR — visually
-    # there's just the TLDR card. As each pill slides downward in the fan-out,
-    # it pulls a glass tendril out of the TLDR's bottom edge, then detaches
-    # once it crosses BLOB_MERGE_SPACING.
+    # Pills start stacked at the top of their own container, just under the
+    # TLDR. They fan downward from there, while the summary stays outside the
+    # resizing stack.
     if use_container:
-        tldr_bottom_local = summary_y - pills_bottom_y
-        blob_start_local_y = tldr_bottom_local
+        blob_start_local_y = pills_top_y - container_origin_y - pill_height
     else:
         blob_start_local_y = 0.0
 
@@ -592,14 +638,14 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
         exp_delta = exp_height - pill_height
 
         if use_container:
-            local_y = y - pills_bottom_y
-            collapsed_frame = Foundation.NSMakeRect(0, local_y, width, pill_height)
-            expanded_frame = Foundation.NSMakeRect(0, local_y - exp_delta, width, exp_height)
-            # All pills (including pill 1) start at the blob anchor at TLDR bottom.
-            initial_frame = Foundation.NSMakeRect(0, blob_start_local_y, width, pill_height)
+            local_y = y - container_origin_y
+            collapsed_frame = Foundation.NSMakeRect(content_x, local_y, width, pill_height)
+            expanded_frame = Foundation.NSMakeRect(content_x, local_y - exp_delta, width, exp_height)
+            # All pills start from the top of the suggestion container.
+            initial_frame = Foundation.NSMakeRect(content_x, blob_start_local_y, width, pill_height)
         else:
-            collapsed_frame = Foundation.NSMakeRect(0, y, width, pill_height)
-            expanded_frame = Foundation.NSMakeRect(0, y - exp_delta, width, exp_height)
+            collapsed_frame = Foundation.NSMakeRect(content_x, y, width, pill_height)
+            expanded_frame = Foundation.NSMakeRect(content_x, y - exp_delta, width, exp_height)
             initial_frame = collapsed_frame
 
         pill_glass, pill_content = make_glass_pane(
@@ -607,9 +653,8 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
             corner_radius=pill_height / 2.0,
         )
         if use_container:
-            # Hide the contentView (number + label) until the pill emerges from
-            # inside the TLDR. Otherwise the text renders ON TOP of the merged
-            # glass shape and overlays the TLDR's own content.
+            # Hide the contentView (number + label) until the pill fans into
+            # its row. Otherwise stacked labels render on top of each other.
             pill_content.setAlphaValue_(0.0)
         else:
             pill_glass.setAlphaValue_(0.0)
@@ -659,7 +704,7 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
 
     # --- footer hint (no card; floats over whatever is behind) ---------
     hint = AppKit.NSTextField.alloc().initWithFrame_(
-        Foundation.NSMakeRect(0, 0, width, hint_height)
+        Foundation.NSMakeRect(content_x, content_bottom, width, hint_height)
     )
     hint.setEditable_(False)
     hint.setSelectable_(False)
@@ -705,9 +750,9 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
             NSAnimationContext.endGrouping()
 
     if use_container:
-        # t=0: the whole container (summary + merged pill blob, all merged into
-        # one liquid-glass shape) and the hint fade in together.
+        # t=0: the summary, pill container, and hint fade in together.
         def _materialize(_t: Any, _pc: AppKit.NSView = pill_container, _h: AppKit.NSView = hint) -> None:
+            _lab_ease_out_fade(summary_glass)
             _lab_ease_out_fade(_pc)
             _lab_ease_out_fade(_h)
 
@@ -716,12 +761,9 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
         )
         panel._register_timer(mat_timer)
 
-        # Sequential cascade: pill 0 drops from inside the TLDR to its final
-        # position, then pill 1 emerges from pill 0's final position and drops
-        # to its own, then pill 2 from pill 1's. Linear timing → constant
-        # velocity. Pills 1+ teleport to the previous pill's final position
-        # right before their drop starts (synchronous, no animation), so they
-        # appear to peel off the previous pill's glass shape.
+        # Sequential cascade: pill 0 drops from the top of the stack, then
+        # each later pill emerges from the previous pill's final position and
+        # drops to its own. Linear timing keeps the speed constant.
         prev_local_y = blob_start_local_y
         cumulative_delay = ENTRANCE_DURATION + BLOB_MATERIALIZE_DELAY
         for fanout_i in range(len(pills)):
@@ -737,10 +779,11 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
                 tele_y: float | None = teleport_y,
                 w: float = width,
                 ph: float = pill_height,
+                px: float = content_x,
             ) -> Any:
                 def _do_fanout(_t: Any) -> None:
                     if tele_y is not None:
-                        p.setFrame_(Foundation.NSMakeRect(0.0, tele_y, w, ph))
+                        p.setFrame_(Foundation.NSMakeRect(px, tele_y, w, ph))
                     NSAnimationContext = AppKit.NSAnimationContext
                     NSAnimationContext.beginGrouping()
                     try:
@@ -749,7 +792,7 @@ def variant_v1(tldr: str, suggestions: list[str]) -> AppKit.NSPanel:
                         ctx.setTimingFunction_(
                             Quartz.CAMediaTimingFunction.functionWithName_(Quartz.kCAMediaTimingFunctionLinear)
                         )
-                        p.animator().setFrame_(Foundation.NSMakeRect(0.0, fy, w, ph))
+                        p.animator().setFrame_(Foundation.NSMakeRect(px, fy, w, ph))
                         c.animator().setAlphaValue_(1.0)
                     finally:
                         NSAnimationContext.endGrouping()
