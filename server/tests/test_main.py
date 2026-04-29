@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import unittest
+from typing import Any
 from unittest import mock
 
+import httpx
 from fastapi.testclient import TestClient
 
 from server.main import app
@@ -108,6 +110,66 @@ class MainTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_proxy_rejects_bad_token(self) -> None:
+        response = self.client.post(
+            "/v1beta/models/gemini:generateContent",
+            headers={"Authorization": "Bearer nope"},
+            json={"contents": []},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_proxy_500_when_server_missing_gemini_key(self) -> None:
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            response = self.client.post(
+                "/v1beta/models/gemini:generateContent",
+                headers={"Authorization": "Bearer dev-token"},
+                json={"contents": []},
+            )
+        self.assertEqual(response.status_code, 500)
+
+    def test_proxy_forwards_body_and_swaps_api_key(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def fake_send(self_client: httpx.AsyncClient, req: httpx.Request, stream: bool = False, **_: Any) -> Any:
+            captured["url"] = str(req.url)
+            captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+            captured["body"] = req.read()
+            response = mock.Mock()
+            response.status_code = 200
+            response.headers = {"content-type": "application/json"}
+
+            async def aiter_raw() -> Any:
+                yield b'{"ok":true}'
+
+            async def aclose() -> None:
+                return None
+
+            response.aiter_raw = aiter_raw
+            response.aclose = aclose
+            return response
+
+        with mock.patch.object(httpx.AsyncClient, "send", fake_send):
+            response = self.client.post(
+                "/v1beta/models/gemini:generateContent",
+                headers={
+                    "Authorization": "Bearer dev-token",
+                    "x-goog-api-key": "client-side-leftover",
+                    "Content-Type": "application/json",
+                },
+                content=b'{"contents":[{"parts":[{"text":"hi"}]}]}',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b'{"ok":true}')
+        # Client's bearer + x-goog-api-key are stripped; server-side key swapped in.
+        self.assertEqual(captured["headers"].get("x-goog-api-key"), "test-key")
+        self.assertNotIn("authorization", captured["headers"])
+        self.assertEqual(
+            captured["url"],
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent",
+        )
+        self.assertEqual(captured["body"], b'{"contents":[{"parts":[{"text":"hi"}]}]}')
 
 
 if __name__ == "__main__":

@@ -32,7 +32,16 @@ def resolve_runtime_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
     api_key = os.environ.get(api_key_env)
     if not api_key:
-        raise MissingCredentialError(f"Missing required env var: {api_key_env}")
+        # Proxy mode: BLINK_PROXY_URL+TOKEN replaces direct provider auth. We
+        # still hand a non-empty placeholder to the SDK so it doesn't bail
+        # before the request leaves; the proxy strips it and substitutes the
+        # real upstream key.
+        proxy_url = os.environ.get("BLINK_PROXY_URL")
+        proxy_token = os.environ.get("BLINK_PROXY_TOKEN")
+        if proxy_url and proxy_token:
+            api_key = proxy_token
+        else:
+            raise MissingCredentialError(f"Missing required env var: {api_key_env}")
 
     base_url = options.get("base_url")
     if base_url is not None and not isinstance(base_url, str):
