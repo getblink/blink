@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import unittest
 from typing import Any
@@ -9,6 +10,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from server.main import app
+from server.storage import TelemetryStore
 
 
 class MainTests(unittest.TestCase):
@@ -18,7 +20,9 @@ class MainTests(unittest.TestCase):
             {
                 "BLINK_API_TOKENS": "dev-token",
                 "GEMINI_API_KEY": "test-key",
+                "TLDR_ALLOWED_MODELS": "gemini-3.1-flash-lite-preview",
             },
+            clear=False,
         )
         self.env.start()
         self.client = TestClient(app)
@@ -60,6 +64,246 @@ class MainTests(unittest.TestCase):
                 "model": "gemini-3.1-flash-lite-preview",
             },
         )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_success(self, create_client: mock.Mock, generate: mock.Mock) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're in Messages.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 111,
+            "usage": {"total_token_count": 7},
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-123",
+                        "schema_version": 1,
+                        "capture_mode": "frontmost_window",
+                        "input_mode": "screenshot",
+                        "preferences": {"model": "gemini-3.1-flash-lite-preview"},
+                        "frontmost_app": {"app_name": "Messages"},
+                        "consent": {"allow_event_logging": True, "allow_content_retention": False},
+                    }
+                )
+            },
+            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["request_id"], "req-123")
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["warnings"], [])
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_accepts_ocr_only(self, create_client: mock.Mock, generate: mock.Mock) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're drafting a reply.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 55,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-ocr",
+                        "input_mode": "ocr",
+                        "ocr_packet": {
+                            "blocks": [{"text": "Can you send the doc?", "confidence": 0.98}]
+                        },
+                    }
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["request_id"], "req-ocr")
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_sends_content_to_model_but_redacts_storage_without_retention_opt_in(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            context_text = kwargs["context_text"]
+            self.assertIsNotNone(context_text)
+            self.assertIn("secret draft", context_text)
+            self.assertIn("ocr secret", context_text)
+            return {
+                "status": "ok",
+                "tldr": "You're drafting a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-private",
+                            "input_mode": "ocr",
+                            "focused_context": {
+                                "value": "secret draft",
+                                "selected_text": "draft",
+                            },
+                            "ocr_packet": {
+                                "blocks": [{"text": "ocr secret", "confidence": 0.9}]
+                            },
+                            "consent": {
+                                "allow_event_logging": True,
+                                "allow_content_retention": False,
+                            },
+                        }
+                    )
+                }
+            )
+
+        self.assertEqual(response.status_code, 200)
+        recorded = telemetry_store.record_request.call_args.args[0]
+        self.assertEqual(recorded["focused_context"]["value"]["redacted"], True)
+        self.assertEqual(recorded["ocr_packet"]["blocks"][0]["text"]["redacted"], True)
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_skips_response_cache_without_retention_opt_in(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're drafting a reply.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 44,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+        cache = mock.Mock()
+        cache.enabled = True
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._response_cache", return_value=cache), mock.patch(
+            "server.main._telemetry_store",
+            return_value=telemetry_store,
+        ):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-no-cache",
+                            "input_mode": "ocr",
+                            "ocr_packet": {"blocks": [{"text": "private cache text"}]},
+                            "consent": {"allow_content_retention": False},
+                        }
+                    )
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        cache.get.assert_not_called()
+        cache.set.assert_not_called()
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_warns_on_disallowed_model(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're reviewing a plan.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 99,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-model",
+                        "input_mode": "ocr",
+                        "preferences": {"model": "not-allowed"},
+                        "ocr_packet": {"blocks": [{"text": "hello"}]},
+                    }
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("requested_model_disallowed", response.json()["warnings"])
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_still_succeeds_when_request_storage_fails(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're in Messages.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 88,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+        telemetry_store = mock.Mock()
+        telemetry_store.record_request.side_effect = RuntimeError("db unavailable")
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-storage-fail",
+                            "input_mode": "screenshot",
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["request_id"], "req-storage-fail")
 
     def test_tldr_rejects_oversized_screenshot(self) -> None:
         response = self.client.post(
@@ -110,6 +354,57 @@ class MainTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_events_accept_valid_json(self) -> None:
+        telemetry_store = mock.Mock()
+        telemetry_store.record_event.return_value = True
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer dev-token"},
+                json={
+                    "request_id": "req-123",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "stored": True})
+
+    def test_events_report_unstored_when_storage_disabled(self) -> None:
+        with mock.patch(
+            "server.main._telemetry_store",
+            return_value=TelemetryStore(database_url=None, enabled=False),
+        ):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer dev-token"},
+                json={
+                    "request_id": "req-disabled",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "stored": False})
+
+    def test_events_still_succeed_when_storage_fails(self) -> None:
+        telemetry_store = mock.Mock()
+        telemetry_store.record_event.side_effect = RuntimeError("db unavailable")
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer dev-token"},
+                json={
+                    "request_id": "req-123",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "stored": False})
 
     def test_proxy_rejects_bad_token(self) -> None:
         response = self.client.post(
@@ -162,7 +457,6 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'{"ok":true}')
-        # Client's bearer + x-goog-api-key are stripped; server-side key swapped in.
         self.assertEqual(captured["headers"].get("x-goog-api-key"), "test-key")
         self.assertNotIn("authorization", captured["headers"])
         self.assertEqual(

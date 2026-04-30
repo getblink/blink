@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from typing import Optional
 
 from fastapi import Header, HTTPException, status
 
@@ -23,7 +24,7 @@ def validate_token(token: str) -> str:
     return token_id_for(token)
 
 
-def require_bearer_token(authorization: str | None = Header(default=None)) -> str:
+def require_bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
     if not configured_tokens():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

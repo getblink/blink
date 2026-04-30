@@ -40,6 +40,38 @@ Artifacts land under `scratchpad/tldr_runs/`; if `BLINK_PROXY_URL` and
 server instead of direct Gemini. See
 [`scratchpad/tldr_reply/`](scratchpad/tldr_reply/README.md).
 
+## TLDR.app (`tldr_app/`)
+
+`TLDR.app` is the shipped surface for the TL;DR + reply-suggestions loop. It is
+a new sibling app package under [`tldr_app/`](tldr_app/README.md), separate from
+the Blink tester app in `app/` and separate from the root `./tldr` scratchpad
+harness.
+
+The Swift app owns the menubar item, permissions, `ctrl+shift+t` hotkey,
+ScreenCaptureKit frontmost-window capture, non-activating overlay, numbered
+choice handling, and auto-paste/copy behavior. It now also emits a
+server-oriented request envelope, image diagnostics, focused-context metadata,
+pending-run records, and event telemetry. The bundled Python runner owns the
+request execution path and per-run artifact bundle. Local identity is:
+
+- App: `~/Applications/TLDR.app`
+- Bundle ID: `com.henryz2004.tldr`
+- Runtime config/secrets: `~/.tldr/`
+- Runs: `~/Library/Application Support/TLDR/runs/`
+- Pending run records: `~/Library/Application Support/TLDR/pending/`
+
+Useful commands:
+
+```bash
+python3 -m unittest discover tldr_app/python/tests
+python3 -m compileall tldr_app/python
+bash tldr_app/scripts/install_local_app.sh
+bash tldr_app/scripts/make_dmg.sh
+```
+
+The installer resets TLDR's TCC permissions on every rebuild so Accessibility,
+Input Monitoring, and Screen Recording attach to the fresh binary.
+
 In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/conductor/shared/blink/fixtures/`, so new workspaces inherit the full captured corpus automatically while archived sweeps still remain self-contained.
 
 Conductor hook receipts now make it easy to sanity-check execution: setup writes `.context/conductor/setup-receipt.json`, and archive appends `~/conductor/archive/blink/_archive_runs.jsonl` plus `archive-receipt.json` inside each preserved archive bundle.
@@ -93,11 +125,12 @@ fixtures, profiling timings, `host_profile.json`, and debug logs land per trial.
 - [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md): durable experiment history and outcomes
 - [scratchpad/README.md](scratchpad/README.md): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
 - [scratchpad/tldr_reply/README.md](scratchpad/tldr_reply/README.md): isolated TL;DR + reply-suggestions hotkey experiment
-- [server/README.md](server/README.md): Railway-ready TLDR backend for server-owned prompt/model/key handling
+- [server/README.md](server/README.md): Railway-ready TLDR backend for server-owned prompt/model/key handling plus request/event diagnostics
 - [docs/SERVER_CONTRACT.md](docs/SERVER_CONTRACT.md): HTTP contract for the standalone TLDR client
 - [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
 - [scratchpad/providers/README.md](scratchpad/providers/README.md): sweep-only provider adapters (Gemini + OpenAI-compatible)
 - [app/README.md](app/README.md): tester-deployment channel (Swift app + bundled Python)
+- [tldr_app/README.md](tldr_app/README.md): shipped TLDR.app surface (Swift app + bundled Python)
 - [site/README.md](site/README.md): marketing landing page (Astro, static, Cloudflare Pages)
 
 ## Repository Map
@@ -107,6 +140,7 @@ fixtures, profiling timings, `host_profile.json`, and debug logs land per trial.
 - `scratchpad/tldr_reply/` contains an isolated single-screenshot TL;DR + reply-suggestions experiment
 - `server/` contains the standalone TLDR backend: FastAPI app, Railway Procfile, Gemini fork, and deploy notes
 - `app/` contains the signed/notarized Swift `.app` scaffolding, production Python (`app/python/`), resources, build scripts, and the XcodeGen spec
+- `tldr_app/` contains the TLDR.app Swift surface, bundled Python runner, resources, build/install/DMG scripts, and XcodeGen spec
 - `site/` is the standalone marketing landing page (Astro, static, deployed to Cloudflare Pages)
 - `capture` is the repo-root wrapper for the resident capture runner
 - `sweep` is the repo-root wrapper for the offline fixture sweep
