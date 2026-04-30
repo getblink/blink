@@ -24,6 +24,7 @@
 		697884BC80BAC724A9749483 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */; };
 		7C7DE9E5DB2E2B812D7518B4 /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */; };
 		801C07DD0AEBBA701E4D0DBD /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 221E6D902943E3A3D1A0F285 /* AppKit.framework */; };
+		82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */; };
 		8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */; };
 		91B0CD5A1F048D786CDD1D1B /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */; };
 		AFFD91C322C4BCBF1A589DA5 /* TLDRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8FC9688321A6AA3C445F2F8 /* TLDRApp.swift */; };
@@ -72,6 +73,7 @@
 		CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStore.swift; sourceTree = "<group>"; };
 		D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
 		DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStoreTests.swift; sourceTree = "<group>"; };
+		DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironmentTests.swift; sourceTree = "<group>"; };
 		E1F705DA9969C70BBC405DF0 /* FocusedContextCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCapture.swift; sourceTree = "<group>"; };
 		E53B725FB98167E479605F08 /* TLDR.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TLDR.entitlements; sourceTree = "<group>"; };
 		E788954DD95B74224B5FF5CF /* ImageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDiagnostics.swift; sourceTree = "<group>"; };
@@ -133,6 +135,7 @@
 				B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */,
 				DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */,
 				453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */,
+				DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */,
 				0182D6F477D0254061C5BC90 /* TLDREventClientTests.swift */,
 			);
 			path = TLDRTests;
@@ -276,6 +279,7 @@
 				51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */,
 				24B02464DB464CD2EB3812C2 /* PendingRunStoreTests.swift in Sources */,
 				8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */,
+				82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */,
 				051822496CE4A665967081E1 /* TLDREventClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

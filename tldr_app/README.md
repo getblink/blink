@@ -46,6 +46,19 @@ BLINK_PROXY_URL=http://127.0.0.1:8000
 BLINK_PROXY_TOKEN=...
 ```
 
+For dogfood DMGs, prefer baking proxy config at build time so users do not need
+to create `~/.tldr/.env`:
+
+```bash
+TLDR_PROXY_URL=https://your-railway-service.up.railway.app \
+TLDR_PROXY_TOKEN=... \
+bash tldr_app/scripts/make_dmg.sh
+```
+
+The build writes those values into `Contents/Resources/proxy.env` inside
+`TLDR.app`. Treat the token as a revocable dogfood token, because anything
+inside a shipped app bundle can be extracted by a user.
+
 Optional overrides:
 
 - `~/.tldr/settings.json`

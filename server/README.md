@@ -130,6 +130,13 @@ or existing Railway service, the remaining one-time dashboard wiring is:
 7. Deploy and confirm `GET /healthz` returns `200`.
 8. Point `BLINK_PROXY_URL` at the deployed URL for dogfood clients.
 
+Postgres does not need a manual migration step for v1. When `DATABASE_URL` is
+present, the server lazily creates `tldr_requests` and `tldr_events` with
+`CREATE TABLE IF NOT EXISTS` before its first write. Redis also needs no manual
+setup; when `REDIS_URL` is present, the server writes TTL-based response-cache
+keys and silently treats cache failures as misses. Response caching is only used
+for requests that explicitly allow content retention.
+
 Railway config-as-code does not currently replace the service source/root
 directory/config-file-path selection. Those pointers identify which slice of
 this repo the service should deploy; the repeatable build and deploy behavior is

@@ -16,18 +16,26 @@ enum RuntimeEnvironment {
         return ProxyConfig(baseURL: url, token: token)
     }
 
-    private static func mergedEnvironment() -> [String: String] {
+    static func mergedEnvironment() -> [String: String] {
         var result = ProcessInfo.processInfo.environment
         for path in [Paths.runtimeDir.appendingPathComponent(".env"), Paths.runtimeDir.appendingPathComponent(".env.local")] {
             guard let text = try? String(contentsOf: path, encoding: .utf8) else { continue }
-            for rawLine in text.split(whereSeparator: \.isNewline) {
-                guard let parsed = parseEnvLine(String(rawLine)) else { continue }
-                if result[parsed.key] == nil {
-                    result[parsed.key] = parsed.value
-                }
-            }
+            mergeEnvText(text, into: &result)
+        }
+        if let bundledProxy = Paths.bundledResource(named: "proxy.env"),
+           let text = try? String(contentsOf: bundledProxy, encoding: .utf8) {
+            mergeEnvText(text, into: &result)
         }
         return result
+    }
+
+    static func mergeEnvText(_ text: String, into result: inout [String: String]) {
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            guard let parsed = parseEnvLine(String(rawLine)) else { continue }
+            if result[parsed.key] == nil {
+                result[parsed.key] = parsed.value
+            }
+        }
     }
 
     private static func parseEnvLine(_ rawLine: String) -> (key: String, value: String)? {
