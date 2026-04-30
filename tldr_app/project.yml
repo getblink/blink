@@ -1,0 +1,62 @@
+name: TLDR
+options:
+  bundleIdPrefix: com.henryz2004
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: $(TLDR_DEVELOPMENT_TEAM)
+    PRODUCT_BUNDLE_IDENTIFIER: com.henryz2004.tldr
+    PRODUCT_NAME: TLDR
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: TLDR/Info.plist
+    CODE_SIGN_ENTITLEMENTS: TLDR/TLDR.entitlements
+    ENABLE_HARDENED_RUNTIME: YES
+    OTHER_CODE_SIGN_FLAGS: "--options=runtime"
+
+targets:
+  TLDR:
+    type: application
+    platform: macOS
+    sources:
+      - TLDR
+    resources:
+      - Resources
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: ApplicationServices.framework
+      - sdk: ScreenCaptureKit.framework
+      - sdk: Carbon.framework
+      - sdk: IOKit.framework
+    info:
+      path: TLDR/Info.plist
+      properties:
+        CFBundleName: TLDR
+        CFBundleDisplayName: TLDR
+        CFBundleIdentifier: com.henryz2004.tldr
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        CFBundleExecutable: TLDR
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+        NSAppleEventsUsageDescription: "TLDR uses accessibility events to paste selected suggestions."
+        NSScreenCaptureUsageDescription: "TLDR captures the active window to summarize it and suggest replies."
+        NSInputMonitoringUsageDescription: "TLDR listens for the summary hotkey and numbered overlay choices."
+
+  TLDRTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - TLDRTests
+    dependencies:
+      - target: TLDR
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: TLDRTests
+        PRODUCT_MODULE_NAME: TLDRTests

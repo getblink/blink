@@ -11,6 +11,7 @@ See also:
 - `docs/DOGFOOD_PLAYBOOK.md` for the "clean build + clean permissions + capture everything" procedure when reinstalling `Blink.app` for a dogfood session
 - `scratchpad/README.md` for the current capture and sweep workflow
 - `app/README.md` for the Swift tester-deployment channel (`Blink.app` + bundled Python)
+- `tldr_app/README.md` for the shipped TLDR.app surface (`TLDR.app` + bundled Python)
 
 ## What is Blink
 
@@ -55,8 +56,9 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `tests/` — unit tests (e.g. `test_normalize_for_paste.py`); run with `scratchpad/.venv/bin/python -m unittest discover scratchpad/tests`
   - `fixtures` — symlink to `~/conductor/shared/blink/fixtures/` in the default shared-pool workflow, or a real directory in deliberately forked workspaces
   - `.venv/` — Python 3.11 virtualenv (gitignored)
-- `server/` — Railway-ready TLDR backend. `server/main.py` exposes `/healthz` and `/tldr`, `server/gemini.py` is a deliberate fork of `scratchpad/tldr_reply/gemini.py`, and `server/README.md` documents deploy + local dev.
+- `server/` — Railway-ready TLDR backend. `server/main.py` exposes `/healthz`, `/v1/tldr`, `/v1/tldr/events`, and the legacy `/tldr` wrapper; `server/gemini.py` is a deliberate fork of `scratchpad/tldr_reply/gemini.py`, and `server/README.md` documents deploy + local dev.
 - `app/` — Swift tester-deployment channel (`Blink.app`) paired with a forked production Python runtime in `app/python/` and a canonical local installer at `app/scripts/install_local_app.sh`; see `app/README.md` and the bundle contract in `docs/ARTIFACT_SCHEMA.md`. No runtime coupling with `scratchpad/` — `app/python/gemini_runner.py` is a deliberate fork at a pinned SHA.
+- `tldr_app/` — shipped TLDR.app surface paired with a focused Python runner in `tldr_app/python/`. Swift owns the menubar, `ctrl+shift+t` hotkey, ScreenCaptureKit capture, request envelope + event diagnostics, pending-run tracking, non-activating overlay, and auto-paste/copy behavior; Python owns request execution plus run artifacts under `~/Library/Application Support/TLDR/runs/`.
 - `site/` — Standalone marketing landing page. Astro, static output, deploys to Cloudflare Pages with no adapter (see `site/README.md`). Independent from the research and tester channels.
 
 ## Development setup
@@ -111,6 +113,25 @@ one-line summary plus three candidate replies, and shows a small overlay where
 `1` / `2` / `3` copy a suggestion to the clipboard.
 
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
+
+To build and dogfood the shipped TLDR app:
+
+```bash
+python3 -m unittest discover tldr_app/python/tests
+python3 -m compileall tldr_app/python
+bash tldr_app/scripts/install_local_app.sh
+```
+
+The canonical local app is `~/Applications/TLDR.app`, with bundle ID
+`com.henryz2004.tldr`. Runtime overrides and secrets live in `~/.tldr/`
+(`runtime-config.json`, `settings.json`, `prompts/prompt.txt`, `.env`), and
+local DMGs are produced with `bash tldr_app/scripts/make_dmg.sh`. Pending run
+records for crash recovery live under `~/Library/Application Support/TLDR/pending/`.
+If `BLINK_PROXY_URL` + `BLINK_PROXY_TOKEN` are present in `~/.tldr/.env`, the
+packaged flow calls the standalone TLDR server and uploads request/event
+diagnostics; otherwise it falls back to direct Gemini. The installer resets TCC
+on every rebuild so permissions attach to the fresh canonical binary; use
+`--skip-tcc-reset` only for non-dogfood script checks.
 
 Tester-deployment bundles (the `app/` channel) are produced by `app/python/run_once.py`, either spawned from `Blink.app` or invoked directly. It emits schema-v1 bundles (`fixture.json` + `source.png` + `target.png` + `run.json` + `output.txt`, plus `target_metadata.json` and `settings.json`) that `./sweep` replays unchanged. Tester zips exported from `Blink.app` land under `scratchpad/field_runs/` via `python scratchpad/import_field_runs.py <zip-or-dir>`.
 

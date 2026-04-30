@@ -8,9 +8,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 DEFAULT_SETTINGS: dict[str, Any] = {
     "model": "gemini-3.1-flash-lite-preview",
     "temperature": 0.2,
@@ -46,7 +43,10 @@ def plain_data(value: Any) -> Any:
     return payload
 
 
-def create_client(api_key: str | None, settings: dict[str, Any]) -> genai.Client:
+def create_client(api_key: str | None, settings: dict[str, Any]) -> Any:
+    from google import genai
+    from google.genai import types
+
     return genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
@@ -56,6 +56,8 @@ def create_client(api_key: str | None, settings: dict[str, Any]) -> genai.Client
 
 
 def _schema() -> types.Schema:
+    from google.genai import types
+
     return types.Schema(
         type=types.Type.OBJECT,
         required=["tldr", "suggestions"],
@@ -112,17 +114,47 @@ def usage_token_count(usage: Any) -> int | None:
     return None
 
 
+def request_context_text(envelope: dict[str, Any]) -> str | None:
+    structured: dict[str, Any] = {
+        "input_mode": envelope.get("input_mode"),
+        "capture_mode": envelope.get("capture_mode"),
+    }
+    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context"):
+        value = envelope.get(key)
+        if value not in (None, {}, [], ""):
+            structured[key] = value
+    if len(structured) <= 2:
+        return None
+    return json.dumps(structured, ensure_ascii=True, sort_keys=True)
+
+
 def generate_tldr_and_suggestions(
-    client: genai.Client,
+    client: Any,
     settings: dict[str, Any],
     prompt_text: str,
-    image_bytes: bytes,
+    image_bytes: bytes | None,
     mime_type: str = "image/png",
+    context_text: str | None = None,
 ) -> dict[str, Any]:
-    image_part = types.Part.from_bytes(
-        data=image_bytes,
-        mime_type=mime_type,
-    )
+    from google.genai import types
+
+    contents: list[Any] = []
+    if context_text:
+        contents.append(
+            "Structured capture context (JSON). Treat it as additional evidence; "
+            "do not repeat it verbatim in the output.\n"
+            + context_text
+        )
+    if image_bytes is not None:
+        contents.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type,
+            )
+        )
+    if not contents:
+        raise ValueError("No screenshot or structured context was provided.")
+
     config = types.GenerateContentConfig(
         system_instruction=prompt_text,
         temperature=settings["temperature"],
@@ -135,9 +167,9 @@ def generate_tldr_and_suggestions(
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
-        contents=[
-            image_part,
-            "Summarize this active window and propose three replies.",
+        contents=contents + [
+            "Summarize this active window and propose three replies. Use any "
+            "structured capture context if it is present."
         ],
         config=config,
     )

@@ -26,6 +26,17 @@ See also:
 
 ---
 
+## 2026-04-29 — TLDR v1 request envelope, event diagnostics, and pending-run recovery
+
+- **Hypothesis:** TLDR can move from screenshot-only RPC toward a sturdier client/server shape without losing local debuggability if Swift emits a richer request envelope, preserves pending-run state locally, and the server accepts structured request/event telemetry while keeping `/tldr` compatibility.
+- **Setup:** Added `POST /v1/tldr` and `POST /v1/tldr/events` on the FastAPI server, optional Postgres/Redis telemetry plumbing, cache-aware request hashing, and a legacy `/tldr` wrapper. TLDR.app now writes `request.json`, image diagnostics, focused-context metadata, and pending-run records, uploads event telemetry when proxy settings are configured, and reports abandoned runs on next launch. The packaged Python runner now forwards the Swift-generated request envelope to `/v1/tldr` in proxy mode and still falls back to direct Gemini locally.
+- **Input type(s):** Frontmost-window screenshot requests, plus OCR/focused-context-ready envelope slots for future non-screenshot or hybrid runs.
+- **Target field type(s):** Reply contexts visible in the active app; current focus metadata is best-effort AX context for draft-aware suggestions.
+- **Outcome:** Implemented. Server contract tests passed in a dedicated `server/.venv`, packaged-runner unit tests passed, Python modules compile, and `TLDR_SKIP_TCC_RESET=1 bash tldr_app/scripts/build.sh` succeeded twice after the Swift integration.
+- **Evidence / examples:** `server/main.py`, `server/cache.py`, `server/storage.py`, `docs/SERVER_CONTRACT.md`, `tldr_app/TLDR/TLDRCoordinator.swift`, `tldr_app/TLDR/PendingRunStore.swift`, `tldr_app/TLDR/TLDREventClient.swift`, `tldr_app/python/tldr_once.py`.
+- **Decision:** Keep the compatibility wrapper and direct-Gemini fallback for now, but make the richer `/v1/tldr` + `/v1/tldr/events` path the preferred TLDR.app integration surface.
+- **Next step:** Dogfood a real proxy-backed TLDR session against Railway or local FastAPI, inspect one stored request/event sequence in Postgres, and decide whether OCR should move into the current frontmost-window capture path next.
+
 ## 2026-04-27 — Standalone TLDR server prep
 
 - **Hypothesis:** A tiny server-owned TLDR backend lets us dogfood the standalone Swift app without shipping a Gemini key, while keeping prompt and model iteration decoupled from app releases.
@@ -47,6 +58,17 @@ See also:
 - **Evidence / examples:** `tldr`, `scratchpad/tldr_reply/`, `.gitignore`, `README.md`, and `CLAUDE.md`.
 - **Decision:** Keep this as a sibling experiment that does not modify `./capture`, `./sweep`, or `Blink.app`.
 - **Next step:** Add an explicit auto-paste toggle in a later iteration so users can choose between safe copy-only mode and direct insertion at the current caret.
+
+## 2026-04-27 — TLDR.app Swift surface with Python internals
+
+- **Hypothesis:** The single-screenshot TL;DR loop is ready for a shipped macOS surface if Swift owns the foreground app behavior and Python stays focused on Gemini plus artifact bundles.
+- **Setup:** Added top-level `tldr_app/` as a sibling app package. Swift owns the `TLDR.app` menubar, `ctrl+shift+t` event tap, ScreenCaptureKit frontmost-window capture, non-activating overlay, numbered choice handling, and persisted auto-paste toggle. Python owns `tldr_once.py`, Gemini JSON parsing/fallbacks, and run artifacts.
+- **Input type(s):** One frontmost-window screenshot captured by the Swift app.
+- **Target field type(s):** Reply contexts visible in the active app; choice keys either paste into the still-focused field or copy only depending on `~/.tldr/runtime-config.json`.
+- **Outcome:** Implemented and packaged. Local canonical install is `~/Applications/TLDR.app`; run bundles land under `~/Library/Application Support/TLDR/runs/`; DMG output is `tldr_app/build/TLDR-0.1.0.dmg`.
+- **Evidence / examples:** `tldr_app/`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `.gitignore`; checks: `python3 -m unittest discover tldr_app/python/tests`, `python3 -m compileall tldr_app/python`, `xcodebuild ... CODE_SIGNING_ALLOWED=NO build`, `TLDR_SKIP_TCC_RESET=1 bash tldr_app/scripts/build.sh`, `bash tldr_app/scripts/install_local_app.sh --reset-tcc --no-launch`, `bash tldr_app/scripts/make_dmg.sh`, and a bundled `tldr_once.py --skip-gemini` smoke test. Follow-up tightened the canonical installer so TCC resets by default on every TLDR rebuild.
+- **Decision:** Keep `app/` and root `./tldr` intact. Treat `tldr_app/` as the TLDR-only shipped surface for v1.
+- **Next step:** Launch `~/Applications/TLDR.app`, grant Input Monitoring, Accessibility, and Screen Recording, then dogfood `ctrl+shift+t` in a real conversation with auto-paste on and off.
 
 ## 2026-04-27 — Resolved-only target packets for paste
 
