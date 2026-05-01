@@ -1,0 +1,6 @@
+{
+  "selected_handles": [
+    "item_1",
+    "item_2"
+  ]
+}

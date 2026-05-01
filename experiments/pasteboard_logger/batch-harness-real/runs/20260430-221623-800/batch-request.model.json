@@ -1,0 +1,58 @@
+{
+  "allowed_handles" : [
+    "item_1",
+    "item_2"
+  ],
+  "goal" : "paste all",
+  "items" : [
+    {
+      "byte_sizes" : {
+        "public.utf8-plain-text" : 198
+      },
+      "decoded_text_preview" : "run error: Model helper failed with status 1. See /Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/runs/20260430-221452-197/model-output.raw.txt\\n",
+      "handle" : "item_1",
+      "has_embedded_image_data" : false,
+      "kind" : "text",
+      "source_handle" : "item_1",
+      "source_paths" : [
+        "snapshots/20260430-221608-124-cc979/items/item-0/00-public.utf8-plain-text.raw.bin"
+      ],
+      "source_snapshot_id" : "20260430-221608-124-cc979",
+      "utis" : [
+        "public.utf8-plain-text"
+      ]
+    },
+    {
+      "byte_sizes" : {
+        "org.chromium.internal.source-rfh-token" : 24,
+        "org.chromium.source-url" : 144,
+        "org.chromium.web-custom-data" : 49192,
+        "public.html" : 3390,
+        "public.utf8-plain-text" : 317
+      },
+      "decoded_text_preview" : "i'm a 21 yo solo founder in sf\\ngraduated GT in 2.5 years with a 4.0 GPA in CS\\nprevious startup:\\naccepted into yc & raised 600k from WndrCo and Fusen\\nspecialized in llm agents and apple ecosystem\\nwon atlanta's largest ai hackathon w/ llm steering project\\nworked in production ml at pharmaceutical intelligence company\\n",
+      "embedded_image_count" : 0,
+      "handle" : "item_2",
+      "has_embedded_image_data" : false,
+      "kind" : "html",
+      "source_handle" : "item_1",
+      "source_paths" : [
+        "snapshots/20260430-221619-628-cc980/items/item-0/00-public.html.raw.html",
+        "snapshots/20260430-221619-628-cc980/items/item-0/01-public.utf8-plain-text.raw.bin",
+        "snapshots/20260430-221619-628-cc980/items/item-0/02-org.chromium.internal.source-rfh-token.raw.bin",
+        "snapshots/20260430-221619-628-cc980/items/item-0/03-org.chromium.web-custom-data.raw.bin",
+        "snapshots/20260430-221619-628-cc980/items/item-0/04-org.chromium.source-url.raw.bin"
+      ],
+      "source_snapshot_id" : "20260430-221619-628-cc980",
+      "source_url" : "https://docs.google.com/presentation/d/1O0GZbQGLVKzeEQ5PyhqYv4dDRsecelIYmokWy5eT9KI/edit?slide=id.g3e6415cd16d_0_812#slide=id.g3e6415cd16d_0_812",
+      "utis" : [
+        "public.html",
+        "public.utf8-plain-text",
+        "org.chromium.internal.source-rfh-token",
+        "org.chromium.web-custom-data",
+        "org.chromium.source-url"
+      ]
+    }
+  ],
+  "schema_version" : 0
+}

@@ -82,6 +82,7 @@ enum PythonRunner {
         case noPythonBinary
         case noRunOnceScript
         case noPrepareSourceScript
+        case noBatchModelSelectScript
         case invalidJSONOutput
         case nonZeroExit(status: Int32, stderr: String)
 
@@ -93,6 +94,8 @@ enum PythonRunner {
                 return "run_once.py not found in app bundle"
             case .noPrepareSourceScript:
                 return "prepare_source.py not found in app bundle"
+            case .noBatchModelSelectScript:
+                return "batch_model_select.py not found in app bundle"
             case .invalidJSONOutput:
                 return "Python returned invalid JSON"
             case .nonZeroExit(let status, let stderr):
@@ -149,6 +152,83 @@ enum PythonRunner {
             throw RunError.invalidJSONOutput
         }
         return PreparedSource(payload: object)
+    }
+
+    static func runBatchModelSelectSync(
+        config: Config,
+        requestJSON: URL,
+        settingsJSON: URL?,
+        rawOutput: URL,
+        targetPNG: URL? = nil,
+        modelTargetPNG: URL? = nil,
+        targetMetadataJSON: URL? = nil,
+        geometryJSON: URL? = nil,
+        targetPacketOutput: URL? = nil,
+        targetBuildOutput: URL? = nil,
+        requestOutput: URL? = nil
+    ) throws -> String {
+        guard let python = Paths.pythonBinary(config: config) else {
+            throw RunError.noPythonBinary
+        }
+        guard let script = Paths.batchModelSelectPath else {
+            throw RunError.noBatchModelSelectScript
+        }
+
+        let process = Process()
+        process.executableURL = python
+        var args = [
+            script.path,
+            "--request", requestJSON.path,
+        ]
+        if let settingsJSON {
+            args += ["--settings", settingsJSON.path]
+        }
+        if let targetPNG {
+            args += ["--target", targetPNG.path]
+        }
+        if let modelTargetPNG {
+            args += ["--model-target", modelTargetPNG.path]
+        }
+        if let targetMetadataJSON {
+            args += ["--target-meta", targetMetadataJSON.path]
+        }
+        if let geometryJSON {
+            args += ["--geometry", geometryJSON.path]
+        }
+        if let targetPacketOutput {
+            args += ["--target-packet-out", targetPacketOutput.path]
+        }
+        if let targetBuildOutput {
+            args += ["--target-build-out", targetBuildOutput.path]
+        }
+        if let requestOutput {
+            args += ["--request-out", requestOutput.path]
+        }
+        process.arguments = args
+        process.environment = buildEnvironment(config: config)
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outData, encoding: .utf8) ?? ""
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+        let rawText = output + (stderrText.isEmpty ? "" : "\n[stderr]\n\(stderrText)")
+        try rawText.write(to: rawOutput, atomically: true, encoding: .utf8)
+
+        guard process.terminationStatus == 0 else {
+            throw RunError.nonZeroExit(
+                status: process.terminationStatus,
+                stderr: stderrText.isEmpty ? "see \(rawOutput.path)" : stderrText
+            )
+        }
+        return output
     }
 
     /// Spawn `run_once.py --wait-on-stdin`, wait up to 5 s for the `READY`
@@ -487,6 +567,7 @@ enum PythonRunner {
 
     private static func buildEnvironment(config: Config) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         if let url = config.proxyURL { env["BLINK_PROXY_URL"] = url }
         if let token = config.proxyToken { env["BLINK_PROXY_TOKEN"] = token }
         if let key = config.geminiApiKey { env["GEMINI_API_KEY"] = key }

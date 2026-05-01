@@ -39,6 +39,7 @@ final class TrialCoordinator {
 
     private let config: Config
     private let runtimeStore: RuntimeConfigStore
+    private let batchDogfood: BatchClipboardHistoryDogfood
     private let queue = DispatchQueue(label: "blink.coordinator", qos: .userInitiated)
     private var stashedSource: StashedSource?
 
@@ -56,6 +57,27 @@ final class TrialCoordinator {
     init(config: Config, runtimeStore: RuntimeConfigStore) {
         self.config = config
         self.runtimeStore = runtimeStore
+        self.batchDogfood = BatchClipboardHistoryDogfood(config: config)
+        self.batchDogfood.onStatusChange = { [weak self] text in
+            self?.status(text)
+        }
+        self.batchDogfood.onFailureNotice = { [weak self] title, detail in
+            DispatchQueue.main.async {
+                self?.onFailureNotice?(title, detail)
+            }
+        }
+    }
+
+    func startBatchClipboardHistory() {
+        batchDogfood.start()
+    }
+
+    func stopBatchClipboardHistory() {
+        batchDogfood.stop()
+    }
+
+    func runBatchClipboardPasteAll() {
+        batchDogfood.runPasteAll()
     }
 
     func setSource() {

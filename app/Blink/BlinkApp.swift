@@ -56,8 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeys = HotkeyManager(
             onSetSource: { [weak self] in self?.coordinator.setSource() },
-            onRunTarget: { [weak self] in self?.coordinator.runTarget() }
+            onRunTarget: { [weak self] in self?.coordinator.runTarget() },
+            onBatchPaste: { [weak self] in self?.coordinator.runBatchClipboardPasteAll() }
         )
+        coordinator.startBatchClipboardHistory()
         showPermissionsWindow()
         if !hotkeys.start() {
             // Retry periodically — the user often grants Input Monitoring /
@@ -88,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyRetryTimer?.invalidate()
         hotkeyRetryTimer = nil
         hotkeys?.stop()
+        coordinator?.stopBatchClipboardHistory()
     }
 
     func showPermissionsWindow() {

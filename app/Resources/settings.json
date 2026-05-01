@@ -13,6 +13,7 @@
   "request_image_jpeg_quality": 80,
   "hotkeys": {
     "set_source": "ctrl+shift+c",
-    "run_target": "ctrl+shift+v"
+    "run_target": "ctrl+shift+v",
+    "batch_paste_all": "cmd+option+v"
   }
 }
