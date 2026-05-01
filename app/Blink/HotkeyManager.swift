@@ -5,27 +5,32 @@ import IOKit.hid
 /// Global hotkey manager using `CGEventTap`. Default bindings:
 ///   ⌃⇧C → onSetSource
 ///   ⌃⇧V → onRunTarget
+///   ⌘⌥V → onBatchPaste
 ///
 /// Intercepts the events (returns nil from the tap callback) so they don't
 /// reach the frontmost app. Requires Input Monitoring + Accessibility.
 final class HotkeyManager {
     private let onSetSource: () -> Void
     private let onRunTarget: () -> Void
+    private let onBatchPaste: () -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     // Cocoa C keyCode = 8, V = 9. ctrl+shift = .maskControl | .maskShift.
     private let sourceKeyCode: CGKeyCode = 8
-    private let targetKeyCode: CGKeyCode = 9
-    private let requiredFlags: CGEventFlags = [.maskControl, .maskShift]
-    private let ignoredFlags: CGEventFlags = [
-        .maskAlphaShift, .maskCommand, .maskAlternate, .maskSecondaryFn,
-        .maskNumericPad, .maskHelp,
-    ]
+    private let pasteKeyCode: CGKeyCode = 9
+    private let sourceTargetFlags: CGEventFlags = [.maskControl, .maskShift]
+    private let batchPasteFlags: CGEventFlags = [.maskCommand, .maskAlternate]
+    private let relevantModifierFlags: CGEventFlags = [.maskControl, .maskShift, .maskCommand, .maskAlternate]
 
-    init(onSetSource: @escaping () -> Void, onRunTarget: @escaping () -> Void) {
+    init(
+        onSetSource: @escaping () -> Void,
+        onRunTarget: @escaping () -> Void,
+        onBatchPaste: @escaping () -> Void
+    ) {
         self.onSetSource = onSetSource
         self.onRunTarget = onRunTarget
+        self.onBatchPaste = onBatchPaste
     }
 
     /// Returns true if tap installed successfully; false if the OS denied us
@@ -78,21 +83,18 @@ final class HotkeyManager {
         }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        let flags = event.flags
-        guard flags.contains(manager.requiredFlags) else {
-            return Unmanaged.passUnretained(event)
-        }
-        // Reject if any disallowed modifier is also held (e.g. Cmd).
-        if flags.intersection(manager.ignoredFlags).intersection([.maskCommand, .maskAlternate]) != [] {
-            return Unmanaged.passUnretained(event)
-        }
+        let modifiers = event.flags.intersection(manager.relevantModifierFlags)
 
-        if keyCode == manager.sourceKeyCode {
+        if modifiers == manager.sourceTargetFlags, keyCode == manager.sourceKeyCode {
             DispatchQueue.main.async { manager.onSetSource() }
             return nil
         }
-        if keyCode == manager.targetKeyCode {
+        if modifiers == manager.sourceTargetFlags, keyCode == manager.pasteKeyCode {
             DispatchQueue.main.async { manager.onRunTarget() }
+            return nil
+        }
+        if modifiers == manager.batchPasteFlags, keyCode == manager.pasteKeyCode {
+            DispatchQueue.main.async { manager.onBatchPaste() }
             return nil
         }
         return Unmanaged.passUnretained(event)

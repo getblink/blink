@@ -13,13 +13,25 @@ enum Inserter {
     enum InsertError: LocalizedError {
         case eventPostFailed
         case noEventSource
+        case pasteboardWriteFailed
 
         var errorDescription: String? {
             switch self {
             case .eventPostFailed: return "couldn't synthesize Cmd+V"
             case .noEventSource: return "CGEventSource creation failed"
+            case .pasteboardWriteFailed: return "couldn't write resolved payloads to the pasteboard"
             }
         }
+    }
+
+    struct PayloadItem {
+        var handle: String
+        var representations: [PayloadRepresentation]
+    }
+
+    struct PayloadRepresentation {
+        var type: NSPasteboard.PasteboardType
+        var data: Data
     }
 
     /// - Parameters:
@@ -50,6 +62,36 @@ enum Inserter {
                 restore(pasteboard: pasteboard, items: savedItems)
             }
             completion(.success(()))
+        }
+    }
+
+    /// Paste resolved clipboard-history payloads one item at a time, preserving
+    /// model-selected order and restoring the previous clipboard after the
+    /// target has consumed the final Cmd+V.
+    static func insert(
+        payloadItems: [PayloadItem],
+        interItemDelay: TimeInterval = 0.18,
+        restoreDelay: TimeInterval = 0.45,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard !payloadItems.isEmpty else {
+            DispatchQueue.main.async { completion(.success(())) }
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        let savedItems = snapshot(pasteboard: pasteboard)
+
+        DispatchQueue.main.async {
+            pastePayloadItem(
+                at: 0,
+                payloadItems: payloadItems,
+                pasteboard: pasteboard,
+                savedItems: savedItems,
+                interItemDelay: interItemDelay,
+                restoreDelay: restoreDelay,
+                completion: completion
+            )
         }
     }
 
@@ -89,6 +131,60 @@ enum Inserter {
             return pbItem
         }
         pasteboard.writeObjects(restored)
+    }
+
+    private static func pastePayloadItem(
+        at index: Int,
+        payloadItems: [PayloadItem],
+        pasteboard: NSPasteboard,
+        savedItems: [SavedItem],
+        interItemDelay: TimeInterval,
+        restoreDelay: TimeInterval,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        let item = payloadItems[index]
+        let pasteboardItem = NSPasteboardItem()
+        for representation in item.representations {
+            guard pasteboardItem.setData(representation.data, forType: representation.type) else {
+                restore(pasteboard: pasteboard, items: savedItems)
+                completion(.failure(InsertError.pasteboardWriteFailed))
+                return
+            }
+        }
+
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([pasteboardItem]) else {
+            restore(pasteboard: pasteboard, items: savedItems)
+            completion(.failure(InsertError.pasteboardWriteFailed))
+            return
+        }
+
+        do {
+            try synthesizeCmdV()
+        } catch {
+            restore(pasteboard: pasteboard, items: savedItems)
+            completion(.failure(error))
+            return
+        }
+
+        let isLast = index == payloadItems.count - 1
+        let delay = isLast ? restoreDelay : interItemDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            if isLast {
+                restore(pasteboard: pasteboard, items: savedItems)
+                completion(.success(()))
+            } else {
+                pastePayloadItem(
+                    at: index + 1,
+                    payloadItems: payloadItems,
+                    pasteboard: pasteboard,
+                    savedItems: savedItems,
+                    interItemDelay: interItemDelay,
+                    restoreDelay: restoreDelay,
+                    completion: completion
+                )
+            }
+        }
     }
 
     // MARK: - Cmd+V synthesis

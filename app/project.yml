@@ -25,6 +25,7 @@ targets:
     platform: macOS
     sources:
       - Blink
+      - ../experiments/pasteboard_logger/Sources/PasteboardReplayCore
     resources:
       - Resources
     dependencies:

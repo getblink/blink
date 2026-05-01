@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+logs/
+html-preview/
+model-requests/
+batch-harness/

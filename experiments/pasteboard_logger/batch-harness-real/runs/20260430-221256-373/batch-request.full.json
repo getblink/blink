@@ -1,0 +1,202 @@
+{
+  "allowed_handles" : [
+    "item_1",
+    "item_2"
+  ],
+  "goal" : "paste all",
+  "items" : [
+    {
+      "byte_sizes" : {
+        "com.apple.WebKit.custom-pasteboard-data" : 42,
+        "com.apple.webarchive" : 11034,
+        "public.html" : 10772,
+        "public.rtf" : 613,
+        "public.utf16-external-plain-text" : 180,
+        "public.utf8-plain-text" : 89
+      },
+      "decoded_text_preview" : "swift run BatchClipboardHistoryHarness --work-dir batch-harness-real --history-limit 20\\n\\n",
+      "embedded_image_count" : 0,
+      "handle" : "item_1",
+      "has_embedded_image_data" : false,
+      "kind" : "html",
+      "source_handle" : "item_1",
+      "source_paths" : [
+        "snapshots/20260430-221234-365-cc973/items/item-0/00-com.apple.webarchive.raw.bin",
+        "snapshots/20260430-221234-365-cc973/items/item-0/01-public.rtf.raw.bin",
+        "snapshots/20260430-221234-365-cc973/items/item-0/02-public.html.raw.html",
+        "snapshots/20260430-221234-365-cc973/items/item-0/03-public.utf8-plain-text.raw.bin",
+        "snapshots/20260430-221234-365-cc973/items/item-0/04-com.apple.WebKit.custom-pasteboard-data.raw.bin",
+        "snapshots/20260430-221234-365-cc973/items/item-0/05-public.utf16-external-plain-text.raw.bin"
+      ],
+      "source_snapshot_id" : "20260430-221234-365-cc973",
+      "utis" : [
+        "com.apple.webarchive",
+        "public.rtf",
+        "public.html",
+        "public.utf8-plain-text",
+        "com.apple.WebKit.custom-pasteboard-data",
+        "public.utf16-external-plain-text"
+      ]
+    },
+    {
+      "byte_sizes" : {
+        "org.chromium.internal.source-rfh-token" : 24,
+        "org.chromium.source-url" : 144,
+        "org.chromium.web-custom-data" : 49192,
+        "public.html" : 3390,
+        "public.utf8-plain-text" : 317
+      },
+      "decoded_text_preview" : "i'm a 21 yo solo founder in sf\\ngraduated GT in 2.5 years with a 4.0 GPA in CS\\nprevious startup:\\naccepted into yc & raised 600k from WndrCo and Fusen\\nspecialized in llm agents and apple ecosystem\\nwon atlanta's largest ai hackathon w/ llm steering project\\nworked in production ml at pharmaceutical intelligence company\\n",
+      "embedded_image_count" : 0,
+      "handle" : "item_2",
+      "has_embedded_image_data" : false,
+      "kind" : "html",
+      "source_handle" : "item_1",
+      "source_paths" : [
+        "snapshots/20260430-221248-868-cc974/items/item-0/00-public.html.raw.html",
+        "snapshots/20260430-221248-868-cc974/items/item-0/01-public.utf8-plain-text.raw.bin",
+        "snapshots/20260430-221248-868-cc974/items/item-0/02-org.chromium.internal.source-rfh-token.raw.bin",
+        "snapshots/20260430-221248-868-cc974/items/item-0/03-org.chromium.web-custom-data.raw.bin",
+        "snapshots/20260430-221248-868-cc974/items/item-0/04-org.chromium.source-url.raw.bin"
+      ],
+      "source_snapshot_id" : "20260430-221248-868-cc974",
+      "source_url" : "https://docs.google.com/presentation/d/1O0GZbQGLVKzeEQ5PyhqYv4dDRsecelIYmokWy5eT9KI/edit?slide=id.g3e6415cd16d_0_812#slide=id.g3e6415cd16d_0_812",
+      "utis" : [
+        "public.html",
+        "public.utf8-plain-text",
+        "org.chromium.internal.source-rfh-token",
+        "org.chromium.web-custom-data",
+        "org.chromium.source-url"
+      ]
+    }
+  ],
+  "path_bases" : {
+    "html_preview" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview",
+    "replay_output" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/runs/20260430-221256-373/replay"
+  },
+  "runtime_payloads" : {
+    "item_1" : [
+      {
+        "byte_size" : 11034,
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/00-com.apple.webarchive.raw.bin",
+        "representation" : {
+          "raw_extension" : "bin"
+        },
+        "uti" : "com.apple.webarchive"
+      },
+      {
+        "byte_size" : 613,
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/01-public.rtf.raw.bin",
+        "representation" : {
+          "raw_extension" : "bin"
+        },
+        "uti" : "public.rtf"
+      },
+      {
+        "byte_size" : 10772,
+        "decoded_path" : "snapshots/20260430-221234-365-cc973/items/item-0/02-public.html.decoded.txt",
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/02-public.html.raw.html",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "html"
+        },
+        "uti" : "public.html"
+      },
+      {
+        "byte_size" : 89,
+        "decoded_path" : "snapshots/20260430-221234-365-cc973/items/item-0/03-public.utf8-plain-text.decoded.txt",
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/03-public.utf8-plain-text.raw.bin",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "bin"
+        },
+        "uti" : "public.utf8-plain-text"
+      },
+      {
+        "byte_size" : 42,
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/04-com.apple.WebKit.custom-pasteboard-data.raw.bin",
+        "representation" : {
+          "raw_extension" : "bin"
+        },
+        "uti" : "com.apple.WebKit.custom-pasteboard-data"
+      },
+      {
+        "byte_size" : 180,
+        "decoded_path" : "snapshots/20260430-221234-365-cc973/items/item-0/05-public.utf16-external-plain-text.decoded.txt",
+        "raw_path" : "snapshots/20260430-221234-365-cc973/items/item-0/05-public.utf16-external-plain-text.raw.bin",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "bin"
+        },
+        "uti" : "public.utf16-external-plain-text"
+      }
+    ],
+    "item_2" : [
+      {
+        "byte_size" : 3390,
+        "decoded_path" : "snapshots/20260430-221248-868-cc974/items/item-0/00-public.html.decoded.txt",
+        "raw_path" : "snapshots/20260430-221248-868-cc974/items/item-0/00-public.html.raw.html",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "html"
+        },
+        "uti" : "public.html"
+      },
+      {
+        "byte_size" : 317,
+        "decoded_path" : "snapshots/20260430-221248-868-cc974/items/item-0/01-public.utf8-plain-text.decoded.txt",
+        "raw_path" : "snapshots/20260430-221248-868-cc974/items/item-0/01-public.utf8-plain-text.raw.bin",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "bin"
+        },
+        "uti" : "public.utf8-plain-text"
+      },
+      {
+        "byte_size" : 24,
+        "raw_path" : "snapshots/20260430-221248-868-cc974/items/item-0/02-org.chromium.internal.source-rfh-token.raw.bin",
+        "representation" : {
+          "raw_extension" : "bin"
+        },
+        "uti" : "org.chromium.internal.source-rfh-token"
+      },
+      {
+        "byte_size" : 49192,
+        "raw_path" : "snapshots/20260430-221248-868-cc974/items/item-0/03-org.chromium.web-custom-data.raw.bin",
+        "representation" : {
+          "raw_extension" : "bin"
+        },
+        "uti" : "org.chromium.web-custom-data"
+      },
+      {
+        "byte_size" : 144,
+        "decoded_path" : "snapshots/20260430-221248-868-cc974/items/item-0/04-org.chromium.source-url.decoded.txt",
+        "raw_path" : "snapshots/20260430-221248-868-cc974/items/item-0/04-org.chromium.source-url.raw.bin",
+        "representation" : {
+          "decoded_extension" : "txt",
+          "raw_extension" : "bin"
+        },
+        "uti" : "org.chromium.source-url"
+      }
+    ]
+  },
+  "schema_version" : 0,
+  "snapshots" : [
+    {
+      "change_count" : 973,
+      "observed_at" : "2026-05-01T05:12:34Z",
+      "rendered_kind" : "html",
+      "snapshot_id" : "20260430-221234-365-cc973"
+    },
+    {
+      "change_count" : 974,
+      "observed_at" : "2026-05-01T05:12:48Z",
+      "rendered_kind" : "html",
+      "snapshot_id" : "20260430-221248-868-cc974",
+      "source_url" : "https://docs.google.com/presentation/d/1O0GZbQGLVKzeEQ5PyhqYv4dDRsecelIYmokWy5eT9KI/edit?slide=id.g3e6415cd16d_0_812#slide=id.g3e6415cd16d_0_812"
+    }
+  ],
+  "warnings" : [
+
+  ]
+}

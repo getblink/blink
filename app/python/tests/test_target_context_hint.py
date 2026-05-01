@@ -11,7 +11,7 @@ APP_PYTHON_DIR = Path(__file__).resolve().parent.parent
 if str(APP_PYTHON_DIR) not in sys.path:
     sys.path.insert(0, str(APP_PYTHON_DIR))
 
-from target_context import build_target_ocr_packet, inflate_rect_vertically  # noqa: E402
+from target_context import build_target_ocr_packet, inflate_rect_vertically, target_mode_from_metadata  # noqa: E402
 from tests.fixture_helpers import load_fixture  # noqa: E402
 
 
@@ -197,7 +197,63 @@ class TargetContextPacketHintTests(unittest.TestCase):
         )
 
         self.assertEqual(result["completeness"], "needs_target_image")
+        self.assertEqual(result["target_mode"], "document_canvas")
         self.assertIn("google_docs_degenerate_focus_rect", result["fallback_reasons"])
+        self.assertIn("TARGET_CONTEXT_KIND: document_canvas", result["packet_text"])
+        self.assertIn("INSERTION_CONTRACT:", result["packet_text"])
+
+    def test_target_mode_keeps_normal_fields_strict(self) -> None:
+        self.assertEqual(
+            target_mode_from_metadata(
+                {"focused_label": "Email", "focused_role": "TextField"},
+                {"focused_bounds_points": {"x": 10, "y": 20, "width": 240, "height": 30}},
+            ),
+            "strict_field",
+        )
+
+    def test_document_content_degenerate_bounds_becomes_document_canvas(self) -> None:
+        self.assertEqual(
+            target_mode_from_metadata(
+                {
+                    "focused_label": "Document content",
+                    "focused_description": "Document content",
+                },
+                {"focused_bounds_points": {"x": 10, "y": 20, "width": 625, "height": 1}},
+            ),
+            "document_canvas",
+        )
+
+    @patch("target_context.image_size_pixels", return_value=(1000, 800))
+    @patch("target_context.recognize_text", return_value=_google_docs_ocr_payload())
+    def test_document_canvas_build_log_records_probe_and_annotation_metadata(
+        self,
+        _mock_recognize,
+        _mock_image_size,
+    ) -> None:
+        focused_bounds = {"x": 0, "y": 154, "width": 625, "height": 1}
+        result = build_target_ocr_packet(
+            target_path=Path("/tmp/target.png"),
+            target_metadata={
+                "focused_label": "Document content",
+                "focused_description": "Document content",
+                "target_copy_probe": {"status": "empty", "item_count": 0},
+            },
+            geometry={
+                "status": "ok",
+                "window_bounds_points": {"x": 0, "y": 33, "width": 1512, "height": 895},
+                "focused_bounds_points": focused_bounds,
+                "annotation_metadata": {
+                    "source": "swift_focus_line_canvas_region",
+                    "annotated_target": "target_annotated.png",
+                },
+            },
+        )
+
+        self.assertEqual(result["build_log"]["target_copy_probe"]["status"], "empty")
+        self.assertEqual(
+            result["build_log"]["annotation_metadata"]["source"],
+            "swift_focus_line_canvas_region",
+        )
 
     @patch("target_context.image_size_pixels", return_value=(3024, 1790))
     @patch("target_context.recognize_text", return_value=_google_docs_phone_caret_payload())
@@ -321,9 +377,10 @@ class ManualGoogleDocsFixtureTests(unittest.TestCase):
         )
         expected = self.fixture["target_packet_payload"]
 
-        self.assertEqual(result["packet_text"], expected["packet_text"])
         self.assertEqual(result["completeness"], expected["completeness"])
         self.assertEqual(result["fallback_reasons"], expected["fallback_reasons"])
+        self.assertEqual(result["target_mode"], "document_canvas")
+        self.assertIn("TARGET_CONTEXT_KIND: document_canvas", result["packet_text"])
         self.assertIsNone(result["build_log"]["focus_rect_local_pixels"])
         self.assertEqual(
             result["build_log"]["focus_debug"]["focus_rect_rejected"],

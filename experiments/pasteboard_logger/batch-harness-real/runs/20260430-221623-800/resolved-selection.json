@@ -1,0 +1,62 @@
+{
+  "items" : [
+    {
+      "handle" : "item_1",
+      "payloads" : [
+        {
+          "actual_byte_size" : 198,
+          "decoded_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221608-124-cc979/items/item-0/00-public.utf8-plain-text.decoded.txt",
+          "expected_byte_size" : 198,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221608-124-cc979/items/item-0/00-public.utf8-plain-text.raw.bin",
+          "uti" : "public.utf8-plain-text"
+        }
+      ],
+      "source_handle" : "item_1",
+      "source_snapshot_id" : "20260430-221608-124-cc979"
+    },
+    {
+      "handle" : "item_2",
+      "payloads" : [
+        {
+          "actual_byte_size" : 3390,
+          "decoded_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/00-public.html.decoded.txt",
+          "expected_byte_size" : 3390,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/00-public.html.raw.html",
+          "uti" : "public.html"
+        },
+        {
+          "actual_byte_size" : 317,
+          "decoded_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/01-public.utf8-plain-text.decoded.txt",
+          "expected_byte_size" : 317,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/01-public.utf8-plain-text.raw.bin",
+          "uti" : "public.utf8-plain-text"
+        },
+        {
+          "actual_byte_size" : 24,
+          "expected_byte_size" : 24,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/02-org.chromium.internal.source-rfh-token.raw.bin",
+          "uti" : "org.chromium.internal.source-rfh-token"
+        },
+        {
+          "actual_byte_size" : 49192,
+          "expected_byte_size" : 49192,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/03-org.chromium.web-custom-data.raw.bin",
+          "uti" : "org.chromium.web-custom-data"
+        },
+        {
+          "actual_byte_size" : 144,
+          "decoded_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/04-org.chromium.source-url.decoded.txt",
+          "expected_byte_size" : 144,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-real/html-preview/snapshots/20260430-221619-628-cc980/items/item-0/04-org.chromium.source-url.raw.bin",
+          "uti" : "org.chromium.source-url"
+        }
+      ],
+      "source_handle" : "item_1",
+      "source_snapshot_id" : "20260430-221619-628-cc980"
+    }
+  ],
+  "selected_handles" : [
+    "item_1",
+    "item_2"
+  ]
+}
