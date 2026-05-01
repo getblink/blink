@@ -34,6 +34,14 @@ enum Inserter {
         var data: Data
     }
 
+    struct TimingEvent {
+        var name: String
+        var handle: String?
+        var itemIndex: Int?
+        var itemCount: Int?
+        var byteCount: Int?
+    }
+
     /// - Parameters:
     ///   - text: the text to paste.
     ///   - restoreDelay: how long to wait before restoring the original
@@ -72,6 +80,7 @@ enum Inserter {
         payloadItems: [PayloadItem],
         interItemDelay: TimeInterval = 0.18,
         restoreDelay: TimeInterval = 0.45,
+        onTimingEvent: ((TimingEvent) -> Void)? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         guard !payloadItems.isEmpty else {
@@ -81,6 +90,17 @@ enum Inserter {
 
         let pasteboard = NSPasteboard.general
         let savedItems = snapshot(pasteboard: pasteboard)
+        onTimingEvent?(
+            TimingEvent(
+                name: "inserter_saved_clipboard_snapshot",
+                handle: nil,
+                itemIndex: nil,
+                itemCount: savedItems.count,
+                byteCount: savedItems.reduce(0) { total, item in
+                    total + item.data.values.reduce(0) { $0 + $1.count }
+                }
+            )
+        )
 
         DispatchQueue.main.async {
             pastePayloadItem(
@@ -90,6 +110,7 @@ enum Inserter {
                 savedItems: savedItems,
                 interItemDelay: interItemDelay,
                 restoreDelay: restoreDelay,
+                onTimingEvent: onTimingEvent,
                 completion: completion
             )
         }
@@ -140,17 +161,29 @@ enum Inserter {
         savedItems: [SavedItem],
         interItemDelay: TimeInterval,
         restoreDelay: TimeInterval,
+        onTimingEvent: ((TimingEvent) -> Void)?,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         let item = payloadItems[index]
         let pasteboardItem = NSPasteboardItem()
+        var byteCount = 0
         for representation in item.representations {
+            byteCount += representation.data.count
             guard pasteboardItem.setData(representation.data, forType: representation.type) else {
                 restore(pasteboard: pasteboard, items: savedItems)
                 completion(.failure(InsertError.pasteboardWriteFailed))
                 return
             }
         }
+        onTimingEvent?(
+            TimingEvent(
+                name: "inserter_payload_item_built",
+                handle: item.handle,
+                itemIndex: index,
+                itemCount: payloadItems.count,
+                byteCount: byteCount
+            )
+        )
 
         pasteboard.clearContents()
         guard pasteboard.writeObjects([pasteboardItem]) else {
@@ -158,9 +191,27 @@ enum Inserter {
             completion(.failure(InsertError.pasteboardWriteFailed))
             return
         }
+        onTimingEvent?(
+            TimingEvent(
+                name: "inserter_pasteboard_write_done",
+                handle: item.handle,
+                itemIndex: index,
+                itemCount: payloadItems.count,
+                byteCount: byteCount
+            )
+        )
 
         do {
             try synthesizeCmdV()
+            onTimingEvent?(
+                TimingEvent(
+                    name: "inserter_cmd_v_posted",
+                    handle: item.handle,
+                    itemIndex: index,
+                    itemCount: payloadItems.count,
+                    byteCount: nil
+                )
+            )
         } catch {
             restore(pasteboard: pasteboard, items: savedItems)
             completion(.failure(error))
@@ -172,6 +223,15 @@ enum Inserter {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             if isLast {
                 restore(pasteboard: pasteboard, items: savedItems)
+                onTimingEvent?(
+                    TimingEvent(
+                        name: "inserter_clipboard_restored",
+                        handle: item.handle,
+                        itemIndex: index,
+                        itemCount: payloadItems.count,
+                        byteCount: nil
+                    )
+                )
                 completion(.success(()))
             } else {
                 pastePayloadItem(
@@ -181,6 +241,7 @@ enum Inserter {
                     savedItems: savedItems,
                     interItemDelay: interItemDelay,
                     restoreDelay: restoreDelay,
+                    onTimingEvent: onTimingEvent,
                     completion: completion
                 )
             }

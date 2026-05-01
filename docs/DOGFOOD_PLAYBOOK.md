@@ -50,19 +50,19 @@ None of that needs to be redone per dogfood session.
    missing. ~92 MB, per-workspace, cached within the workspace after first run.
 3. `xcodegen generate` + `xcodebuild` a self-contained Release `Blink.app`.
 4. Copy `python-dist/` and `app/python/*` into `Blink.app/Contents/Resources/`.
-5. Install the build to `~/Applications/Blink.app` (this is the canonical
-   install; there is only one per machine — rebuilds from any workspace
-   overwrite it).
-6. Stash duplicate `Blink.app` bundles from `app/build/`, `/Applications/`, and
-   `DerivedData/` into `.context/disabled-apps/*.app.disabled` so Spotlight,
-   LaunchServices, and TCC only see one install.
-7. With `--reset-tcc`: kill Blink, reset TCC entries for
+5. With `--reset-tcc`: kill Blink, remove the old canonical
+   `~/Applications/Blink.app`, reset TCC entries for
    `com.blink.tester.Blink` (All, Accessibility, ScreenCapture, ListenEvent,
    PostEvent, AppleEvents, SystemPolicyAllFiles), and nudge LaunchServices to
    forget the old binary. This is the safe default after Swift app-code changes,
-   because macOS can keep Accessibility visually enabled while still binding the
-   grant to an older Blink build. `BLINK_KEEP_INSTALLED=1` is passed so the
-   freshly installed canonical app is preserved.
+   because macOS can keep permissions visually enabled while still binding the
+   grant to an older Blink build.
+6. Install the build to `~/Applications/Blink.app` (this is the canonical
+   install; there is only one per machine — rebuilds from any workspace
+   overwrite it).
+7. Stash duplicate `Blink.app` bundles from `app/build/`, `/Applications/`, and
+   `DerivedData/` into `.context/disabled-apps/*.app.disabled` so Spotlight,
+   LaunchServices, and TCC only see one install.
 8. Relaunch `~/Applications/Blink.app`.
 
 On launch, Blink calls the real Screen Recording request API and opens the

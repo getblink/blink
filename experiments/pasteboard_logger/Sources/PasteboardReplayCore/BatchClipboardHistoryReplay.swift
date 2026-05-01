@@ -1,16 +1,134 @@
 import AppKit
+import CryptoKit
 import Foundation
+import Vision
+
+public struct VisualTag: Codable, Equatable {
+    public var label: String
+    public var identifier: String
+    public var confidence: Double
+
+    public init(label: String, identifier: String, confidence: Double) {
+        self.label = label
+        self.identifier = identifier
+        self.confidence = confidence
+    }
+}
+
+public struct ImageVisualMetadata: Codable, Equatable {
+    public var visualTags: [VisualTag]
+    public var visualSummary: String?
+    public var visualTagStatus: String
+
+    public init(visualTags: [VisualTag], visualSummary: String?, visualTagStatus: String) {
+        self.visualTags = visualTags
+        self.visualSummary = visualSummary
+        self.visualTagStatus = visualTagStatus
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case visualTags = "visual_tags"
+        case visualSummary = "visual_summary"
+        case visualTagStatus = "visual_tag_status"
+    }
+}
+
+public final class ImageContentClassifier {
+    public typealias ClassifyImage = (URL) throws -> ImageVisualMetadata
+
+    private let cacheDirectory: URL
+    private let fileManager: FileManager
+    private let classifyImage: ClassifyImage
+
+    public init(
+        cacheDirectory: URL,
+        fileManager: FileManager = .default,
+        classifyImage: ClassifyImage? = nil
+    ) {
+        self.cacheDirectory = cacheDirectory.standardizedFileURL
+        self.fileManager = fileManager
+        self.classifyImage = classifyImage ?? Self.classifyWithVision
+    }
+
+    public func classify(imageURL: URL) -> ImageVisualMetadata {
+        guard let data = try? Data(contentsOf: imageURL) else {
+            return ImageVisualMetadata(visualTags: [], visualSummary: nil, visualTagStatus: "unsupported")
+        }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let cacheURL = cacheDirectory.appendingPathComponent("\(digest).json")
+        let decoder = JSONDecoder()
+        if let cachedData = try? Data(contentsOf: cacheURL),
+           let cached = try? decoder.decode(ImageVisualMetadata.self, from: cachedData) {
+            return cached
+        }
+
+        let metadata: ImageVisualMetadata
+        do {
+            metadata = try classifyImage(imageURL)
+        } catch {
+            metadata = ImageVisualMetadata(visualTags: [], visualSummary: nil, visualTagStatus: "error")
+        }
+
+        guard metadata.visualTagStatus != "error" else {
+            return metadata
+        }
+
+        do {
+            try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            try encoder.encode(metadata).write(to: cacheURL, options: .atomic)
+        } catch {
+            // Classification is advisory; a cache miss should never block request assembly.
+        }
+        return metadata
+    }
+
+    private static func classifyWithVision(imageURL: URL) throws -> ImageVisualMetadata {
+        guard let image = CIImage(contentsOf: imageURL) else {
+            return ImageVisualMetadata(visualTags: [], visualSummary: nil, visualTagStatus: "unsupported")
+        }
+        let request = VNClassifyImageRequest()
+        let handler = VNImageRequestHandler(ciImage: image)
+        try handler.perform([request])
+        let observations = (request.results ?? [])
+            .filter { $0.confidence >= 0.55 }
+            .prefix(8)
+        let tags = observations.map { observation in
+            VisualTag(
+                label: readableVisionLabel(from: observation.identifier),
+                identifier: observation.identifier,
+                confidence: Double(observation.confidence)
+            )
+        }
+        return ImageVisualMetadata(
+            visualTags: tags,
+            visualSummary: tags.isEmpty ? nil : "visual tags: \(tags.map(\.label).joined(separator: ", "))",
+            visualTagStatus: tags.isEmpty ? "no_tags" : "ok"
+        )
+    }
+}
 
 public final class BatchClipboardHistoryReplay {
     private let inputDirectory: URL
     private let outputDirectory: URL
     private let fileManager: FileManager
+    private let imageClassifier: ImageContentClassifier
     private let derivedPayloadDirectoryName = "derived-payloads"
 
-    public init(inputDirectory: URL, outputDirectory: URL, fileManager: FileManager = .default) {
+    public init(
+        inputDirectory: URL,
+        outputDirectory: URL,
+        imageTagCacheDirectory: URL? = nil,
+        imageClassifier: ImageContentClassifier? = nil,
+        fileManager: FileManager = .default
+    ) {
         self.inputDirectory = inputDirectory.standardizedFileURL
         self.outputDirectory = outputDirectory.standardizedFileURL
         self.fileManager = fileManager
+        let cacheDirectory = imageTagCacheDirectory
+            ?? outputDirectory.deletingLastPathComponent().appendingPathComponent("image-tags", isDirectory: true)
+        self.imageClassifier = imageClassifier ?? ImageContentClassifier(cacheDirectory: cacheDirectory, fileManager: fileManager)
     }
 
     @discardableResult
@@ -210,15 +328,27 @@ public final class BatchClipboardHistoryReplay {
         let sourceURL = sourceURL(snapshot: snapshot, payloads: payloads)
         let imageDimensions = payloads.compactMap(\.representation.imageDimensions).first
         let previewText = previewText(payloads: payloads)
+        let kind = inferKind(utis: utis)
+        let visualMetadata: ImageVisualMetadata?
+        if kind == .image,
+           let imagePayload = payloads.first(where: { isImageType($0.uti) }) {
+            let imageURL = inputDirectory.appendingPathComponent(imagePayload.rawPath)
+            visualMetadata = imageClassifier.classify(imageURL: imageURL)
+        } else {
+            visualMetadata = nil
+        }
 
         return ModelItem(
             handle: handle,
-            kind: inferKind(utis: utis),
+            kind: kind,
             utis: utis,
             byteSizes: byteSizes,
             decodedTextPreview: previewText.map { oneLinePreview($0, limit: 500) },
             sourceURL: sourceURL,
             imageDimensions: imageDimensions,
+            visualTags: visualMetadata?.visualTags ?? [],
+            visualSummary: visualMetadata?.visualSummary,
+            visualTagStatus: visualMetadata?.visualTagStatus,
             hasEmbeddedImageData: embeddedImageCount > 0 || htmlText?.range(of: "data:image/", options: .caseInsensitive) != nil,
             embeddedImageCount: utis.contains(where: isHTMLType) ? embeddedImageCount : nil,
             derivedFrom: nil,
@@ -275,6 +405,7 @@ public final class BatchClipboardHistoryReplay {
                 warnings.append("\(derivedHandle)_invalid_embedded_image_bytes")
                 continue
             }
+            let visualMetadata = imageClassifier.classify(imageURL: fileURL)
             let payload = RuntimePayload(
                 uti: uti,
                 byteSize: data.count,
@@ -294,6 +425,9 @@ public final class BatchClipboardHistoryReplay {
                 decodedTextPreview: nil,
                 sourceURL: nil,
                 imageDimensions: dimensions,
+                visualTags: visualMetadata.visualTags,
+                visualSummary: visualMetadata.visualSummary,
+                visualTagStatus: visualMetadata.visualTagStatus,
                 hasEmbeddedImageData: false,
                 embeddedImageCount: nil,
                 derivedFrom: sourceHandle,
@@ -339,6 +473,9 @@ public final class BatchClipboardHistoryReplay {
                     decodedTextPreview: oneLinePreview(redactDataURLs(in: fragmentHTML), limit: 500),
                     sourceURL: nil,
                     imageDimensions: dimensions,
+                    visualTags: visualMetadata.visualTags,
+                    visualSummary: visualMetadata.visualSummary,
+                    visualTagStatus: visualMetadata.visualTagStatus,
                     hasEmbeddedImageData: true,
                     embeddedImageCount: 1,
                     derivedFrom: sourceHandle,
@@ -577,6 +714,9 @@ public struct ModelItem: Codable, Equatable {
     public var decodedTextPreview: String?
     public var sourceURL: String?
     public var imageDimensions: ImageDimensions?
+    public var visualTags: [VisualTag]
+    public var visualSummary: String?
+    public var visualTagStatus: String?
     public var hasEmbeddedImageData: Bool
     public var embeddedImageCount: Int?
     public var derivedFrom: String?
@@ -593,6 +733,9 @@ public struct ModelItem: Codable, Equatable {
         case decodedTextPreview = "decoded_text_preview"
         case sourceURL = "source_url"
         case imageDimensions = "image_dimensions"
+        case visualTags = "visual_tags"
+        case visualSummary = "visual_summary"
+        case visualTagStatus = "visual_tag_status"
         case hasEmbeddedImageData = "has_embedded_image_data"
         case embeddedImageCount = "embedded_image_count"
         case derivedFrom = "derived_from"
@@ -601,6 +744,14 @@ public struct ModelItem: Codable, Equatable {
         case sourceUTI = "source_uti"
         case sourcePath = "source_path"
     }
+}
+
+func readableVisionLabel(from identifier: String) -> String {
+    let first = identifier.split(separator: ",", maxSplits: 1).first.map(String.init) ?? identifier
+    return first
+        .replacingOccurrences(of: "_", with: " ")
+        .replacingOccurrences(of: "-", with: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 public struct RuntimePayload: Codable, Equatable {

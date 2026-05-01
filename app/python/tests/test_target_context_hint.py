@@ -200,7 +200,9 @@ class TargetContextPacketHintTests(unittest.TestCase):
         self.assertEqual(result["target_mode"], "document_canvas")
         self.assertIn("google_docs_degenerate_focus_rect", result["fallback_reasons"])
         self.assertIn("TARGET_CONTEXT_KIND: document_canvas", result["packet_text"])
-        self.assertIn("INSERTION_CONTRACT:", result["packet_text"])
+        self.assertIn("TARGET_IMAGE: attached screenshot", result["packet_text"])
+        self.assertNotIn("INSERTION_CONTRACT:", result["packet_text"])
+        self.assertNotIn("COMPLETENESS:", result["packet_text"])
 
     def test_target_mode_keeps_normal_fields_strict(self) -> None:
         self.assertEqual(
@@ -254,6 +256,8 @@ class TargetContextPacketHintTests(unittest.TestCase):
             result["build_log"]["annotation_metadata"]["source"],
             "swift_focus_line_canvas_region",
         )
+        self.assertIn("red rectangle marks the focused caret/selection line", result["packet_text"])
+        self.assertIn("blue rectangle marks the nearby document/canvas region", result["packet_text"])
 
     @patch("target_context.image_size_pixels", return_value=(3024, 1790))
     @patch("target_context.recognize_text", return_value=_google_docs_phone_caret_payload())

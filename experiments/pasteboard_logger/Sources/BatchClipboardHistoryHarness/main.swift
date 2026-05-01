@@ -11,6 +11,16 @@ struct HarnessConfig {
     var mockResponse: String?
 }
 
+struct ParsedModelOutput: Encodable {
+    var selectedHandles: [String]
+    var pasteItems: [BatchPastePlanItem]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedHandles = "selected_handles"
+        case pasteItems = "paste_items"
+    }
+}
+
 func parseConfig(arguments: [String]) -> HarnessConfig {
     var config = HarnessConfig()
     var index = 1
@@ -291,12 +301,18 @@ while let line = readLine() {
                 rawOutput: rawURL,
                 mockResponse: config.mockResponse
             )
-            let selected = try parseAndValidateSelection(raw, allowedHandles: pair.model.allowedHandles)
-            try writeJSON(["selected_handles": selected], to: parsedURL)
-            let resolved = resolveSelection(selectedHandles: selected, fullRequest: pair.full)
+            let selectedItems = assignSyntheticTextHandles(to: try parseAndValidateSelection(raw, allowedHandles: pair.model.allowedHandles))
+            try writeJSON(
+                ParsedModelOutput(
+                    selectedHandles: selectedItems.compactMap { $0.resolvedHandle },
+                    pasteItems: selectedItems
+                ),
+                to: parsedURL
+            )
+            let resolved = resolveSelection(selectedItems: selectedItems, fullRequest: pair.full)
             try writeJSON(resolved, to: resolvedURL)
             print("wrote \(runDir.path)")
-            print("selected: \(selected.joined(separator: ", "))")
+            print("selected: \(selectedItems.compactMap { $0.resolvedHandle }.joined(separator: ", "))")
         } catch {
             fputs("run error: \(error.localizedDescription)\n", stderr)
         }

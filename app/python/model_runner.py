@@ -40,7 +40,33 @@ def _prepare_content_items(
             key = str(item.get("key") or "image")
             label = str(item.get("label") or key.upper())
             path = Path(item["path"])
-            prepared = prepare_request_image(path, settings)
+            if bool(item.get("preprocessed")):
+                started_perf = time.perf_counter()
+                started_at = now_iso()
+                data = path.read_bytes()
+                duration = duration_ms(started_perf)
+                mime_type = str(item.get("mime_type") or "image/jpeg")
+                prepared = {
+                    "bytes_data": data,
+                    "mime_type": mime_type,
+                    "original_bytes": len(data),
+                    "request_bytes": len(data),
+                    "duration_ms": duration,
+                    "log": {
+                        "status": "preprocessed",
+                        "enabled": True,
+                        "started_at": started_at,
+                        "finished_at": now_iso(),
+                        "duration_ms": duration,
+                        "original_path": str(path),
+                        "original_bytes": len(data),
+                        "request_path": str(path),
+                        "request_bytes": len(data),
+                        "request_mime_type": mime_type,
+                    },
+                }
+            else:
+                prepared = prepare_request_image(path, settings)
             prepared_items.append(
                 {
                     "type": "image",
