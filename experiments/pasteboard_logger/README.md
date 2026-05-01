@@ -87,8 +87,9 @@ quit
 
 `run` builds a combined request from the current non-concealed in-memory history,
 calls `scripts/batch_model_select.py`, validates the returned
-`{"selected_handles":[...]}` JSON, and resolves selected handles back to payload
-files. It writes one timestamped folder under `batch-harness/runs/`:
+`{"paste_items":[...]}` JSON (legacy `{"selected_handles":[...]}` is also supported),
+and resolves selected plan items back to payload files. It writes one timestamped
+folder under `batch-harness/runs/`:
 
 - `batch-request.full.json` — local artifact with runtime payload references.
 - `batch-request.model.json` — byte-free model prompt payload containing only the typed goal, item summaries, and `allowed_handles`.
@@ -98,7 +99,7 @@ files. It writes one timestamped folder under `batch-harness/runs/`:
 For a no-credential smoke test, pass a mock response:
 
 ```bash
-swift run BatchClipboardHistoryHarness --work-dir batch-harness --mock-response '{"selected_handles":["item_1"]}'
+swift run BatchClipboardHistoryHarness --work-dir batch-harness --mock-response '{"paste_items":[{"type":"handle","handle":"item_1"}]}'
 ```
 
 The harness stops at the resolution manifest. It does not write selected items

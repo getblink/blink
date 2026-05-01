@@ -54,6 +54,25 @@ def compact_value(value: Any, limit: int = 220) -> str | None:
     return text[: limit - 1].rstrip() + "…"
 
 
+def document_canvas_image_context_lines(annotation_metadata: dict[str, Any]) -> list[str]:
+    status = str(annotation_metadata.get("status") or "")
+    source = str(annotation_metadata.get("source") or "")
+    annotated_target = annotation_metadata.get("annotated_target")
+    if source == "swift_focus_line_canvas_region" or annotated_target:
+        return [
+            "TARGET_IMAGE: attached screenshot of the target window with visual annotations",
+            "TARGET_IMAGE_ANNOTATION: red rectangle marks the focused caret/selection line",
+            "TARGET_IMAGE_ANNOTATION: blue rectangle marks the nearby document/canvas region for coarse insertion context",
+        ]
+    if status == "degenerate_document_canvas_anchor":
+        return [
+            "TARGET_IMAGE: attached raw screenshot of the target window; no red/blue annotation was drawn because the focused bounds are degenerate",
+        ]
+    return [
+        "TARGET_IMAGE: attached screenshot of the target window",
+    ]
+
+
 def is_google_docs_document_surface(target_metadata: dict[str, Any]) -> bool:
     label = normalize_text(str(target_metadata.get("focused_label") or ""))
     description = normalize_text(str(target_metadata.get("focused_description") or ""))
@@ -674,18 +693,19 @@ def build_target_ocr_packet(
         completeness_reasons.append("no_local_target_text")
 
     completeness = "needs_target_image" if completeness_reasons else "sufficient"
+    annotation_metadata = {}
+    if isinstance(geometry, dict) and isinstance(geometry.get("annotation_metadata"), dict):
+        annotation_metadata = plain_data(geometry.get("annotation_metadata") or {})
+
     lines = []
     if label_hint:
         lines.append(f"FOCUSED_FIELD_LABEL: {label_hint}")
     if target_mode == "document_canvas":
         lines.append("TARGET_CONTEXT_KIND: document_canvas")
-        lines.append("INSERTION_CONTRACT: prefer rich HTML clipboard payloads for document/canvas targets")
+        lines.extend(document_canvas_image_context_lines(annotation_metadata))
 
     packet_text = "\n".join(lines).strip()
     status = "ok" if ocr_payload.get("status") == "ok" else "error"
-    annotation_metadata = {}
-    if isinstance(geometry, dict) and isinstance(geometry.get("annotation_metadata"), dict):
-        annotation_metadata = plain_data(geometry.get("annotation_metadata") or {})
     target_copy_probe = target_metadata.get("target_copy_probe")
     if not isinstance(target_copy_probe, dict):
         target_copy_probe = {}

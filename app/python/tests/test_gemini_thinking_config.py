@@ -13,6 +13,7 @@ if str(APP_PYTHON_DIR) not in sys.path:
 from gemini_runner import (  # noqa: E402
     _gemini_thinking_kwargs,
     normalized_model_name,
+    plain_data,
     thinking_config_kwargs,
 )
 
@@ -77,6 +78,16 @@ class GeminiThinkingConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(kwargs, {"include_thoughts": False, "thinking_level": "MINIMAL"})
+
+    def test_plain_data_sanitizes_bytes_inside_model_dump(self) -> None:
+        class Payload:
+            def model_dump(self, exclude_none: bool = True) -> dict[str, object]:
+                return {"parts": [{"inline_data": b"abc"}]}
+
+        self.assertEqual(
+            plain_data(Payload()),
+            {"parts": [{"inline_data": {"length": 3, "type": "bytes"}}]},
+        )
 
 
 if __name__ == "__main__":

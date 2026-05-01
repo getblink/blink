@@ -99,6 +99,26 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertFalse(request.items[2].decodedTextPreview?.contains("data:image") ?? true)
     }
 
+    func testEmbeddedImageVariantsShareVisualMetadata() throws {
+        let root = try makeTempDirectory()
+        let png = try pngData(width: 4, height: 5)
+        let html = """
+        <section><img width="40" height="50" title="Profile crop" src="data:image/png;base64,\(png.base64EncodedString())"></section>
+        """
+        try writeSnapshot(root: root, id: "visual-fragment", renderedKind: "html", types: ["public.html"])
+        try writePayload(root: root, snapshotID: "visual-fragment", itemIndex: 0, typeIndex: 0, uti: "public.html", raw: Data(html.utf8), decoded: html, rawExtension: "html")
+
+        let request = try replay(root, visualTags: ["person", "portrait", "face"]).buildRequest(for: loadTimeline(root)[0])
+
+        XCTAssertEqual(request.items.map(\.handle), ["item_1", "item_1_image_1", "item_1_image_fragment_1"])
+        XCTAssertEqual(request.items[1].visualTagStatus, "ok")
+        XCTAssertEqual(request.items[1].visualTags.map(\.label), ["person", "portrait", "face"])
+        XCTAssertEqual(request.items[1].visualSummary, "visual tags: person, portrait, face")
+        XCTAssertEqual(request.items[2].visualTags, request.items[1].visualTags)
+        XCTAssertEqual(request.items[2].visualSummary, request.items[1].visualSummary)
+        XCTAssertEqual(request.items[2].visualTagStatus, request.items[1].visualTagStatus)
+    }
+
     func testGoogleSlidesCustomDataCreatesFilteredImageObjectFragment() throws {
         let root = try makeTempDirectory()
         let png = try pngData(width: 4, height: 5)
@@ -270,6 +290,61 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertEqual(request.runtimePayloads["item_1"]?.first?.representation.rawExtension, "png")
     }
 
+    func testImageClassifierCachesByImageBytes() throws {
+        let root = try makeTempDirectory()
+        let image = root.appendingPathComponent("image.png")
+        try pngData(width: 3, height: 2).write(to: image)
+        let cache = root.appendingPathComponent("batch-clipboard-history/image-tags", isDirectory: true)
+        var classifyCount = 0
+        let classifier = ImageContentClassifier(cacheDirectory: cache) { _ in
+            classifyCount += 1
+            return self.visualMetadata(labels: ["photo", "person"])
+        }
+
+        let first = classifier.classify(imageURL: image)
+        let secondClassifier = ImageContentClassifier(cacheDirectory: cache) { _ in
+            XCTFail("Expected second classifier to reuse cached image tags")
+            return self.visualMetadata(labels: ["wrong"])
+        }
+        let second = secondClassifier.classify(imageURL: image)
+
+        XCTAssertEqual(first.visualTags.map(\.label), ["photo", "person"])
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(classifyCount, 1)
+        let cachedFiles = try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)
+        XCTAssertEqual(cachedFiles.filter { $0.pathExtension == "json" }.count, 1)
+    }
+
+    func testImageClassifierDoesNotCacheTransientErrors() throws {
+        enum TestError: Error {
+            case transient
+        }
+
+        let root = try makeTempDirectory()
+        let image = root.appendingPathComponent("image.png")
+        try pngData(width: 3, height: 2).write(to: image)
+        let cache = root.appendingPathComponent("batch-clipboard-history/image-tags", isDirectory: true)
+        let failingClassifier = ImageContentClassifier(cacheDirectory: cache) { _ in
+            throw TestError.transient
+        }
+
+        let failed = failingClassifier.classify(imageURL: image)
+        XCTAssertEqual(failed.visualTagStatus, "error")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+
+        var recoveryCount = 0
+        let recoveryClassifier = ImageContentClassifier(cacheDirectory: cache) { _ in
+            recoveryCount += 1
+            return self.visualMetadata(labels: ["photo"])
+        }
+        let recovered = recoveryClassifier.classify(imageURL: image)
+
+        XCTAssertEqual(recovered.visualTags.map(\.label), ["photo"])
+        XCTAssertEqual(recoveryCount, 1)
+        let cachedFiles = try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)
+        XCTAssertEqual(cachedFiles.filter { $0.pathExtension == "json" }.count, 1)
+    }
+
     func testMultiItemSnapshotPreservesItemAndHandleOrder() throws {
         let root = try makeTempDirectory()
         try writeSnapshot(root: root, id: "multi", itemCount: 2, types: ["public.utf8-plain-text", "public.html"])
@@ -418,6 +493,9 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertEqual(pair.model.items[2].derivedFrom, "item_2")
         XCTAssertEqual(pair.model.items[2].sourceSnapshotID, "html")
         XCTAssertEqual(pair.model.items[2].sourceHandle, "item_1_image_1")
+        XCTAssertEqual(pair.model.sourceGroups.map(\.rootHandle), ["item_1", "item_2"])
+        XCTAssertEqual(pair.model.sourceGroups[0].variants[0].role, "root_parent")
+        XCTAssertEqual(pair.model.sourceGroups[1].variants[0].role, "root_rich_parent")
         XCTAssertEqual(pair.full.runtimePayloads["item_3"]?.first?.rawPath, "derived-payloads/html/item_1_image_1.png")
     }
 
@@ -439,6 +517,79 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertEqual(pair.model.items[1].sourceHandle, "item_1_image_1")
     }
 
+    func testBatchAssemblerBuildsSourceGroupsWithVariantRolesAndMetadata() throws {
+        let root = try makeTempDirectory()
+        let png = try pngData(width: 4, height: 5)
+        let html = """
+        <section><img width="40" height="50" title="Profile crop" src="data:image/png;base64,\(png.base64EncodedString())"></section>
+        """
+        try writeSnapshotDirectory(root: root, id: "google-fragment", itemCount: 1, renderedKind: "html", types: ["public.html"])
+        try writeTimeline(
+            root: root,
+            ids: ["google-fragment"],
+            renderedKinds: ["html"],
+            types: [["public.html"]]
+        )
+        try writePayload(
+            root: root,
+            snapshotID: "google-fragment",
+            itemIndex: 0,
+            typeIndex: 0,
+            uti: "public.html",
+            raw: Data(html.utf8),
+            decoded: html,
+            rawExtension: "html"
+        )
+
+        let pair = try assembler(root).build(goal: "select image", snapshots: loadTimeline(root), historyLimit: 20)
+        let sourceGroups = pair.model.sourceGroups
+
+        XCTAssertEqual(sourceGroups.count, 1)
+        XCTAssertEqual(sourceGroups[0].groupID, "group_1")
+        XCTAssertEqual(sourceGroups[0].rootHandle, "item_1")
+        XCTAssertEqual(sourceGroups[0].variants.map(\.handle), ["item_1", "item_2", "item_3"])
+        XCTAssertEqual(sourceGroups[0].variants[0].role, "root_rich_parent")
+        XCTAssertNil(sourceGroups[0].variants[0].derivedFrom)
+        XCTAssertEqual(sourceGroups[0].variants[0].preserves, ["full_selection", "layout", "styles", "text"])
+        XCTAssertEqual(sourceGroups[0].variants[0].loses, [])
+        XCTAssertEqual(sourceGroups[0].variants[1].role, "derived_raw_image")
+        XCTAssertEqual(sourceGroups[0].variants[1].derivedKind, "embedded_html_image")
+        XCTAssertEqual(sourceGroups[0].variants[1].preserves, ["image"])
+        XCTAssertEqual(sourceGroups[0].variants[1].loses, ["structure", "text", "context"])
+        XCTAssertEqual(sourceGroups[0].variants[1].derivedFrom, "item_1")
+        XCTAssertEqual(sourceGroups[0].variants[2].role, "derived_rich_image_fragment")
+        XCTAssertEqual(sourceGroups[0].variants[2].derivedKind, "embedded_html_image_fragment")
+        XCTAssertEqual(sourceGroups[0].variants[2].preserves, ["image", "fragment_layout"])
+        XCTAssertEqual(
+            sourceGroups[0].variants[2].loses,
+            ["surrounding_context", "sibling_objects", "full_document"]
+        )
+        XCTAssertEqual(sourceGroups[0].variants[2].derivedFrom, "item_1")
+    }
+
+    func testBatchAssemblerPropagatesVisualTagsToItemsAndSourceGroupVariants() throws {
+        let root = try makeTempDirectory()
+        let png = try pngData(width: 4, height: 5)
+        let html = """
+        <section><img width="40" height="50" title="Profile crop" src="data:image/png;base64,\(png.base64EncodedString())"></section>
+        """
+        try writeSnapshotDirectory(root: root, id: "visual-group", itemCount: 1, renderedKind: "html", types: ["public.html"])
+        try writeTimeline(root: root, ids: ["visual-group"], renderedKinds: ["html"], types: [["public.html"]])
+        try writePayload(root: root, snapshotID: "visual-group", itemIndex: 0, typeIndex: 0, uti: "public.html", raw: Data(html.utf8), decoded: html, rawExtension: "html")
+
+        let pair = try assembler(root, visualTags: ["person", "portrait"]).build(
+            goal: "pic of my face",
+            snapshots: loadTimeline(root),
+            historyLimit: 20
+        )
+
+        XCTAssertEqual(pair.model.items[1].visualTags.map(\.label), ["person", "portrait"])
+        XCTAssertEqual(pair.model.items[1].visualSummary, "visual tags: person, portrait")
+        XCTAssertEqual(pair.model.sourceGroups[0].variants[1].visualTags.map(\.label), ["person", "portrait"])
+        XCTAssertEqual(pair.model.sourceGroups[0].variants[2].visualTags.map(\.label), ["person", "portrait"])
+    }
+
+
     func testBatchAssemblerOmitsConcealedSnapshots() throws {
         let root = try makeTempDirectory()
         try writeSnapshotDirectory(root: root, id: "concealed", itemCount: 1, renderedKind: "concealed", types: ["org.nspasteboard.ConcealedType"], isConcealed: true)
@@ -458,10 +609,44 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertEqual(pair.model.items[0].sourceSnapshotID, "plain")
     }
 
-    func testBatchSelectionValidationRejectsInvalidUnknownAndDuplicateHandles() throws {
+    func testBatchSelectionValidationSupportsLegacyAndNewPasteItems() throws {
         XCTAssertEqual(
-            try parseAndValidateSelection("{\"selected_handles\":[\"item_2\",\"item_1\"]}", allowedHandles: ["item_1", "item_2"]),
-            ["item_2", "item_1"]
+            try parseAndValidateSelection(
+                "{\"selected_handles\":[\"item_2\",\"item_1\"]}",
+                allowedHandles: ["item_1", "item_2"]
+            ),
+            [
+                BatchPastePlanItem(type: .handle, handle: "item_2"),
+                BatchPastePlanItem(type: .handle, handle: "item_1"),
+            ]
+        )
+        XCTAssertEqual(
+            try parseAndValidateSelection(
+                "{\"paste_items\":[{\"type\":\"handle\",\"handle\":\"item_2\"},{\"type\":\"text\",\"text\":\"hello\"}]}",
+                allowedHandles: ["item_1", "item_2"]
+            ),
+            [
+                BatchPastePlanItem(type: .handle, handle: "item_2"),
+                BatchPastePlanItem(type: .text, text: "hello"),
+            ]
+        )
+        XCTAssertEqual(
+            try parseAndValidateSelection(
+                "{\"selected_handles\":[\"item_1\"],\"paste_items\":[{\"type\":\"text\",\"text\":\"generated\"},{\"type\":\"handle\",\"handle\":\"item_2\"}]}",
+                allowedHandles: ["item_1", "item_2"]
+            ),
+            [
+                BatchPastePlanItem(type: .text, text: "generated"),
+                BatchPastePlanItem(type: .handle, handle: "item_2"),
+            ]
+        )
+        XCTAssertEqual(
+            try parseAndValidateSelection("{\"selected_handles\":[]}", allowedHandles: ["item_1"]),
+            []
+        )
+        XCTAssertEqual(
+            try parseAndValidateSelection("{\"paste_items\":[]}", allowedHandles: ["item_1"]),
+            []
         )
         XCTAssertThrowsError(try parseAndValidateSelection("not json", allowedHandles: ["item_1"])) { error in
             XCTAssertEqual(error as? BatchSelectionError, .invalidJSON)
@@ -472,6 +657,94 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         XCTAssertThrowsError(try parseAndValidateSelection("{\"selected_handles\":[\"item_1\",\"item_1\"]}", allowedHandles: ["item_1"])) { error in
             XCTAssertEqual(error as? BatchSelectionError, .duplicateHandle("item_1"))
         }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                "{\"paste_items\":[{\"type\":\"text\",\"text\":\"\\n\\t\"}]}",
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? BatchSelectionError, .emptyPasteText)
+        }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                #"{"paste_items":[{"type":"text","text":"\#(String(repeating: "a", count: 4001))"}]}"#,
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? BatchSelectionError,
+                .pasteTextTooLong(limit: 4000, actual: 4001)
+            )
+        }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                #"{"paste_items":[{"type":"text","text":"\#(String(repeating: "a", count: 4000))"},{"type":"text","text":"\#(String(repeating: "b", count: 4000))"},{"type":"text","text":"c"}]}"#,
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? BatchSelectionError, .pasteTextTotalTooLong(limit: 8000, actual: 8001))
+        }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                #"{"paste_items":[{"type":"bogus","handle":"item_1"}]}"#,
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? BatchSelectionError, .malformedPasteItemType)
+        }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                #"{"paste_items":[{"type":"handle","text":"item_1"}]}"#,
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? BatchSelectionError, .malformedPasteHandle)
+        }
+        XCTAssertThrowsError(
+            try parseAndValidateSelection(
+                #"{"paste_items":[{"type":"text","text":123}],"item_3":""}"#,
+                allowedHandles: ["item_1"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? BatchSelectionError, .malformedPasteText)
+        }
+    }
+
+    func testResolveSelectionSupportsGeneratedTextItems() throws {
+        let root = try makeTempDirectory()
+        try writeSnapshot(
+            root: root,
+            id: "plain",
+            itemCount: 1,
+            renderedKind: "plain-text",
+            types: ["public.utf8-plain-text"]
+        )
+        try writePayload(
+            root: root,
+            snapshotID: "plain",
+            itemIndex: 0,
+            typeIndex: 0,
+            uti: "public.utf8-plain-text",
+            raw: Data("hello".utf8),
+            decoded: "hello"
+        )
+        let pair = try assembler(root).build(goal: "transform", snapshots: loadTimeline(root), historyLimit: 20)
+        let pasted = assignSyntheticTextHandles(
+            to: [
+                BatchPastePlanItem(type: .text, text: "prefix: "),
+                BatchPastePlanItem(type: .handle, handle: "item_1"),
+                BatchPastePlanItem(type: .text, text: "suffix"),
+            ]
+        )
+        let manifest = resolveSelection(selectedItems: pasted, fullRequest: pair.full)
+
+        XCTAssertEqual(
+            manifest.generatedTextCharCountByHandle,
+            ["generated_text_1": 8, "generated_text_2": 6]
+        )
+        XCTAssertEqual(manifest.totalGeneratedTextChars, 14)
+        XCTAssertEqual(manifest.items.map(\.type), [.text, .handle, .text])
+        XCTAssertEqual(manifest.selectedHandles, ["generated_text_1", "item_1", "generated_text_2"])
     }
 
     func testResolveSelectionReportsOriginalAndDerivedPayloadPathsAndByteMismatches() throws {
@@ -500,10 +773,44 @@ final class BatchClipboardHistoryReplayTests: XCTestCase {
         )
     }
 
+    private func replay(_ root: URL, visualTags labels: [String]) -> BatchClipboardHistoryReplay {
+        BatchClipboardHistoryReplay(
+            inputDirectory: root,
+            outputDirectory: root.appendingPathComponent("requests", isDirectory: true),
+            imageClassifier: ImageContentClassifier(
+                cacheDirectory: root.appendingPathComponent("batch-clipboard-history/image-tags", isDirectory: true)
+            ) { _ in
+                self.visualMetadata(labels: labels)
+            }
+        )
+    }
+
     private func assembler(_ root: URL) -> BatchClipboardHistoryAssembler {
         BatchClipboardHistoryAssembler(
             inputDirectory: root,
             replayOutputDirectory: root.appendingPathComponent("requests", isDirectory: true)
+        )
+    }
+
+    private func assembler(_ root: URL, visualTags labels: [String]) -> BatchClipboardHistoryAssembler {
+        BatchClipboardHistoryAssembler(
+            inputDirectory: root,
+            replayOutputDirectory: root.appendingPathComponent("requests", isDirectory: true),
+            imageClassifier: ImageContentClassifier(
+                cacheDirectory: root.appendingPathComponent("batch-clipboard-history/image-tags", isDirectory: true)
+            ) { _ in
+                self.visualMetadata(labels: labels)
+            }
+        )
+    }
+
+    private func visualMetadata(labels: [String]) -> ImageVisualMetadata {
+        ImageVisualMetadata(
+            visualTags: labels.enumerated().map { index, label in
+                VisualTag(label: label, identifier: label, confidence: 0.9 - (Double(index) * 0.01))
+            },
+            visualSummary: labels.isEmpty ? nil : "visual tags: \(labels.joined(separator: ", "))",
+            visualTagStatus: labels.isEmpty ? "no_tags" : "ok"
         )
     }
 

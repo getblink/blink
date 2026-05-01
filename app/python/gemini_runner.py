@@ -26,7 +26,7 @@ def plain_data(value: Any) -> Any:
     if value is None:
         return None
     if hasattr(value, "model_dump"):
-        return value.model_dump(exclude_none=True)
+        return plain_data(value.model_dump(exclude_none=True))
     if isinstance(value, (bytes, bytearray, memoryview)):
         return {
             "type": type(value).__name__,
