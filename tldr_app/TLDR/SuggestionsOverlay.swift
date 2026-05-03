@@ -1,39 +1,108 @@
 import AppKit
 
 final class SuggestionsPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }
 
 final class SuggestionsOverlay {
+    private enum Layout {
+        static let panelWidth: CGFloat = 560
+        static let shadowBleed: CGFloat = 36
+        static let summaryMinHeight: CGFloat = 132
+        static let sectionGap: CGFloat = 14
+        static let suggestionGap: CGFloat = 8
+        static let summaryFontSize: CGFloat = 16.5
+        static let suggestionFontSize: CGFloat = 16
+        static let hintFontSize: CGFloat = 12
+        static let summaryTopInset: CGFloat = 22
+        static let summaryBottomInset: CGFloat = 16
+        static let summaryHintHeight: CGFloat = 18
+        static let summaryHintGap: CGFloat = 12
+        static let summaryLineSpacing: CGFloat = 5
+        static let cardPaddingX: CGFloat = 24
+        static let suggestionCollapsedHeight: CGFloat = 62
+        static let suggestionNumberX: CGFloat = 20
+        static let suggestionNumberWidth: CGFloat = 28
+        static let suggestionNumberHeight: CGFloat = 24
+        static let suggestionTextX: CGFloat = 68
+        static let suggestionCollapsedTextHeight: CGFloat = 24
+        static let suggestionLineSpacing: CGFloat = 5
+        static let suggestionBottomPaddingExpanded: CGFloat = 28
+        static let enterHintWidth: CGFloat = 140
+        static let enterHintHeight: CGFloat = 18
+        static let enterHintRightInset: CGFloat = 24
+        static let enterHintBottomInset: CGFloat = 4
+        static let animationDuration: TimeInterval = 0.22
+
+        static var suggestionPaddingY: CGFloat {
+            (suggestionCollapsedHeight - suggestionCollapsedTextHeight) / 2
+        }
+    }
+
+    private struct GlassPane {
+        let outer: NSView
+        let content: NSView
+    }
+
+    private struct SuggestionCard {
+        let outer: NSView
+        let content: NSView
+        let tint: NSView
+        let number: NSTextField
+        let label: NSTextField
+        let enterHint: NSTextField
+        let collapsedFrame: NSRect
+        let collapsedText: String
+        let fullText: String
+        let expandedHeight: CGFloat
+    }
+
     private var panel: SuggestionsPanel?
+    private var contentView: NSView?
+    private var basePanelHeight: CGFloat = 0
+    private var basePanelTopY: CGFloat = 0
+    private var summaryCard: NSView?
+    private var summaryBaseFrame: NSRect = .zero
+    private var suggestionCards: [SuggestionCard] = []
+    private var currentHeightDelta: CGFloat = 0
+    private var previousFrontmost: NSRunningApplication?
+    private(set) var expandedSuggestionIndex: Int?
 
     var isVisible: Bool {
         panel?.isVisible == true
     }
 
-    func show(tldr: String, suggestions: [String], autoPaste: Bool) {
+    func show(tldr: String, suggestions: [String]) {
         close()
 
-        let panelWidth: CGFloat = 620
-        let cardPaddingX: CGFloat = 20
-        let cardPaddingY: CGFloat = 16
-        let cardGap: CGFloat = 10
-        let footerHeight: CGFloat = 24
-        let font = NSFont.systemFont(ofSize: 16)
-        let labelWidth = panelWidth - cardPaddingX * 2
         let visibleSuggestions = Array(suggestions.prefix(3))
-
-        let tldrHeight = measureHeight(tldr, width: labelWidth, font: font) + cardPaddingY * 2
-        let rowHeights = visibleSuggestions.enumerated().map { index, text in
-            max(66, measureHeight("\(index + 1).  \(text)", width: labelWidth, font: font) + cardPaddingY * 2)
+        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .semibold)
+        let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
+        let contentWidth = Layout.panelWidth
+        let summaryLabelWidth = contentWidth - 48
+        let summaryTextY = Layout.summaryBottomInset + Layout.summaryHintHeight + Layout.summaryHintGap
+        let summaryHeight = max(
+            Layout.summaryMinHeight,
+            measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
+                + summaryTextY
+                + Layout.summaryTopInset
+        )
+        let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let expandedHeights = visibleSuggestions.map { text in
+            max(
+                Layout.suggestionCollapsedHeight,
+                measureHeight(text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
+                    + Layout.suggestionPaddingY
+                    + Layout.suggestionBottomPaddingExpanded
+            )
         }
-        let panelHeight = tldrHeight
-            + cardGap
-            + rowHeights.reduce(0, +)
-            + cardGap * CGFloat(max(0, rowHeights.count - 1))
-            + cardGap
-            + footerHeight
+        let stackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
+            + CGFloat(max(0, visibleSuggestions.count - 1)) * Layout.suggestionGap
+        let contentHeight = summaryHeight + Layout.sectionGap + stackHeight
+        let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
+        let panelHeight = contentHeight + Layout.shadowBleed * 2
 
         let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let origin = NSPoint(
@@ -42,7 +111,13 @@ final class SuggestionsOverlay {
         )
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
-        let style: NSWindow.StyleMask = [.nonactivatingPanel, .borderless, .fullSizeContentView]
+        // Borderless only — no `.nonactivatingPanel`. AppKit draws an extra
+        // glass outline around `NSGlassEffectView` in the LSUIElement +
+        // non-activating-panel context (see scratchpad/tldr_reply/overlay.py).
+        // Trade-off: TLDR briefly steals focus from the source app; we
+        // capture and restore the previous frontmost on close so Cmd+V still
+        // lands in the right place.
+        let style: NSWindow.StyleMask = [.borderless]
         let panel = SuggestionsPanel(
             contentRect: frame,
             styleMask: style,
@@ -56,99 +131,495 @@ final class SuggestionsOverlay {
         panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.hasShadow = false
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
         content.wantsLayer = true
         content.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = content
 
-        var y = panelHeight - tldrHeight
-        content.addSubview(card(
-            frame: NSRect(x: 0, y: y, width: panelWidth, height: tldrHeight),
-            text: tldr,
-            font: font,
-            textColor: NSColor(calibratedWhite: 0.94, alpha: 0.98),
-            material: .hudWindow
-        ))
-        y -= cardGap
+        let contentX = Layout.shadowBleed
+        let contentTop = panelHeight - Layout.shadowBleed
+        let summaryY = contentTop - summaryHeight
+        let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
+        let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
 
-        for (idx, text) in visibleSuggestions.enumerated() {
-            let height = rowHeights[idx]
-            y -= height
-            content.addSubview(card(
-                frame: NSRect(x: 0, y: y, width: panelWidth, height: height),
-                text: "\(idx + 1).  \(text)",
-                font: font,
-                textColor: .white,
-                material: .popover
+        let hint = label(
+            frame: NSRect(
+                x: 24,
+                y: Layout.summaryBottomInset,
+                width: contentWidth - 48,
+                height: Layout.summaryHintHeight
+            ),
+            text: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss",
+            font: hintFont,
+            color: .tertiaryLabelColor,
+            singleLine: true
+        )
+        hint.alignment = .center
+        summary.content.addSubview(hint)
+
+        let summaryLabel = label(
+            frame: NSRect(
+                x: 24,
+                y: summaryTextY,
+                width: contentWidth - 48,
+                height: summaryHeight - summaryTextY - Layout.summaryTopInset
+            ),
+            text: tldr,
+            font: summaryFont,
+            color: .labelColor,
+            lineSpacing: Layout.summaryLineSpacing
+        )
+        summary.content.addSubview(summaryLabel)
+        content.addSubview(summary.outer)
+
+        var cards: [SuggestionCard] = []
+        var y = summaryY - Layout.sectionGap
+        for (offset, text) in visibleSuggestions.enumerated() {
+            y -= Layout.suggestionCollapsedHeight
+            let rowFrame = NSRect(
+                x: contentX,
+                y: y,
+                width: contentWidth,
+                height: Layout.suggestionCollapsedHeight
+            )
+            let collapsedText = collapsedSingleLineText(text, width: suggestionLabelWidth, font: suggestionFont)
+            let card = makeSuggestionCard(
+                frame: rowFrame,
+                index: offset + 1,
+                text: collapsedText,
+                font: suggestionFont
+            )
+            content.addSubview(card.outer)
+            cards.append(SuggestionCard(
+                outer: card.outer,
+                content: card.content,
+                tint: card.tint,
+                number: card.number,
+                label: card.label,
+                enterHint: card.enterHint,
+                collapsedFrame: rowFrame,
+                collapsedText: collapsedText,
+                fullText: text,
+                expandedHeight: expandedHeights[offset]
             ))
-            y -= cardGap
+            if offset < visibleSuggestions.count - 1 {
+                y -= Layout.suggestionGap
+            }
         }
 
-        let footer = label(
-            frame: NSRect(x: 0, y: 0, width: panelWidth, height: footerHeight),
-            text: autoPaste ? "1 / 2 / 3 to paste   /   esc to dismiss" : "1 / 2 / 3 to copy   /   esc to dismiss",
-            font: font,
-            color: NSColor(calibratedWhite: 0.82, alpha: 0.86)
-        )
-        footer.alignment = .center
-        content.addSubview(footer)
-
         self.panel = panel
-        panel.orderFrontRegardless()
+        self.contentView = content
+        self.basePanelHeight = panelHeight
+        self.basePanelTopY = frame.maxY
+        self.summaryCard = summary.outer
+        self.summaryBaseFrame = summaryFrame
+        self.suggestionCards = cards
+        self.currentHeightDelta = 0
+        self.expandedSuggestionIndex = nil
+
+        // Remember the app the user was working in so we can restore focus
+        // when the overlay closes — the panel needs to activate to render
+        // NSGlassEffectView without an AppKit outline.
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let ownPID = NSRunningApplication.current.processIdentifier
+        if let frontmost, frontmost.processIdentifier != ownPID {
+            previousFrontmost = frontmost
+        } else {
+            previousFrontmost = nil
+        }
+        NSApp.activate()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    @discardableResult
+    func expandSuggestion(index: Int) -> Bool {
+        guard let panel, let contentView, index >= 0, index < suggestionCards.count else {
+            return false
+        }
+
+        let selected = suggestionCards[index]
+        let heightDelta = selected.expandedHeight - Layout.suggestionCollapsedHeight
+        // Going from a state with currentHeightDelta to one with heightDelta
+        // shifts panel.origin.y in screen coords by `heightDelta - current`
+        // (top edge stays pinned). Each card's local origin would visually
+        // jump by the same amount and the animator would pull it back —
+        // that's the flicker. Compensate synchronously so screen position is
+        // preserved across the resize, then let the animator transition to
+        // the final target frames.
+        let panelDrop = heightDelta - currentHeightDelta
+        let newPanelHeight = basePanelHeight + heightDelta
+        let newFrame = NSRect(
+            x: panel.frame.origin.x,
+            y: basePanelTopY - newPanelHeight,
+            width: panel.frame.width,
+            height: newPanelHeight
+        )
+
+        contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
+        expandedSuggestionIndex = index
+
+        let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let textWidth = Layout.panelWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let summaryFrame = summaryBaseFrame.offsetBy(dx: 0, dy: heightDelta)
+
+        panel.setFrame(newFrame, display: true, animate: false)
+        summaryCard?.frame = summaryFrame
+
+        if panelDrop != 0 {
+            for card in suggestionCards {
+                var current = card.outer.frame
+                current.origin.y += panelDrop
+                card.outer.frame = current
+            }
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+
+            for cardIndex in suggestionCards.indices {
+                let card = suggestionCards[cardIndex]
+                let isSelected = cardIndex == index
+                let grows = isSelected && card.expandedHeight > Layout.suggestionCollapsedHeight
+                let targetHeight = grows ? card.expandedHeight : Layout.suggestionCollapsedHeight
+                // Cards above the selection shift up in panel-local coords to
+                // compensate for the panel growing downward; the selected
+                // card keeps its collapsed origin and just gains height, so
+                // its top stays pinned in screen coords while it grows down.
+                let targetY = card.collapsedFrame.origin.y
+                    + (cardIndex < index ? heightDelta : 0)
+                let targetFrame = NSRect(
+                    x: card.collapsedFrame.origin.x,
+                    y: targetY,
+                    width: card.collapsedFrame.width,
+                    height: targetHeight
+                )
+                let labelHeight: CGFloat
+                let labelY: CGFloat
+                let numberY: CGFloat
+
+                if grows {
+                    setLabelText(
+                        card.label,
+                        text: card.fullText,
+                        font: suggestionFont,
+                        color: .labelColor,
+                        lineSpacing: Layout.suggestionLineSpacing,
+                        singleLine: false
+                    )
+                    labelHeight = measureHeight(
+                        card.fullText,
+                        width: textWidth,
+                        font: suggestionFont,
+                        lineSpacing: Layout.suggestionLineSpacing
+                    )
+                    labelY = Layout.suggestionBottomPaddingExpanded
+                    // Align the number's vertical center with the FIRST
+                    // LINE's visual center, not the cell top — multi-line
+                    // labels render the first line at the top of the cell
+                    // with the font's natural leading, so aligning the
+                    // number's top with the cell top makes the number sit
+                    // ~half-a-line lower than the first line.
+                    let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
+                    let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
+                    numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
+                } else {
+                    setLabelText(
+                        card.label,
+                        text: card.collapsedText,
+                        font: suggestionFont,
+                        color: .labelColor,
+                        lineSpacing: 0,
+                        singleLine: true
+                    )
+                    labelHeight = Layout.suggestionCollapsedTextHeight
+                    labelY = (Layout.suggestionCollapsedHeight - labelHeight) / 2
+                    numberY = (Layout.suggestionCollapsedHeight - Layout.suggestionNumberHeight) / 2
+                }
+
+                card.tint.alphaValue = isSelected ? 1 : 0
+                card.enterHint.alphaValue = isSelected ? 1 : 0
+                let pillCorner = Layout.suggestionCollapsedHeight / 2
+                setCornerRadius(card.outer, pillCorner)
+                card.tint.layer?.cornerRadius = pillCorner
+                card.outer.animator().frame = targetFrame
+                card.number.animator().frame = NSRect(
+                    x: Layout.suggestionNumberX,
+                    y: numberY,
+                    width: Layout.suggestionNumberWidth,
+                    height: Layout.suggestionNumberHeight
+                )
+                card.label.animator().frame = NSRect(
+                    x: Layout.suggestionTextX,
+                    y: labelY,
+                    width: textWidth,
+                    height: labelHeight
+                )
+                card.enterHint.animator().frame = NSRect(
+                    x: targetFrame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
+                    y: Layout.enterHintBottomInset,
+                    width: Layout.enterHintWidth,
+                    height: Layout.enterHintHeight
+                )
+            }
+        }
+
+        currentHeightDelta = heightDelta
+        return true
     }
 
     func close() {
         panel?.close()
         panel = nil
+        contentView = nil
+        summaryCard = nil
+        suggestionCards = []
+        expandedSuggestionIndex = nil
+        currentHeightDelta = 0
+
+        if let prev = previousFrontmost,
+           !prev.isTerminated,
+           prev.processIdentifier != NSRunningApplication.current.processIdentifier {
+            prev.activate()
+        }
+        previousFrontmost = nil
     }
 
-    private func card(
-        frame: NSRect,
-        text: String,
-        font: NSFont,
-        textColor: NSColor,
-        material: NSVisualEffectView.Material
-    ) -> NSView {
-        let view = NSVisualEffectView(frame: frame)
-        view.material = material
-        view.blendingMode = .behindWindow
-        view.state = .active
+    private func makeGlassPane(frame: NSRect, cornerRadius: CGFloat) -> GlassPane {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.cornerRadius = cornerRadius
+            glass.style = .regular
+            let inner = NSView(frame: NSRect(origin: .zero, size: frame.size))
+            inner.autoresizingMask = [.width, .height]
+            glass.contentView = inner
+            suppressOutline(glass)
+            return GlassPane(outer: glass, content: inner)
+        }
+
+        let visual = NSVisualEffectView(frame: frame)
+        visual.material = .hudWindow
+        visual.blendingMode = .behindWindow
+        visual.state = .active
+        visual.wantsLayer = true
+        visual.layer?.cornerRadius = cornerRadius
+        visual.layer?.masksToBounds = true
+        suppressOutline(visual)
+        return GlassPane(outer: visual, content: visual)
+    }
+
+    private func suppressOutline(_ view: NSView) {
+        view.focusRingType = .none
+        let shadow = NSShadow()
+        shadow.shadowColor = .clear
+        shadow.shadowBlurRadius = 0
+        shadow.shadowOffset = .zero
+        view.shadow = shadow
         view.wantsLayer = true
-        view.layer?.cornerRadius = 14
-        view.layer?.masksToBounds = true
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.18).cgColor
-        view.addSubview(label(
+        view.layer?.borderWidth = 0
+        view.layer?.borderColor = NSColor.clear.cgColor
+        // `hideActiveFirstResponderIndication` is a private NSView selector
+        // the Python overlay calls to suppress AppKit's focus halo around
+        // glass views. It isn't exposed in Swift's NSView API, so route
+        // through the Obj-C runtime. Safe no-op if the selector is absent.
+        let selector = Selector(("hideActiveFirstResponderIndication"))
+        if view.responds(to: selector) {
+            view.perform(selector)
+        }
+    }
+
+    private func setCornerRadius(_ view: NSView, _ radius: CGFloat) {
+        if #available(macOS 26.0, *), let glass = view as? NSGlassEffectView {
+            glass.cornerRadius = radius
+            return
+        }
+        view.layer?.cornerRadius = radius
+    }
+
+    private func makeSuggestionCard(
+        frame: NSRect,
+        index: Int,
+        text: String,
+        font: NSFont
+    ) -> (
+        outer: NSView,
+        content: NSView,
+        tint: NSView,
+        number: NSTextField,
+        label: NSTextField,
+        enterHint: NSTextField
+    ) {
+        let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
+
+        let tint = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: frame.height))
+        tint.wantsLayer = true
+        tint.layer?.cornerRadius = frame.height / 2
+        tint.layer?.masksToBounds = true
+        tint.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.22).cgColor
+        tint.autoresizingMask = [.width, .height]
+        tint.alphaValue = 0
+        pane.content.addSubview(tint)
+
+        let number = label(
             frame: NSRect(
-                x: 20,
-                y: 16,
-                width: frame.width - 40,
-                height: frame.height - 32
+                x: Layout.suggestionNumberX,
+                y: (frame.height - Layout.suggestionNumberHeight) / 2,
+                width: Layout.suggestionNumberWidth,
+                height: Layout.suggestionNumberHeight
+            ),
+            text: "\(index)",
+            font: NSFont.systemFont(ofSize: Layout.suggestionFontSize, weight: .semibold),
+            color: .secondaryLabelColor,
+            singleLine: true
+        )
+        number.alignment = .center
+        pane.content.addSubview(number)
+
+        let textWidth = frame.width - Layout.suggestionTextX - Layout.cardPaddingX
+        let suggestionLabel = label(
+            frame: NSRect(
+                x: Layout.suggestionTextX,
+                y: (frame.height - Layout.suggestionCollapsedTextHeight) / 2,
+                width: textWidth,
+                height: Layout.suggestionCollapsedTextHeight
             ),
             text: text,
             font: font,
-            color: textColor
-        ))
-        return view
+            color: .labelColor,
+            singleLine: true
+        )
+        suggestionLabel.lineBreakMode = .byClipping
+        pane.content.addSubview(suggestionLabel)
+
+        let enterHint = label(
+            frame: NSRect(
+                x: frame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
+                y: Layout.enterHintBottomInset,
+                width: Layout.enterHintWidth,
+                height: Layout.enterHintHeight
+            ),
+            text: "\u{23CE} Enter to insert",
+            font: NSFont.systemFont(ofSize: Layout.hintFontSize),
+            color: .secondaryLabelColor,
+            singleLine: true
+        )
+        enterHint.alignment = .right
+        enterHint.alphaValue = 0
+        enterHint.autoresizingMask = [.minXMargin]
+        pane.content.addSubview(enterHint)
+
+        return (pane.outer, pane.content, tint, number, suggestionLabel, enterHint)
     }
 
-    private func label(frame: NSRect, text: String, font: NSFont, color: NSColor) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
+    private func label(
+        frame: NSRect,
+        text: String,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat = 0,
+        singleLine: Bool = false
+    ) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
         label.frame = frame
-        label.font = font
-        label.textColor = color
-        label.lineBreakMode = .byWordWrapping
-        label.usesSingleLineMode = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        setLabelText(
+            label,
+            text: text,
+            font: font,
+            color: color,
+            lineSpacing: lineSpacing,
+            singleLine: singleLine
+        )
         return label
     }
 
-    private func measureHeight(_ text: String, width: CGFloat, font: NSFont) -> CGFloat {
-        let attr = NSAttributedString(string: text, attributes: [.font: font])
-        let rect = attr.boundingRect(
-            with: NSSize(width: width, height: 1000),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
+    private func setLabelText(
+        _ label: NSTextField,
+        text: String,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat,
+        singleLine: Bool
+    ) {
+        label.font = font
+        label.textColor = color
+        label.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        label.usesSingleLineMode = singleLine
+        guard lineSpacing > 0 else {
+            label.stringValue = text
+            return
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        paragraph.lineSpacing = lineSpacing
+        label.attributedStringValue = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraph,
+            ]
         )
-        return max(24, ceil(rect.height) + 8)
+    }
+
+    private func measureHeight(
+        _ text: String,
+        width: CGFloat,
+        font: NSFont,
+        lineSpacing: CGFloat = 0
+    ) -> CGFloat {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = lineSpacing
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .paragraphStyle: paragraph,
+            ]
+        )
+        let cell = NSTextFieldCell()
+        cell.isBezeled = false
+        cell.isEditable = false
+        cell.isSelectable = false
+        cell.drawsBackground = false
+        cell.wraps = true
+        cell.usesSingleLineMode = false
+        cell.lineBreakMode = .byWordWrapping
+        cell.attributedStringValue = attributed
+        let size = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 1_000_000))
+        return ceil(size.height)
+    }
+
+    private func collapsedSingleLineText(_ text: String, width: CGFloat, font: NSFont) -> String {
+        let fullWidth = measureWidth(text, font: font)
+        guard fullWidth > width else { return text }
+        let suffix = "..."
+        let suffixWidth = measureWidth(suffix, font: font)
+        let available = max(0, width - suffixWidth)
+        var low = 0
+        var high = text.count
+        var best = ""
+        while low <= high {
+            let mid = (low + high) / 2
+            let candidate = String(text.prefix(mid)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if measureWidth(candidate, font: font) <= available {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return best.isEmpty ? suffix : best + suffix
+    }
+
+    private func measureWidth(_ text: String, font: NSFont) -> CGFloat {
+        let attributed = NSAttributedString(string: text, attributes: [.font: font])
+        return ceil(attributed.size().width)
     }
 }

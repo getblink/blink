@@ -12,8 +12,11 @@ TLDR is a menubar app:
 - The bundled Python runtime calls the TLDR server when `BLINK_PROXY_URL` +
   `BLINK_PROXY_TOKEN` are configured, and otherwise falls back to direct Gemini.
 - Swift shows a non-activating overlay with a TL;DR and three suggestions.
-- `1`, `2`, or `3` chooses a suggestion while the original app keeps focus.
-- Auto-paste is on by default; the menubar toggle switches to copy-only mode.
+- `1`, `2`, or `3` expands a suggestion while the original app keeps focus.
+- Pressing the same number again copies that suggestion and closes the overlay.
+- `Return` inserts the expanded suggestion through the clipboard + Cmd+V path.
+- `Return` with no expanded suggestion falls through to the focused app.
+- `Esc` dismisses the overlay.
 
 Runtime state:
 

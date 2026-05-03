@@ -26,6 +26,25 @@ See also:
 
 ---
 
+## 2026-04-30 — TLDR.app native expand-first overlay
+
+- **Hypothesis:** The Swift-shipped TLDR surface will feel safer and clearer if it matches the scratchpad prototype: number keys expand first, repeated number copies, Return inserts only after an explicit expansion, and Esc dismisses.
+- **Setup:** Ported the scratchpad overlay interaction into `tldr_app/` as native AppKit UI: separate TL;DR card, pill suggestion cards, highlighted expansion, per-card Return hint, Return hotkey routing, and event/run logging for expansion, copy, insert, dismiss, and paste failures. Kept Python as the packaged `/v1/tldr` runner and left `auto_paste` decode-only for old runtime configs.
+- **Input type(s):** Frontmost-window screenshot TLDR requests.
+- **Target field type(s):** Reply contexts in the focused app, with insertion through the existing clipboard + Cmd+V path.
+- **Outcome:** Implemented in the Swift app; validation results live in the implementing branch notes.
+- **Evidence / examples:** `tldr_app/TLDR/SuggestionsOverlay.swift`, `tldr_app/TLDR/TLDRCoordinator.swift`, `tldr_app/TLDR/HotkeyManager.swift`, `tldr_app/TLDR/SuggestionChoiceState.swift`, `tldr_app/TLDRTests/SuggestionChoiceStateTests.swift`.
+- **Decision:** Remove the visible auto-paste mode from the shipped surface. Keep explicit copy-vs-insert gestures instead.
+- **Next step:** Dogfood in a real app after a TCC-reset install and inspect the resulting event sequence for one copied run and one inserted run.
+
+### Follow-up: Liquid Glass parity with the Python overlay
+
+- **Issue:** The first port used `NSVisualEffectView` with an explicit 1pt separator border and `.popover` material on suggestion pills, which read as flat white cards versus the Python overlay's translucent glass. Hint copy also drifted (`-` separators instead of `·`, plain `Return to insert` instead of `⏎ Enter to insert`).
+- **Fix:** Reworked card construction around a shared `makeGlassPane` helper that uses `NSGlassEffectView` (`.regular` style, `cornerRadius` set on the glass view) when `#available(macOS 26.0, *)` and falls back to a borderless `NSVisualEffectView` (`.hudWindow`, behind-window blending) for older OSes. Numbers, labels, tints, and the `⏎ Enter to insert` footer now live on the glass `contentView`. Removed the manual layer border and added a `suppressOutline` helper that mirrors the Python `_suppress_glass_outline` (clear shadow, no focus ring, no border). Hint string aligned to the Python wording.
+- **Evidence / examples:** `tldr_app/TLDR/SuggestionsOverlay.swift` (new `GlassPane`, `makeGlassPane`, `suppressOutline`, `setCornerRadius`), and the matching helpers in `scratchpad/tldr_reply/overlay.py`.
+- **Validation:** `xcodebuild test -project TLDR.xcodeproj -scheme TLDR -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO` and `TLDR_SKIP_TCC_RESET=1 bash tldr_app/scripts/build.sh` both pass; canonical app reinstalled via `bash tldr_app/scripts/install_local_app.sh`.
+- **Caveat:** With `LSUIElement: true` (accessory) and `.nonactivatingPanel` retained, AppKit may still draw a thin outline around `NSGlassEffectView` per the comment in `scratchpad/tldr_reply/overlay.py`. The trade-off (no dock icon, no focus theft) is intentional for now; revisit if the residual outline reads as "flat" in dogfood.
+
 ## 2026-04-29 — TLDR v1 request envelope, event diagnostics, and pending-run recovery
 
 - **Hypothesis:** TLDR can move from screenshot-only RPC toward a sturdier client/server shape without losing local debuggability if Swift emits a richer request envelope, preserves pending-run state locally, and the server accepts structured request/event telemetry while keeping `/tldr` compatibility.

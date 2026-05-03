@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 
 @MainActor
 final class MenubarController: NSObject {
@@ -8,8 +7,6 @@ final class MenubarController: NSObject {
     private let onShowPermissions: () -> Void
     private var statusItem: NSStatusItem!
     private var statusLabel: NSMenuItem!
-    private var autoPasteItem: NSMenuItem!
-    private var cancellables: Set<AnyCancellable> = []
 
     init(
         coordinator: TLDRCoordinator,
@@ -33,12 +30,6 @@ final class MenubarController: NSObject {
                 self?.updateIndicator(for: text)
             }
         }
-
-        runtimeStore.$autoPaste
-            .sink { [weak self] enabled in
-                self?.autoPasteItem?.state = enabled ? .on : .off
-            }
-            .store(in: &cancellables)
     }
 
     private func buildMenu() -> NSMenu {
@@ -51,12 +42,6 @@ final class MenubarController: NSObject {
 
         menu.addItem(withTitle: "Summarize frontmost window (Ctrl+Shift+T)", action: #selector(triggerSummarize), keyEquivalent: "")
             .target = self
-
-        autoPasteItem = NSMenuItem(title: "Auto-paste suggestions", action: #selector(toggleAutoPaste), keyEquivalent: "")
-        autoPasteItem.target = self
-        autoPasteItem.state = runtimeStore.autoPaste ? .on : .off
-        menu.addItem(autoPasteItem)
-        menu.addItem(.separator())
 
         menu.addItem(withTitle: "Open runs folder", action: #selector(openRunsFolder), keyEquivalent: "")
             .target = self
@@ -72,10 +57,6 @@ final class MenubarController: NSObject {
 
     @objc private func triggerSummarize() {
         coordinator.summarizeFrontmostWindow()
-    }
-
-    @objc private func toggleAutoPaste() {
-        runtimeStore.autoPaste.toggle()
     }
 
     @objc private func openRunsFolder() {

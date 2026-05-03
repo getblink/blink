@@ -58,7 +58,7 @@ This project is in **experiments-over-builds** mode. Manual validation comes bef
   - `.venv/` — Python 3.11 virtualenv (gitignored)
 - `server/` — Railway-ready TLDR backend. `server/main.py` exposes `/healthz`, `/v1/tldr`, `/v1/tldr/events`, and the legacy `/tldr` wrapper; `server/gemini.py` is a deliberate fork of `scratchpad/tldr_reply/gemini.py`, and `server/README.md` documents deploy + local dev.
 - `app/` — Swift tester-deployment channel (`Blink.app`) paired with a forked production Python runtime in `app/python/` and a canonical local installer at `app/scripts/install_local_app.sh`; see `app/README.md` and the bundle contract in `docs/ARTIFACT_SCHEMA.md`. No runtime coupling with `scratchpad/` — `app/python/gemini_runner.py` is a deliberate fork at a pinned SHA.
-- `tldr_app/` — shipped TLDR.app surface paired with a focused Python runner in `tldr_app/python/`. Swift owns the menubar, `ctrl+shift+t` hotkey, ScreenCaptureKit capture, request envelope + event diagnostics, pending-run tracking, non-activating overlay, and auto-paste/copy behavior; Python owns request execution plus run artifacts under `~/Library/Application Support/TLDR/runs/`.
+- `tldr_app/` — shipped TLDR.app surface paired with a focused Python runner in `tldr_app/python/`. Swift owns the menubar, `ctrl+shift+t` hotkey, ScreenCaptureKit capture, request envelope + event diagnostics, pending-run tracking, non-activating overlay, expand-first numbered choices, copy, and Return-to-insert behavior; Python owns request execution plus run artifacts under `~/Library/Application Support/TLDR/runs/`.
 - `site/` — Standalone marketing landing page. Astro, static output, deploys to Cloudflare Pages with no adapter (see `site/README.md`). Independent from the research and tester channels.
 
 ## Development setup
@@ -110,7 +110,8 @@ To run the isolated TL;DR + reply-suggestions experiment:
 
 While it is active, `ctrl+shift+t` captures a selected window, asks Gemini for a
 one-line summary plus three candidate replies, and shows a small overlay where
-`1` / `2` / `3` copy a suggestion to the clipboard.
+`1` / `2` / `3` expand a suggestion first; pressing the same number again copies
+it to the clipboard.
 
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
 
