@@ -10,6 +10,7 @@ final class TLDRCoordinator {
     private var currentSuggestions: [String] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    private var choiceState = SuggestionChoiceState(suggestionCount: 0)
     private var running = false
 
     var onStatusChange: ((String) -> Void)?
@@ -216,22 +217,22 @@ final class TLDRCoordinator {
                     ]
                 )
 
-                status("ready - press 1/2/3")
+                status("ready - press 1/2/3 to expand")
                 DispatchQueue.main.async {
-                    self.currentSuggestions = result.suggestions
+                    self.currentSuggestions = Array(result.suggestions.prefix(3))
                     self.currentBundleDir = bundleDir
                     self.currentRequestID = requestID
+                    self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
                     self.overlay.show(
                         tldr: result.tldr,
-                        suggestions: result.suggestions,
-                        autoPaste: self.runtimeStore.autoPaste
+                        suggestions: self.currentSuggestions
                     )
                     self.emitEvent(
                         requestID: requestID,
                         type: "overlay_shown",
                         allowLogging: runtime.allowEventLogging,
                         clientMetadata: clientMetadata,
-                        details: ["auto_paste": self.runtimeStore.autoPaste]
+                        details: ["suggestion_count": self.currentSuggestions.count]
                     )
                 }
             } catch {
@@ -262,7 +263,49 @@ final class TLDRCoordinator {
 
     @MainActor
     func chooseSuggestion(index: Int) {
+        switch choiceState.pressNumber(index: index) {
+        case .ignored:
+            return
+        case .expand(let index):
+            expandSuggestion(index: index)
+        case .copy(let index):
+            copySuggestion(index: index)
+        }
+    }
+
+    @MainActor
+    func insertExpandedSuggestion() -> Bool {
+        switch choiceState.pressReturn() {
+        case .propagate:
+            return false
+        case .insert(let index):
+            insertSuggestion(index: index)
+            return true
+        }
+    }
+
+    @MainActor
+    private func expandSuggestion(index: Int) {
         guard index >= 0 && index < currentSuggestions.count else { return }
+        guard overlay.expandSuggestion(index: index) else { return }
+        status("suggestion \(index + 1) expanded")
+        if let requestID = currentRequestID {
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = "suggestion_expanded"
+                payload["expanded_index"] = index + 1
+            }
+            emitEvent(
+                requestID: requestID,
+                type: "suggestion_expanded",
+                allowLogging: runtimeStore.allowEventLogging,
+                clientMetadata: Self.clientMetadata(),
+                details: ["chosen_index": index + 1]
+            )
+        }
+    }
+
+    @MainActor
+    private func copySuggestion(index: Int) {
         let text = currentSuggestions[index]
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
@@ -271,97 +314,118 @@ final class TLDRCoordinator {
         if let requestID {
             emitEvent(
                 requestID: requestID,
-                type: "suggestion_chosen",
+                type: "suggestion_copied",
                 allowLogging: runtimeStore.allowEventLogging,
                 clientMetadata: clientMetadata,
-                details: [
-                    "chosen_index": index + 1,
-                    "auto_paste": runtimeStore.autoPaste,
-                ]
+                details: ["chosen_index": index + 1]
             )
         }
 
-        if runtimeStore.autoPaste {
-            status("pasting suggestion \(index + 1)...")
-            if let requestID {
-                emitEvent(
-                    requestID: requestID,
-                    type: "paste_started",
-                    allowLogging: runtimeStore.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: ["chosen_index": index + 1]
-                )
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        status("copied suggestion \(index + 1)")
+        if let requestID {
+            emitEvent(
+                requestID: requestID,
+                type: "run_completed",
+                allowLogging: runtimeStore.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: ["outcome": "copied", "chosen_index": index + 1]
+            )
+            PendingRunStore.finish(requestID: requestID)
+        }
+
+        recordChoice(index: index, text: text, action: "copied")
+        resetCurrentRun()
+    }
+
+    @MainActor
+    private func insertSuggestion(index: Int) {
+        guard index >= 0 && index < currentSuggestions.count else { return }
+        let text = currentSuggestions[index]
+        let requestID = currentRequestID
+        let clientMetadata = Self.clientMetadata()
+        overlay.close()
+        recordChoice(index: index, text: text, action: "inserted")
+        status("inserting suggestion \(index + 1)...")
+
+        if let requestID {
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = "paste_started"
+                payload["chosen_index"] = index + 1
             }
-            Inserter.insert(text: text) { [weak self] result in
-                guard let self else { return }
-                switch result {
-                case .success:
-                    self.status("pasted suggestion \(index + 1)")
-                    if let requestID {
-                        self.emitEvent(
-                            requestID: requestID,
-                            type: "run_completed",
-                            allowLogging: self.runtimeStore.allowEventLogging,
-                            clientMetadata: clientMetadata,
-                            details: ["outcome": "pasted", "chosen_index": index + 1]
-                        )
-                        PendingRunStore.finish(requestID: requestID)
-                    }
-                case .failure(let error):
-                    if let requestID {
-                        self.emitEvent(
-                            requestID: requestID,
-                            type: "paste_failed",
-                            allowLogging: self.runtimeStore.allowEventLogging,
-                            clientMetadata: clientMetadata,
-                            details: [
-                                "chosen_index": index + 1,
-                                "error": self.shortErrorSummary(error),
-                            ]
-                        )
-                        self.emitEvent(
-                            requestID: requestID,
-                            type: "run_completed",
-                            allowLogging: self.runtimeStore.allowEventLogging,
-                            clientMetadata: clientMetadata,
-                            details: ["outcome": "paste_failed"]
-                        )
-                        PendingRunStore.finish(requestID: requestID)
-                    }
-                    self.reportFailure(
-                        title: "Paste Failed",
-                        statusText: "paste failed: \(self.shortErrorSummary(error))",
-                        detail: self.detailedErrorMessage(error)
+            emitEvent(
+                requestID: requestID,
+                type: "paste_started",
+                allowLogging: runtimeStore.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: ["chosen_index": index + 1]
+            )
+        }
+
+        // Give NSRunningApplication.activate time to land on the previous
+        // frontmost app before we synthesize Cmd+V — otherwise the paste
+        // sometimes hits TLDR's still-active panel context instead.
+        Inserter.insert(text: text, activationDelay: 0.15) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.status("inserted suggestion \(index + 1)")
+                if let requestID {
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "suggestion_inserted",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["chosen_index": index + 1]
                     )
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "run_completed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["outcome": "inserted", "chosen_index": index + 1]
+                    )
+                    PendingRunStore.finish(requestID: requestID)
                 }
-            }
-        } else {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            status("copied suggestion \(index + 1)")
-            if let requestID {
-                emitEvent(
-                    requestID: requestID,
-                    type: "copy_completed",
-                    allowLogging: runtimeStore.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: ["chosen_index": index + 1]
+            case .failure(let error):
+                if let requestID {
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "paste_failed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: [
+                            "chosen_index": index + 1,
+                            "error": self.shortErrorSummary(error),
+                        ]
+                    )
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "run_completed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["outcome": "paste_failed", "chosen_index": index + 1]
+                    )
+                    PendingRunStore.finish(requestID: requestID)
+                }
+                self.reportFailure(
+                    title: "Paste Failed",
+                    statusText: "paste failed: \(self.shortErrorSummary(error))",
+                    detail: self.detailedErrorMessage(error)
                 )
-                emitEvent(
-                    requestID: requestID,
-                    type: "run_completed",
-                    allowLogging: runtimeStore.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: ["outcome": "copied", "chosen_index": index + 1]
-                )
-                PendingRunStore.finish(requestID: requestID)
             }
         }
 
-        recordChoice(index: index, text: text)
+        resetCurrentRun()
+    }
+
+    @MainActor
+    private func resetCurrentRun() {
         currentSuggestions = []
         currentBundleDir = nil
         currentRequestID = nil
+        choiceState = SuggestionChoiceState(suggestionCount: 0)
     }
 
     @MainActor
@@ -372,18 +436,24 @@ final class TLDRCoordinator {
         status("dismissed")
         recordDismiss()
         if let requestID {
+            let clientMetadata = Self.clientMetadata()
+            emitEvent(
+                requestID: requestID,
+                type: "overlay_dismissed",
+                allowLogging: runtimeStore.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: [:]
+            )
             emitEvent(
                 requestID: requestID,
                 type: "run_completed",
                 allowLogging: runtimeStore.allowEventLogging,
-                clientMetadata: Self.clientMetadata(),
+                clientMetadata: clientMetadata,
                 details: ["outcome": "dismissed"]
             )
             PendingRunStore.finish(requestID: requestID)
         }
-        currentSuggestions = []
-        currentBundleDir = nil
-        currentRequestID = nil
+        resetCurrentRun()
     }
 
     private func makeStagingDir() throws -> URL {
@@ -484,14 +554,14 @@ final class TLDRCoordinator {
     }
 
     @MainActor
-    private func recordChoice(index: Int, text: String) {
+    private func recordChoice(index: Int, text: String, action: String) {
         guard let bundleDir = currentBundleDir else { return }
         let path = bundleDir.appendingPathComponent("run.json")
         var payload = JSONFiles.readObject(at: path) ?? [:]
         payload["chosen_index"] = index + 1
         payload["chosen_text"] = text
         payload["chosen_at"] = JSONFiles.isoString()
-        payload["auto_paste"] = runtimeStore.autoPaste
+        payload["chosen_action"] = action
         try? JSONFiles.writeObject(payload, to: path)
     }
 

@@ -6,12 +6,14 @@ final class HotkeyManager {
     private let isOverlayActive: () -> Bool
     private let onSummarize: () -> Void
     private let onChoice: (Int) -> Void
+    private let onInsert: () -> Bool
     private let onDismiss: () -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     private let summaryKeyCode: CGKeyCode = 17
     private let choiceKeyCodes: [CGKeyCode: Int] = [18: 0, 19: 1, 20: 2]
+    private let returnKeyCodes: Set<CGKeyCode> = [36, 76]
     private let escapeKeyCode: CGKeyCode = 53
     private let summaryFlags: CGEventFlags = [.maskControl, .maskShift]
     private let relevantFlags: CGEventFlags = [
@@ -23,11 +25,13 @@ final class HotkeyManager {
         isOverlayActive: @escaping () -> Bool,
         onSummarize: @escaping () -> Void,
         onChoice: @escaping (Int) -> Void,
+        onInsert: @escaping () -> Bool,
         onDismiss: @escaping () -> Void
     ) {
         self.isOverlayActive = isOverlayActive
         self.onSummarize = onSummarize
         self.onChoice = onChoice
+        self.onInsert = onInsert
         self.onDismiss = onDismiss
     }
 
@@ -89,6 +93,9 @@ final class HotkeyManager {
             if keyCode == manager.escapeKeyCode {
                 DispatchQueue.main.async { manager.onDismiss() }
                 return nil
+            }
+            if manager.returnKeyCodes.contains(keyCode) {
+                return manager.onInsert() ? nil : Unmanaged.passUnretained(event)
             }
         }
 

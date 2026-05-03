@@ -115,7 +115,7 @@ enum PythonRunner {
     }
 
     private static func buildEnvironment(config: Config) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
+        var env = RuntimeEnvironment.mergedEnvironment()
         if let key = config.geminiApiKey {
             env["GEMINI_API_KEY"] = key
         }

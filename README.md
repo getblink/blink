@@ -49,10 +49,13 @@ harness.
 
 The Swift app owns the menubar item, permissions, `ctrl+shift+t` hotkey,
 ScreenCaptureKit frontmost-window capture, non-activating overlay, numbered
-choice handling, and auto-paste/copy behavior. It now also emits a
+choice handling, copy, and Return-to-insert behavior. It now also emits a
 server-oriented request envelope, image diagnostics, focused-context metadata,
-pending-run records, and event telemetry. The bundled Python runner owns the
-request execution path and per-run artifact bundle. Local identity is:
+pending-run records, and event telemetry. Number keys expand first; pressing
+the same number again copies, Return inserts the expanded suggestion, Return
+with no expanded suggestion falls through to the focused app, and Esc dismisses.
+The bundled Python runner owns the request execution path and per-run artifact
+bundle. Local identity is:
 
 - App: `~/Applications/TLDR.app`
 - Bundle ID: `com.henryz2004.tldr`

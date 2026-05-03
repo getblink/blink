@@ -22,5 +22,6 @@ app/scripts/config.env
 app/build/
 app/python-dist/
 tldr_app/scripts/config.env
+tldr_app/Resources/proxy.env
 tldr_app/build/
 tldr_app/python-dist/

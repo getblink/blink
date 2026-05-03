@@ -48,6 +48,20 @@ mkdir -p "$RESOURCES/python"
 echo "[tldr] copying app resources -> $RESOURCES"
 rsync -a "$APP_DIR/Resources/" "$RESOURCES/"
 
+rm -f "$RESOURCES/proxy.env"
+if [[ -n "${TLDR_PROXY_URL:-}" || -n "${TLDR_PROXY_TOKEN:-}" ]]; then
+    if [[ -z "${TLDR_PROXY_URL:-}" || -z "${TLDR_PROXY_TOKEN:-}" ]]; then
+        echo "[tldr] error: set both TLDR_PROXY_URL and TLDR_PROXY_TOKEN, or neither" >&2
+        exit 1
+    fi
+    {
+        printf 'BLINK_PROXY_URL=%s\n' "$TLDR_PROXY_URL"
+        printf 'BLINK_PROXY_TOKEN=%s\n' "$TLDR_PROXY_TOKEN"
+    } > "$RESOURCES/proxy.env"
+    chmod 600 "$RESOURCES/proxy.env"
+    echo "[tldr] embedded proxy config -> Contents/Resources/proxy.env"
+fi
+
 if [[ ! -d "$APP_DIR/python-dist" ]]; then
     echo "[tldr] error: tldr_app/python-dist not found - run scripts/fetch_python.sh first" >&2
     exit 1

@@ -59,6 +59,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             onSummarize: { [weak coordinator] in coordinator?.summarizeFrontmostWindow() },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
+            onInsert: { [weak coordinator] in
+                if Thread.isMainThread {
+                    return coordinator?.insertExpandedSuggestion() ?? false
+                }
+                var consumed = false
+                DispatchQueue.main.sync {
+                    consumed = coordinator?.insertExpandedSuggestion() ?? false
+                }
+                return consumed
+            },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

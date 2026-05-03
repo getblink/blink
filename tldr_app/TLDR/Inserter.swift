@@ -24,11 +24,16 @@ enum Inserter {
 
     /// - Parameters:
     ///   - text: the text to paste.
+    ///   - activationDelay: how long to wait before posting Cmd+V. The
+    ///     overlay restores the previous frontmost app on close, but
+    ///     `NSRunningApplication.activate` lands asynchronously — give it a
+    ///     beat before the keystroke or the paste reaches TLDR instead.
     ///   - restoreDelay: how long to wait before restoring the original
     ///     clipboard. 400ms is typically enough for the target app to consume.
     ///   - completion: called on the main queue with success/failure.
     static func insert(
         text: String,
+        activationDelay: TimeInterval = 0,
         restoreDelay: TimeInterval = 0.4,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
@@ -38,7 +43,7 @@ enum Inserter {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
             do {
                 try synthesizeCmdV()
             } catch {
