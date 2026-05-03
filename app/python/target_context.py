@@ -54,6 +54,25 @@ def compact_value(value: Any, limit: int = 220) -> str | None:
     return text[: limit - 1].rstrip() + "…"
 
 
+def document_canvas_image_context_lines(annotation_metadata: dict[str, Any]) -> list[str]:
+    status = str(annotation_metadata.get("status") or "")
+    source = str(annotation_metadata.get("source") or "")
+    annotated_target = annotation_metadata.get("annotated_target")
+    if source == "swift_focus_line_canvas_region" or annotated_target:
+        return [
+            "TARGET_IMAGE: attached screenshot of the target window with visual annotations",
+            "TARGET_IMAGE_ANNOTATION: red rectangle marks the focused caret/selection line",
+            "TARGET_IMAGE_ANNOTATION: blue rectangle marks the nearby document/canvas region for coarse insertion context",
+        ]
+    if status == "degenerate_document_canvas_anchor":
+        return [
+            "TARGET_IMAGE: attached raw screenshot of the target window; no red/blue annotation was drawn because the focused bounds are degenerate",
+        ]
+    return [
+        "TARGET_IMAGE: attached screenshot of the target window",
+    ]
+
+
 def is_google_docs_document_surface(target_metadata: dict[str, Any]) -> bool:
     label = normalize_text(str(target_metadata.get("focused_label") or ""))
     description = normalize_text(str(target_metadata.get("focused_description") or ""))
@@ -62,6 +81,29 @@ def is_google_docs_document_surface(target_metadata: dict[str, Any]) -> bool:
         "google" in app_bundle.lower()
         and (label == "document content" or description == "document content")
     )
+
+
+def target_mode_from_metadata(
+    target_metadata: dict[str, Any],
+    geometry: dict[str, Any] | None,
+) -> str:
+    label = normalize_text(str(target_metadata.get("focused_label") or ""))
+    description = normalize_text(str(target_metadata.get("focused_description") or ""))
+    if label != "document content" and description != "document content":
+        return "strict_field"
+    focused_bounds = None
+    if isinstance(geometry, dict):
+        focused_bounds = geometry.get("focused_bounds_points")
+    if not isinstance(focused_bounds, dict):
+        focused_bounds = target_metadata.get("focused_bounds")
+    if not isinstance(focused_bounds, dict):
+        return "strict_field"
+    try:
+        width = float(focused_bounds.get("width") or 0)
+        height = float(focused_bounds.get("height") or 0)
+    except (TypeError, ValueError):
+        return "strict_field"
+    return "document_canvas" if width <= 2 or height <= 2 else "strict_field"
 
 
 def is_chromium_browser(target_metadata: dict[str, Any]) -> bool:
@@ -587,6 +629,7 @@ def build_target_ocr_packet(
     ocr_payload = recognize_text(target_path, uses_language_correction=True)
     ocr_ms = duration_ms(ocr_started_perf)
     image_width, image_height = image_size_pixels(target_path)
+    target_mode = str(target_metadata.get("target_mode") or target_mode_from_metadata(target_metadata, geometry))
     focus_rect, focus_reasons, focus_debug = focused_rect_local_pixels(
         target_metadata,
         geometry,
@@ -650,20 +693,32 @@ def build_target_ocr_packet(
         completeness_reasons.append("no_local_target_text")
 
     completeness = "needs_target_image" if completeness_reasons else "sufficient"
+    annotation_metadata = {}
+    if isinstance(geometry, dict) and isinstance(geometry.get("annotation_metadata"), dict):
+        annotation_metadata = plain_data(geometry.get("annotation_metadata") or {})
+
     lines = []
     if label_hint:
         lines.append(f"FOCUSED_FIELD_LABEL: {label_hint}")
+    if target_mode == "document_canvas":
+        lines.append("TARGET_CONTEXT_KIND: document_canvas")
+        lines.extend(document_canvas_image_context_lines(annotation_metadata))
 
     packet_text = "\n".join(lines).strip()
     status = "ok" if ocr_payload.get("status") == "ok" else "error"
+    target_copy_probe = target_metadata.get("target_copy_probe")
+    if not isinstance(target_copy_probe, dict):
+        target_copy_probe = {}
     return {
         "status": status,
         "packet_text": packet_text,
         "packet_chars": len(packet_text),
         "completeness": completeness,
         "fallback_reasons": completeness_reasons,
+        "target_mode": target_mode,
         "build_log": {
             "status": status,
+            "target_mode": target_mode,
             "ocr_ms": ocr_ms,
             "request_build_ms": duration_ms(started_perf),
             "image_size_pixels": {"width": image_width, "height": image_height},
@@ -679,6 +734,8 @@ def build_target_ocr_packet(
             "focus_hint_reasons": label_hint_reasons,
             "completeness": completeness,
             "fallback_reasons": completeness_reasons,
+            "target_copy_probe": plain_data(target_copy_probe),
+            "annotation_metadata": annotation_metadata,
             "errors": [ocr_payload.get("error")] if ocr_payload.get("error") else [],
         },
         "focused_label_hint": label_hint,

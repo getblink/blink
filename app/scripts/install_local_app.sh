@@ -11,9 +11,11 @@
 # Default behavior:
 #   1. Fetch app/python-dist if missing.
 #   2. Build a self-contained Release app.
-#   3. Install it to ~/Applications/Blink.app.
-#   4. Move duplicate Blink.app bundles out of Spotlight/TCC's way.
-#   5. Relaunch the canonical app.
+#   3. With --reset-tcc: remove the old canonical app and reset TCC before the
+#      fresh install, so Screen Recording cannot stay attached to the old app.
+#   4. Install it to ~/Applications/Blink.app.
+#   5. Move duplicate Blink.app bundles out of Spotlight/TCC's way.
+#   6. Relaunch the canonical app.
 #
 # Options:
 #   --reset-tcc   Reset Blink's TCC permissions before relaunching. Use after
@@ -92,6 +94,12 @@ if [[ ! -d "$RELEASE_APP" ]]; then
     exit 1
 fi
 
+if [[ "$RESET_TCC" == "1" ]]; then
+    echo "[blink] resetting TCC before the fresh canonical install"
+    BLINK_INSTALLED_APP="$CANONICAL_APP" \
+    bash "$SCRIPT_DIR/reset_tcc.sh"
+fi
+
 echo "[blink] installing canonical app -> $CANONICAL_APP"
 mkdir -p "$(dirname "$CANONICAL_APP")"
 rm -rf "$CANONICAL_APP"
@@ -121,13 +129,6 @@ if [[ -d "$APP_DIR/app" ]]; then
     while IFS= read -r doubled_app; do
         disable_app_bundle "$doubled_app" "Blink-DoubledPath"
     done < <(find "$APP_DIR/app" -name 'Blink.app' -type d 2>/dev/null | sort)
-fi
-
-if [[ "$RESET_TCC" == "1" ]]; then
-    echo "[blink] resetting TCC for the canonical install"
-    BLINK_KEEP_INSTALLED=1 \
-    BLINK_INSTALLED_APP="$CANONICAL_APP" \
-    bash "$SCRIPT_DIR/reset_tcc.sh"
 fi
 
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \

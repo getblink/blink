@@ -18,15 +18,17 @@ enum PythonRunner {
         let stdin: FileHandle
         let stdout: FileHandle
         let stderr: FileHandle
+        let readyElapsedMS: Double?
         let stdoutBuffer = StdoutBuffer()
         private let lock = NSLock()
         private var consumed = false
 
-        init(process: Process, stdin: FileHandle, stdout: FileHandle, stderr: FileHandle) {
+        init(process: Process, stdin: FileHandle, stdout: FileHandle, stderr: FileHandle, readyElapsedMS: Double? = nil) {
             self.process = process
             self.stdin = stdin
             self.stdout = stdout
             self.stderr = stderr
+            self.readyElapsedMS = readyElapsedMS
         }
 
         /// True if no caller has tried to use this worker yet. Used by the
@@ -82,6 +84,7 @@ enum PythonRunner {
         case noPythonBinary
         case noRunOnceScript
         case noPrepareSourceScript
+        case noBatchModelSelectScript
         case invalidJSONOutput
         case nonZeroExit(status: Int32, stderr: String)
 
@@ -93,12 +96,21 @@ enum PythonRunner {
                 return "run_once.py not found in app bundle"
             case .noPrepareSourceScript:
                 return "prepare_source.py not found in app bundle"
+            case .noBatchModelSelectScript:
+                return "batch_model_select.py not found in app bundle"
             case .invalidJSONOutput:
                 return "Python returned invalid JSON"
             case .nonZeroExit(let status, let stderr):
                 return "python exited \(status): \(stderr)"
             }
         }
+    }
+
+    struct BatchModelSelectResult {
+        var output: String
+        var viaWarmWorker: Bool
+        var workerReadyMS: Double?
+        var fallbackReason: String?
     }
 
     static func prepareSourceSync(
@@ -151,6 +163,182 @@ enum PythonRunner {
         return PreparedSource(payload: object)
     }
 
+    static func runBatchModelSelectSync(
+        config: Config,
+        requestJSON: URL,
+        settingsJSON: URL?,
+        rawOutput: URL,
+        targetPNG: URL? = nil,
+        modelTargetPNG: URL? = nil,
+        targetMetadataJSON: URL? = nil,
+        geometryJSON: URL? = nil,
+        targetPacketOutput: URL? = nil,
+        targetBuildOutput: URL? = nil,
+        requestOutput: URL? = nil,
+        runLogOutput: URL? = nil,
+        warmWorker: WarmWorker? = nil
+    ) throws -> BatchModelSelectResult {
+        if let warmWorker, warmWorker.tryConsume() {
+            do {
+                let output = try runBatchModelSelectUsingWorker(
+                    worker: warmWorker,
+                    requestJSON: requestJSON,
+                    settingsJSON: settingsJSON,
+                    rawOutput: rawOutput,
+                    targetPNG: targetPNG,
+                    modelTargetPNG: modelTargetPNG,
+                    targetMetadataJSON: targetMetadataJSON,
+                    geometryJSON: geometryJSON,
+                    targetPacketOutput: targetPacketOutput,
+                    targetBuildOutput: targetBuildOutput,
+                    requestOutput: requestOutput,
+                    runLogOutput: runLogOutput
+                )
+                return BatchModelSelectResult(
+                    output: output,
+                    viaWarmWorker: true,
+                    workerReadyMS: warmWorker.readyElapsedMS,
+                    fallbackReason: nil
+                )
+            } catch {
+                NSLog("[blink] batch selector warm worker failed (%@); falling back to fresh spawn", "\(error)")
+                let output = try runBatchModelSelectFresh(
+                    config: config,
+                    requestJSON: requestJSON,
+                    settingsJSON: settingsJSON,
+                    rawOutput: rawOutput,
+                    targetPNG: targetPNG,
+                    modelTargetPNG: modelTargetPNG,
+                    targetMetadataJSON: targetMetadataJSON,
+                    geometryJSON: geometryJSON,
+                    targetPacketOutput: targetPacketOutput,
+                    targetBuildOutput: targetBuildOutput,
+                    requestOutput: requestOutput,
+                    runLogOutput: runLogOutput
+                )
+                return BatchModelSelectResult(
+                    output: output,
+                    viaWarmWorker: false,
+                    workerReadyMS: warmWorker.readyElapsedMS,
+                    fallbackReason: summarizedError(error)
+                )
+            }
+        }
+
+        let output = try runBatchModelSelectFresh(
+            config: config,
+            requestJSON: requestJSON,
+            settingsJSON: settingsJSON,
+            rawOutput: rawOutput,
+            targetPNG: targetPNG,
+            modelTargetPNG: modelTargetPNG,
+            targetMetadataJSON: targetMetadataJSON,
+            geometryJSON: geometryJSON,
+            targetPacketOutput: targetPacketOutput,
+            targetBuildOutput: targetBuildOutput,
+            requestOutput: requestOutput,
+            runLogOutput: runLogOutput
+        )
+        return BatchModelSelectResult(
+            output: output,
+            viaWarmWorker: false,
+            workerReadyMS: nil,
+            fallbackReason: warmWorker == nil ? "no_worker" : "worker_unavailable"
+        )
+    }
+
+    private static func runBatchModelSelectFresh(
+        config: Config,
+        requestJSON: URL,
+        settingsJSON: URL?,
+        rawOutput: URL,
+        targetPNG: URL?,
+        modelTargetPNG: URL?,
+        targetMetadataJSON: URL?,
+        geometryJSON: URL?,
+        targetPacketOutput: URL?,
+        targetBuildOutput: URL?,
+        requestOutput: URL?,
+        runLogOutput: URL?
+    ) throws -> String {
+        guard let python = Paths.pythonBinary(config: config) else {
+            throw RunError.noPythonBinary
+        }
+        guard let script = Paths.batchModelSelectPath else {
+            throw RunError.noBatchModelSelectScript
+        }
+
+        let process = Process()
+        process.executableURL = python
+        var args = [
+            script.path,
+            "--request", requestJSON.path,
+        ]
+        if let settingsJSON {
+            args += ["--settings", settingsJSON.path]
+        }
+        if let targetPNG {
+            args += ["--target", targetPNG.path]
+        }
+        if let modelTargetPNG {
+            args += ["--model-target", modelTargetPNG.path]
+        }
+        if let targetMetadataJSON {
+            args += ["--target-meta", targetMetadataJSON.path]
+        }
+        if let geometryJSON {
+            args += ["--geometry", geometryJSON.path]
+        }
+        if let targetPacketOutput {
+            args += ["--target-packet-out", targetPacketOutput.path]
+        }
+        if let targetBuildOutput {
+            args += ["--target-build-out", targetBuildOutput.path]
+        }
+        if let requestOutput {
+            args += ["--request-out", requestOutput.path]
+        }
+        if let runLogOutput {
+            args += ["--run-log-out", runLogOutput.path]
+        }
+        process.arguments = args
+        process.environment = buildEnvironment(config: config)
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outData, encoding: .utf8) ?? ""
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+        let rawText = output + (stderrText.isEmpty ? "" : "\n[stderr]\n\(stderrText)")
+        try rawText.write(to: rawOutput, atomically: true, encoding: .utf8)
+
+        guard process.terminationStatus == 0 else {
+            throw RunError.nonZeroExit(
+                status: process.terminationStatus,
+                stderr: stderrText.isEmpty ? "see \(rawOutput.path)" : stderrText
+            )
+        }
+        return output
+    }
+
+    static func startBatchModelSelectWorker(config: Config) -> WarmWorker? {
+        guard let python = Paths.pythonBinary(config: config) else { return nil }
+        guard let script = Paths.batchModelSelectPath else { return nil }
+        return startJSONLineWorker(
+            python: python,
+            arguments: [script.path, "--wait-on-stdin"],
+            environment: buildEnvironment(config: config),
+            logLabel: "batch selector warm worker"
+        )
+    }
+
     /// Spawn `run_once.py --wait-on-stdin`, wait up to 5 s for the `READY`
     /// line on stdout, and return a handle the coordinator can hand to a
     /// later ⌃⇧V. Returns nil if the worker fails to come up cleanly; the
@@ -159,10 +347,25 @@ enum PythonRunner {
         guard let python = Paths.pythonBinary(config: config) else { return nil }
         guard let runOnce = Paths.runOncePath else { return nil }
 
+        return startJSONLineWorker(
+            python: python,
+            arguments: [runOnce.path, "--wait-on-stdin", "--silent-stderr"],
+            environment: buildEnvironment(config: config),
+            logLabel: "warm worker"
+        )
+    }
+
+    private static func startJSONLineWorker(
+        python: URL,
+        arguments: [String],
+        environment: [String: String],
+        logLabel: String
+    ) -> WarmWorker? {
+        let started = ProcessInfo.processInfo.systemUptime
         let process = Process()
         process.executableURL = python
-        process.arguments = [runOnce.path, "--wait-on-stdin", "--silent-stderr"]
-        process.environment = buildEnvironment(config: config)
+        process.arguments = arguments
+        process.environment = environment
 
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
@@ -174,7 +377,7 @@ enum PythonRunner {
         do {
             try process.run()
         } catch {
-            NSLog("[blink] warm worker spawn failed: %@", error.localizedDescription)
+            NSLog("[blink] %@ spawn failed: %@", logLabel, error.localizedDescription)
             return nil
         }
 
@@ -182,7 +385,8 @@ enum PythonRunner {
             process: process,
             stdin: stdinPipe.fileHandleForWriting,
             stdout: stdoutPipe.fileHandleForReading,
-            stderr: stderrPipe.fileHandleForReading
+            stderr: stderrPipe.fileHandleForReading,
+            readyElapsedMS: nil
         )
 
         // Wait for "READY <pid>\n" with a 5 s deadline. The first chunk
@@ -224,7 +428,13 @@ enum PythonRunner {
             worker.discard()
             return nil
         }
-        return worker
+        return WarmWorker(
+            process: process,
+            stdin: stdinPipe.fileHandleForWriting,
+            stdout: stdoutPipe.fileHandleForReading,
+            stderr: stderrPipe.fileHandleForReading,
+            readyElapsedMS: roundedMS(ProcessInfo.processInfo.systemUptime - started)
+        )
     }
 
     static func runOnce(
@@ -476,6 +686,55 @@ enum PythonRunner {
         }
     }
 
+    private static func runBatchModelSelectUsingWorker(
+        worker: WarmWorker,
+        requestJSON: URL,
+        settingsJSON: URL?,
+        rawOutput: URL,
+        targetPNG: URL?,
+        modelTargetPNG: URL?,
+        targetMetadataJSON: URL?,
+        geometryJSON: URL?,
+        targetPacketOutput: URL?,
+        targetBuildOutput: URL?,
+        requestOutput: URL?,
+        runLogOutput: URL?
+    ) throws -> String {
+        var payload: [String: Any] = ["request": requestJSON.path]
+        if let settingsJSON { payload["settings"] = settingsJSON.path }
+        if let targetPNG { payload["target"] = targetPNG.path }
+        if let modelTargetPNG { payload["model_target"] = modelTargetPNG.path }
+        if let targetMetadataJSON { payload["target_meta"] = targetMetadataJSON.path }
+        if let geometryJSON { payload["geometry"] = geometryJSON.path }
+        if let targetPacketOutput { payload["target_packet_out"] = targetPacketOutput.path }
+        if let targetBuildOutput { payload["target_build_out"] = targetBuildOutput.path }
+        if let requestOutput { payload["request_out"] = requestOutput.path }
+        if let runLogOutput { payload["run_log_out"] = runLogOutput.path }
+
+        var requestData = try JSONSerialization.data(withJSONObject: payload)
+        requestData.append(0x0A)
+
+        try worker.stdin.write(contentsOf: requestData)
+        try worker.stdin.close()
+        var outputData = worker.stdoutBuffer.drain()
+        outputData.append(worker.stdout.readDataToEndOfFile())
+        let errData = worker.stderr.readDataToEndOfFile()
+        worker.process.waitUntilExit()
+
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+        let rawText = output + (stderrText.isEmpty ? "" : "\n[stderr]\n\(stderrText)")
+        try rawText.write(to: rawOutput, atomically: true, encoding: .utf8)
+
+        guard worker.process.terminationStatus == 0 else {
+            throw RunError.nonZeroExit(
+                status: worker.process.terminationStatus,
+                stderr: stderrText.isEmpty ? "see \(rawOutput.path)" : stderrText
+            )
+        }
+        return output
+    }
+
     private static func persistStderrIfNeeded(errData: Data, bundleDir: URL) {
         var bundleIsDir: ObjCBool = false
         if !errData.isEmpty,
@@ -487,9 +746,30 @@ enum PythonRunner {
 
     private static func buildEnvironment(config: Config) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         if let url = config.proxyURL { env["BLINK_PROXY_URL"] = url }
         if let token = config.proxyToken { env["BLINK_PROXY_TOKEN"] = token }
         if let key = config.geminiApiKey { env["GEMINI_API_KEY"] = key }
         return env
+    }
+
+    private static func summarizedError(_ error: Error) -> String {
+        if let runError = error as? RunError {
+            switch runError {
+            case .nonZeroExit(let status, let stderr):
+                let firstLine = stderr
+                    .split(whereSeparator: \.isNewline)
+                    .map { String($0).trimmingCharacters(in: .whitespaces) }
+                    .first { !$0.isEmpty } ?? ""
+                return firstLine.isEmpty ? "python exited \(status)" : "python exited \(status): \(firstLine)"
+            default:
+                return runError.localizedDescription
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private static func roundedMS(_ seconds: TimeInterval) -> Double {
+        ((seconds * 1000.0) * 100.0).rounded() / 100.0
     }
 }

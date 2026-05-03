@@ -1,0 +1,27 @@
+{
+  "items" : [
+    {
+      "handle" : "item_1",
+      "payloads" : [
+        {
+          "actual_byte_size" : 214,
+          "decoded_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-dogfood/html-preview/snapshots/20260430-215241-244-cc960/items/item-0/00-public.utf8-plain-text.decoded.txt",
+          "expected_byte_size" : 214,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-dogfood/html-preview/snapshots/20260430-215241-244-cc960/items/item-0/00-public.utf8-plain-text.raw.bin",
+          "uti" : "public.utf8-plain-text"
+        },
+        {
+          "actual_byte_size" : 76,
+          "expected_byte_size" : 76,
+          "raw_path" : "/Users/henryz2004/conductor/workspaces/blink/memphis/experiments/pasteboard_logger/batch-harness-dogfood/html-preview/snapshots/20260430-215241-244-cc960/items/item-0/01-com.apple.WebKit.custom-pasteboard-data.raw.bin",
+          "uti" : "com.apple.WebKit.custom-pasteboard-data"
+        }
+      ],
+      "source_handle" : "item_1",
+      "source_snapshot_id" : "20260430-215241-244-cc960"
+    }
+  ],
+  "selected_handles" : [
+    "item_1"
+  ]
+}

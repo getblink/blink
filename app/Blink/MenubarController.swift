@@ -43,6 +43,8 @@ final class MenubarController: NSObject {
             .target = self
         menu.addItem(withTitle: "Capture target + paste (⌃⇧V)", action: #selector(triggerTarget), keyEquivalent: "")
             .target = self
+        menu.addItem(withTitle: "Batch paste all (⌘⌥V)", action: #selector(triggerBatchPaste), keyEquivalent: "")
+            .target = self
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Export last 10 runs…", action: #selector(exportRuns), keyEquivalent: "")
@@ -63,6 +65,7 @@ final class MenubarController: NSObject {
 
     @objc private func triggerSource() { coordinator.setSource() }
     @objc private func triggerTarget() { coordinator.runTarget() }
+    @objc private func triggerBatchPaste() { coordinator.runBatchClipboardPasteAll() }
     @objc private func exportRuns() {
         BundleExporter.exportLastNToDesktop(n: 10) { result in
             DispatchQueue.main.async {

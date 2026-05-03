@@ -137,6 +137,10 @@ enum Paths {
         Bundle.main.resourceURL?.appendingPathComponent("prepare_source.py")
     }
 
+    static var batchModelSelectPath: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("batch_model_select.py")
+    }
+
     static var providerPresetsPath: URL? {
         guard let url = Bundle.main.resourceURL?.appendingPathComponent("provider_presets.json"),
               FileManager.default.fileExists(atPath: url.path) else { return nil }

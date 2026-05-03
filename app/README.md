@@ -49,6 +49,8 @@ app/
   Blink/                          ← Swift sources
     BlinkApp.swift, MenubarController.swift
     HotkeyManager.swift           CGEventTap-based global hotkeys
+    BatchClipboardHistoryDogfood.swift
+                                  Cmd+Option+V batch-history paste dogfood bridge
     ScreenCapture.swift           ScreenCaptureKit wrapper
     TargetMetadataCapture.swift   AX metadata capture with schema parity
     RuntimeConfigStore.swift      ~/.blink runtime config + request-mode snapshot
@@ -69,6 +71,7 @@ app/
     target_context_prompt_ocr.txt target OCR packet prompt
   python/                         ← production Python, self-contained
     run_once.py                   CLI; emits v1 bundle
+    batch_model_select.py         clipboard-history handle selector
     prepare_source.py             precomputes source packets at source-capture time
     model_runner.py               provider-agnostic request builder
     target_context.py             local OCR packet builder
@@ -106,6 +109,13 @@ The menubar app now exposes a `Control Center…` window with:
 
 Source-packet modes precompute the source packet on `Capture source (⌃⇧C)` when possible so the later paste path can reuse it.
 The hybrid experimental mode first tries exact selected source text (`source_text.json`) and falls back to deterministic native OCR paragraphs, then uses the same target OCR packet/full-image fallback path as the other source-packet modes.
+
+Cmd+Option+V runs the batch clipboard-history dogfood path. Blink keeps a small
+rolling pasteboard snapshot buffer under
+`~/Library/Application Support/Blink/batch-clipboard-history/`, sends a
+`goal: "paste all"` model request augmented with the same target OCR/AX packet
+used by the normal paste flow, resolves selected handles back to their raw
+payloads, and pastes each selected item into the frontmost app in order.
 
 ## Production Python (Phase 1+, usable today)
 

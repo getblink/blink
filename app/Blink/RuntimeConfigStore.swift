@@ -244,6 +244,7 @@ final class RuntimeConfigStore: ObservableObject {
     let providerPresets: [ProviderPreset]
 
     private var cancellables: Set<AnyCancellable> = []
+    private static let preferredDefaultRequestMode: RequestMode = .sourcePacketTargetOCROrFullImage
 
     init() {
         let presets = Self.loadProviderPresets()
@@ -419,7 +420,7 @@ final class RuntimeConfigStore: ObservableObject {
             version: 2,
             extractor: defaultSelection,
             paste: defaultSelection,
-            requestMode: .baselineFullImages
+            requestMode: preferredDefaultRequestMode
         )
         do {
             let data = try JSONEncoder.pretty.encode(fallback)
@@ -439,8 +440,8 @@ final class RuntimeConfigStore: ObservableObject {
             return nil
         }
         let model = (raw["model"] as? String) ?? preset.defaultModel
-        let requestModeRaw = (raw["request_mode"] as? String) ?? RequestMode.baselineFullImages.rawValue
-        let requestMode = RequestMode(rawValue: requestModeRaw) ?? .baselineFullImages
+        let requestModeRaw = (raw["request_mode"] as? String) ?? preferredDefaultRequestMode.rawValue
+        let requestMode = RequestMode(rawValue: requestModeRaw) ?? preferredDefaultRequestMode
         let selection = ProviderModelSelection(providerPresetID: preset.id, model: model)
         return RuntimeConfigFile(
             version: 2,
