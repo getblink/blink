@@ -68,11 +68,30 @@ Legacy screenshot-only compatibility wrapper that preserves the original
 response shape for existing clients.
 
 The server does not write screenshots or response bodies to disk. It may use
-OCR/focused-context content transiently for Gemini context even when content
-retention is off, but stored telemetry is redacted unless the client opts into
-content retention. When `DATABASE_URL` is configured it persists structured
-request/event diagnostics; when `REDIS_URL` is configured it may cache response
-JSON keyed by input hash only for requests that opted into content retention.
+OCR/focused-context/stateful-context content transiently for Gemini context even
+when content retention is off, but stored telemetry is redacted unless the
+client opts into content retention. `stateful_context` is the local TLDR memory
+POC: user-typed voice samples plus bounded same-surface recent history supplied
+by the app from prior run artifacts. When `DATABASE_URL` is configured it
+persists structured request/event diagnostics; when `REDIS_URL` is configured it
+may cache response JSON keyed by input hash only for requests that opted into
+content retention.
+
+Each TLDR install sends an anonymous `client.install_id` UUID generated on the
+device and persisted at `~/.tldr/install_id`. When Postgres telemetry is
+enabled, the server stores it on both `tldr_requests.install_id` and
+`tldr_events.install_id` so per-install trajectories can be reconstructed
+without relying on bearer-token uniqueness:
+
+```sql
+SELECT *
+FROM tldr_requests
+JOIN tldr_events USING (request_id)
+WHERE tldr_requests.install_id = $1
+ORDER BY tldr_requests.created_at, tldr_events.created_at;
+```
+
+Deleting `~/.tldr/install_id` on the client rotates the identifier.
 
 ## Environment
 

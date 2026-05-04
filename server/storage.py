@@ -15,6 +15,7 @@ REQUESTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tldr_requests (
     request_id TEXT PRIMARY KEY,
     token_id TEXT NOT NULL,
+    install_id TEXT,
     client JSONB NOT NULL,
     capture_mode TEXT NOT NULL,
     input_mode TEXT NOT NULL,
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tldr_requests (
     image_diagnostics JSONB,
     ocr_packet JSONB,
     focused_context JSONB,
+    stateful_context JSONB,
     consent JSONB NOT NULL,
     requested_preferences JSONB NOT NULL,
     model_used TEXT,
@@ -34,8 +36,14 @@ CREATE TABLE IF NOT EXISTS tldr_requests (
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE tldr_requests
+    ADD COLUMN IF NOT EXISTS install_id TEXT;
+ALTER TABLE tldr_requests
+    ADD COLUMN IF NOT EXISTS stateful_context JSONB;
 CREATE INDEX IF NOT EXISTS tldr_requests_created_at_idx
     ON tldr_requests (created_at DESC);
+CREATE INDEX IF NOT EXISTS tldr_requests_install_id_idx
+    ON tldr_requests (install_id);
 CREATE INDEX IF NOT EXISTS tldr_requests_input_hash_idx
     ON tldr_requests (input_hash);
 """
@@ -44,12 +52,17 @@ EVENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tldr_events (
     request_id TEXT NOT NULL,
     token_id TEXT NOT NULL,
+    install_id TEXT,
     event_type TEXT NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE tldr_events
+    ADD COLUMN IF NOT EXISTS install_id TEXT;
 CREATE INDEX IF NOT EXISTS tldr_events_request_id_idx
     ON tldr_events (request_id);
+CREATE INDEX IF NOT EXISTS tldr_events_install_id_idx
+    ON tldr_events (install_id);
 CREATE INDEX IF NOT EXISTS tldr_events_created_at_idx
     ON tldr_events (created_at DESC);
 """
@@ -90,6 +103,7 @@ class TelemetryStore:
                     INSERT INTO tldr_requests (
                         request_id,
                         token_id,
+                        install_id,
                         client,
                         capture_mode,
                         input_mode,
@@ -98,6 +112,7 @@ class TelemetryStore:
                         image_diagnostics,
                         ocr_packet,
                         focused_context,
+                        stateful_context,
                         consent,
                         requested_preferences,
                         model_used,
@@ -108,12 +123,13 @@ class TelemetryStore:
                         warnings,
                         error
                     ) VALUES (
-                        %s, %s, (%s)::jsonb, %s, %s, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
-                        (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, %s, %s, %s, %s,
-                        %s, (%s)::jsonb, %s
+                        %s, %s, %s, (%s)::jsonb, %s, %s, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
+                        (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
+                        %s, %s, %s, %s, %s, (%s)::jsonb, %s
                     )
                     ON CONFLICT (request_id) DO UPDATE SET
                         token_id = EXCLUDED.token_id,
+                        install_id = EXCLUDED.install_id,
                         client = EXCLUDED.client,
                         capture_mode = EXCLUDED.capture_mode,
                         input_mode = EXCLUDED.input_mode,
@@ -122,6 +138,7 @@ class TelemetryStore:
                         image_diagnostics = EXCLUDED.image_diagnostics,
                         ocr_packet = EXCLUDED.ocr_packet,
                         focused_context = EXCLUDED.focused_context,
+                        stateful_context = EXCLUDED.stateful_context,
                         consent = EXCLUDED.consent,
                         requested_preferences = EXCLUDED.requested_preferences,
                         model_used = EXCLUDED.model_used,
@@ -135,6 +152,7 @@ class TelemetryStore:
                     (
                         payload["request_id"],
                         payload["token_id"],
+                        payload.get("install_id"),
                         json.dumps(payload["client"], ensure_ascii=True),
                         payload["capture_mode"],
                         payload["input_mode"],
@@ -143,6 +161,7 @@ class TelemetryStore:
                         json.dumps(payload["image_diagnostics"], ensure_ascii=True),
                         json.dumps(payload["ocr_packet"], ensure_ascii=True),
                         json.dumps(payload["focused_context"], ensure_ascii=True),
+                        json.dumps(payload["stateful_context"], ensure_ascii=True),
                         json.dumps(payload["consent"], ensure_ascii=True),
                         json.dumps(payload["requested_preferences"], ensure_ascii=True),
                         payload["model_used"],
@@ -168,13 +187,15 @@ class TelemetryStore:
                     INSERT INTO tldr_events (
                         request_id,
                         token_id,
+                        install_id,
                         event_type,
                         payload
-                    ) VALUES (%s, %s, %s, (%s)::jsonb)
+                    ) VALUES (%s, %s, %s, %s, (%s)::jsonb)
                     """,
                     (
                         str(payload.get("request_id") or ""),
                         token_id,
+                        payload.get("install_id"),
                         event_type,
                         json.dumps(payload, ensure_ascii=True),
                     ),

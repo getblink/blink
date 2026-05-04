@@ -29,41 +29,86 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
 
-DEFAULT_PROMPT = """You are looking at a single screenshot of the user's active app.
+STATEFUL_CONTEXT_VERSION = 1
+VOICE_SAMPLE_LIMIT = 5
+SURFACE_HISTORY_LIMIT = 3
+VOICE_SAMPLE_MAX_CHARS = 500
+SURFACE_TEXT_MAX_CHARS = 500
+STATEFUL_CONTEXT_WINDOW_SECONDS = 15 * 60
 
-Your job is to produce two things:
+DEFAULT_PROMPT = """You are looking at a single screenshot of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
-1. A one-sentence TL;DR addressed directly to the user.
-2. Three concrete candidate replies the user might send next.
+Produce two things:
 
-TL;DR rules:
+1. A short TL;DR addressed to the user.
+2. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
 
-- Keep it to one sentence.
-- Keep it under 140 characters.
-- Use second person: "You're...", "You need...", or "This asks you to...".
-- Summarize the user's immediate situation, not the entire app.
-- Do not say "the user".
-- If no conversation or reply context is visible, say what the user is looking at and that there is no clear reply target.
+TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
-Reply suggestion rules:
+1. Don't invent. Only assert what is visible on screen. When the screen is dense or ambiguous, hedge: "Looks like...", "Probably...", "Sounds like...". Never overclaim.
 
-- Produce exactly three suggestions.
-- Each suggestion should be ready to paste as-is.
-- Make each suggestion specific to the visible names, question, plan, bug, document, or request.
-- Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
-- Study any of the user's own prior messages visible in the screenshot.
-- Match the user's register, length, punctuation, casing habits, and emoji/no-emoji style when there is enough evidence.
-- If the user's own style is not visible, default to neutral-friendly.
-- Look for any visible compose box, draft text, selected text, or caret context.
-- If the user has already started typing a draft, suggestions should be paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
-- If the draft ends mid-sentence, continue it naturally.
-- If the draft is already a full sentence, suggest text that could follow it.
-- Make the three suggestions meaningfully different:
-  - one concise direct reply,
-  - one warmer or more collaborative reply,
-  - one reply that asks a useful clarifying question or proposes a next step.
-- Do not invent private facts or commitments that are not supported by the screenshot.
-- Do not mention that you saw a screenshot.
+2. Lead with the subject of action. Never start the TL;DR with "You", "You're", "You've", or "Your". Open with the person, system, document, number, or event driving the takeaway. The user can still be addressed as "you" later in the line.
+   - Bad: "You're looking at a Slack thread with Sarah."
+   - Bad: "You have an invoice due Friday."
+   - Bad: "Your migration estimate is due."
+     Good: "Joe's asking if you want dinner tonight; he's flexible on time."
+     Good: "The agent just finished the UI refactor. 3 tests are still red."
+     Good: "Sarah needs your migration estimate before her 4pm sync."
+     Good: "$1,247 Stripe invoice due Mar 15."
+
+3. Quote concrete, load-bearing details. Names, numbers, dates, deadlines, doc titles, dollar amounts, error messages. Specificity beats summary.
+
+4. Never use em dashes ("—") or en dashes ("–"). Use a period, comma, semicolon, or a new line instead.
+   - Bad: "Sarah's waiting on your estimate — she needs it before 4pm."
+   - Bad: "$1,247 invoice due Mar 15 – card on file expired."
+     Good: "Sarah's waiting on your estimate. She needs it before 4pm."
+     Good: "$1,247 invoice due Mar 15. Card on file expired last week."
+
+5. Surface the CTA, blocker, deadline, owner, or decision the user is on the hook for. When timestamps are visible, weight recent messages and approaching deadlines as the most likely takeaway.
+
+6. Skip facts the user already knows from being on the screen: app name, current channel, who they're chatting with. Only surface what changes their next decision. If there is no actionable thing on screen, lead with the most concrete detail visible (a number, a deadline, a name, an unread count).
+
+7. If something on screen is clearly inconsistent or worth a sanity check, add a brief "Heads up, ..." clause on its own line, after a blank line. Only when the evidence is visible. Never invent one. Cases that warrant one:
+   - A date in a draft contradicts a date earlier in the thread.
+   - A name in a draft doesn't match the recipient.
+   - Two numbers that should match (subtotal vs line items, two prices, two timestamps) don't.
+   - A draft contains a fact the source doesn't support.
+   - A deadline conflicts with a commitment elsewhere on screen.
+   - A typo or wrong recipient in a draft about to be sent.
+
+8. Friend voice, not press release. Everyday words. Contractions are fine. Avoid corporate filler like "action items", "circle back", "looping in", "just wanted to", "kindly", "as per", "FYI".
+
+9. When referring to the user, use direct second person ("you", "your"). Never "the user", "I see that", "this screen shows", "I can see". (See rule 2 for the one constraint: don't *lead* with "You".)
+
+10. Length and shape. 360 characters or fewer total. 3 sentences or fewer per paragraph. Line breaks are good for separating the takeaway from a "Heads up, ..." clause. No bullets, no numbered lists in the output itself.
+
+Suggestion rules, in priority order:
+
+1. Produce exactly three suggestions. Each must be ready to paste or send as-is.
+
+2. Don't invent private facts or commitments not supported by the screenshot.
+
+3. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
+
+4. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
+   - If the user has already started typing, suggestions are paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
+   - If the draft ends mid-sentence, continue it naturally.
+   - If the draft is already a full sentence, suggest text that could follow it.
+
+5. Make the three suggestions meaningfully different:
+   - one concise, direct reply,
+   - one warmer or more collaborative reply,
+   - one that asks a useful clarifying question or proposes a next step.
+
+6. Match the user's register. Study any of the user's own prior messages visible in the screenshot, and match their length, punctuation, casing habits, and emoji/no-emoji style. If their style isn't visible, default to neutral-friendly.
+
+7. Never use em dashes ("—") or en dashes ("–") in any suggestion. Substitute a period, comma, semicolon, or new line.
+   - Bad: "Sounds good — I'll send the doc by EOD."
+     Good: "Sounds good. I'll send the doc by EOD."
+
+8. If the screen has no message to reply to, treat suggestions as next actions or paste-ready phrasings appropriate to the surface: a code-review comment, a meeting-decline reason, a draft email, a search query, a commit message.
+
+9. Don't mention that you saw a screenshot.
 
 Output JSON only:
 
@@ -128,6 +173,193 @@ def read_text(path: Path | None, fallback: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _bounded_text(value: Any, limit: int) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _run_sort_time(run_dir: Path, run_log: dict[str, Any]) -> datetime:
+    for key in ("chosen_at", "custom_reply_at", "finished_at", "started_at"):
+        parsed = _parse_iso(run_log.get(key))
+        if parsed is not None:
+            return parsed
+    try:
+        return datetime.fromtimestamp(run_dir.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def _load_run_pair(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    run_path = run_dir / "run.json"
+    request_path = run_dir / "request.json"
+    if not run_path.exists():
+        return None
+    try:
+        run_log = json.loads(run_path.read_text(encoding="utf-8"))
+        request_log = (
+            json.loads(request_path.read_text(encoding="utf-8"))
+            if request_path.exists()
+            else {}
+        )
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(run_log, dict):
+        return None
+    if not isinstance(request_log, dict):
+        request_log = {}
+    return run_log, request_log
+
+
+def _surface_key(envelope: dict[str, Any]) -> tuple[str | None, str | None]:
+    frontmost = envelope.get("frontmost_app")
+    if not isinstance(frontmost, dict):
+        frontmost = {}
+    focused = envelope.get("focused_context")
+    if not isinstance(focused, dict):
+        focused = {}
+    bundle_id = _bounded_text(
+        frontmost.get("bundle_id") or focused.get("bundle_id"),
+        160,
+    )
+    title = _bounded_text(focused.get("title"), 160)
+    return bundle_id, title
+
+
+def _same_surface(current: dict[str, Any], previous: dict[str, Any]) -> bool:
+    current_bundle, current_title = _surface_key(current)
+    previous_bundle, previous_title = _surface_key(previous)
+    if not current_bundle or current_bundle != previous_bundle:
+        return False
+    # The POC intentionally avoids app-wide "memory" when no focused title is
+    # available; same-app-only history gets noisy fast.
+    return bool(current_title and previous_title and current_title == previous_title)
+
+
+def build_stateful_context(
+    runs_dir: Path,
+    current_envelope: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    if not runs_dir.exists():
+        return None
+    now = now or datetime.now(timezone.utc)
+    run_pairs: list[tuple[Path, dict[str, Any], dict[str, Any], datetime]] = []
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        pair = _load_run_pair(run_dir)
+        if pair is None:
+            continue
+        run_log, request_log = pair
+        run_pairs.append((run_dir, run_log, request_log, _run_sort_time(run_dir, run_log)))
+    run_pairs.sort(key=lambda item: item[3], reverse=True)
+
+    voice_samples: list[dict[str, Any]] = []
+    seen_voice: set[str] = set()
+    recent_surface_history: list[dict[str, Any]] = []
+
+    for run_dir, run_log, request_log, sort_time in run_pairs:
+        custom_text = _bounded_text(run_log.get("custom_reply_text"), VOICE_SAMPLE_MAX_CHARS)
+        if custom_text and custom_text not in seen_voice and len(voice_samples) < VOICE_SAMPLE_LIMIT:
+            frontmost = request_log.get("frontmost_app")
+            if not isinstance(frontmost, dict):
+                frontmost = {}
+            voice_samples.append(
+                {
+                    "text": custom_text,
+                    "created_at": run_log.get("custom_reply_at") or run_log.get("chosen_at") or run_log.get("finished_at"),
+                    "app_bundle_id": frontmost.get("bundle_id"),
+                    "app_name": frontmost.get("app_name"),
+                }
+            )
+            seen_voice.add(custom_text)
+
+        if len(recent_surface_history) < SURFACE_HISTORY_LIMIT and _same_surface(current_envelope, request_log):
+            age_seconds = (now - sort_time).total_seconds()
+            if 0 <= age_seconds <= STATEFUL_CONTEXT_WINDOW_SECONDS:
+                response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
+                history_item = {
+                    "created_at": run_log.get("finished_at") or run_log.get("started_at"),
+                    "tldr": _bounded_text(response.get("tldr"), SURFACE_TEXT_MAX_CHARS),
+                    "chosen_action": run_log.get("chosen_action"),
+                    "chosen_index": run_log.get("chosen_index"),
+                    "custom_reply_text": _bounded_text(run_log.get("custom_reply_text"), SURFACE_TEXT_MAX_CHARS),
+                    "chosen_text": _bounded_text(run_log.get("chosen_text"), SURFACE_TEXT_MAX_CHARS),
+                    "run_dir": run_dir.name,
+                }
+                history_item = {key: value for key, value in history_item.items() if value not in (None, "", [])}
+                if len(history_item) > 2:
+                    recent_surface_history.append(history_item)
+
+        if len(voice_samples) >= VOICE_SAMPLE_LIMIT and len(recent_surface_history) >= SURFACE_HISTORY_LIMIT:
+            break
+
+    if not voice_samples and not recent_surface_history:
+        return None
+    return {
+        "schema_version": STATEFUL_CONTEXT_VERSION,
+        "voice_samples": voice_samples,
+        "recent_surface_history": recent_surface_history,
+    }
+
+
+def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, Any] | None) -> str:
+    if not stateful_context:
+        return prompt_text
+    voice_samples = stateful_context.get("voice_samples")
+    surface_history = stateful_context.get("recent_surface_history")
+    if not isinstance(voice_samples, list):
+        voice_samples = []
+    if not isinstance(surface_history, list):
+        surface_history = []
+    if not voice_samples and not surface_history:
+        return prompt_text
+    lines = [
+        "",
+        "Stateful TLDR context:",
+        "Use user voice examples for style only. Do not copy facts from them into the current reply unless the current screen supports those facts.",
+        "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
+    ]
+    if voice_samples:
+        lines.append("User voice examples:")
+        for sample in voice_samples:
+            if not isinstance(sample, dict):
+                continue
+            text = _bounded_text(sample.get("text"), VOICE_SAMPLE_MAX_CHARS)
+            if text:
+                lines.append(f"- {text}")
+    if surface_history:
+        lines.append("Recent same-surface history:")
+        for item in surface_history:
+            if not isinstance(item, dict):
+                continue
+            tldr = _bounded_text(item.get("tldr"), SURFACE_TEXT_MAX_CHARS)
+            reply = _bounded_text(item.get("custom_reply_text") or item.get("chosen_text"), SURFACE_TEXT_MAX_CHARS)
+            if tldr:
+                lines.append(f"- Prior TLDR: {tldr}")
+            if reply:
+                lines.append(f"  Prior outcome: {reply}")
+    return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
+
+
 def response_schema():
     from google.genai import types
 
@@ -136,7 +368,7 @@ def response_schema():
         required=["tldr", "suggestions"],
         propertyOrdering=["tldr", "suggestions"],
         properties={
-            "tldr": types.Schema(type=types.Type.STRING, maxLength=180),
+            "tldr": types.Schema(type=types.Type.STRING, maxLength=360),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
                 minItems=3,
@@ -417,6 +649,10 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": 1,
         "input_mode": "screenshot",
     }
+    stateful_context = build_stateful_context(args.out_dir, request_payload)
+    if stateful_context is not None:
+        request_payload["stateful_context"] = stateful_context
+        prompt_text = prompt_with_stateful_context(prompt_text, stateful_context)
     proxy_settings = proxy_settings_from_env()
 
     run_dir = args.out_dir / bundle_id()
@@ -425,8 +661,7 @@ def main(argv: list[str] | None = None) -> int:
     stderr_log.write_text("", encoding="utf-8")
     screenshot_out = run_dir / "screenshot.png"
     shutil.copy2(args.screenshot, screenshot_out)
-    if args.request_json and args.request_json.exists():
-        shutil.copy2(args.request_json, run_dir / "request.json")
+    save_json(run_dir / "request.json", request_payload)
 
     host_profile = {}
     if args.host_profile and args.host_profile.exists():
@@ -438,8 +673,14 @@ def main(argv: list[str] | None = None) -> int:
     run_log: dict[str, Any] = {
         "status": "started",
         "started_at": now_iso(),
+        "request_id": request_payload.get("request_id"),
+        "client": request_payload.get("client") or {},
         "runtime": runtime,
         "settings": settings,
+        "stateful_context": {
+            "voice_sample_count": len(stateful_context.get("voice_samples", [])) if stateful_context else 0,
+            "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
+        },
         "screenshot": {"path": "screenshot.png", "bytes": screenshot_out.stat().st_size},
     }
     save_json(run_dir / "host_profile.json", host_profile)

@@ -25,6 +25,7 @@
 		697884BC80BAC724A9749483 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */; };
 		7C7DE9E5DB2E2B812D7518B4 /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */; };
 		801C07DD0AEBBA701E4D0DBD /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 221E6D902943E3A3D1A0F285 /* AppKit.framework */; };
+		812772A65B9F4D443D91AA4C /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EB9750E7F80C4BEC3131157 /* OverlayKeyRouter.swift */; };
 		82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */; };
 		8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */; };
 		91B0CD5A1F048D786CDD1D1B /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */; };
@@ -67,6 +68,7 @@
 		79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		805815274652A8AE7EA61194 /* TLDREventClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDREventClient.swift; sourceTree = "<group>"; };
 		9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
+		9EB9750E7F80C4BEC3131157 /* OverlayKeyRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayKeyRouter.swift; sourceTree = "<group>"; };
 		AC8DAE5726E664C41CEBDF54 /* TLDR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TLDR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCaptureTests.swift; sourceTree = "<group>"; };
 		B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionsOverlay.swift; sourceTree = "<group>"; };
@@ -158,6 +160,7 @@
 				152858893A7EE251AC722A08 /* Inserter.swift */,
 				F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */,
 				4777BAF6F74870A0A994554E /* MenubarController.swift */,
+				9EB9750E7F80C4BEC3131157 /* OverlayKeyRouter.swift */,
 				C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */,
 				1C5056F086C8989A44A91D7C /* PermissionsWindow.swift */,
 				5FD77C90100587BDA7E79E10 /* PythonRunner.swift */,
@@ -265,6 +268,7 @@
 				51F46FA6BC30A495ECC7994D /* Inserter.swift in Sources */,
 				E957E85E84F83FBED1C79609 /* JSONFiles.swift in Sources */,
 				0682C5A13079B01105EA5F0E /* MenubarController.swift in Sources */,
+				812772A65B9F4D443D91AA4C /* OverlayKeyRouter.swift in Sources */,
 				CCCAD905B22BC516E30516EC /* PendingRunStore.swift in Sources */,
 				59EA9C20D9B306853C21C5A0 /* PermissionsWindow.swift in Sources */,
 				F0BEB7DD55D459EE3644EA45 /* PythonRunner.swift in Sources */,

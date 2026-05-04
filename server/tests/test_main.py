@@ -87,6 +87,7 @@ class MainTests(unittest.TestCase):
                         "request_id": "req-123",
                         "schema_version": 1,
                         "capture_mode": "frontmost_window",
+                        "client": {"install_id": "install-abc"},
                         "input_mode": "screenshot",
                         "preferences": {"model": "gemini-3.1-flash-lite-preview"},
                         "frontmost_app": {"app_name": "Messages"},
@@ -168,6 +169,7 @@ class MainTests(unittest.TestCase):
                     "request": json.dumps(
                         {
                             "request_id": "req-private",
+                            "client": {"install_id": "install-private"},
                             "input_mode": "ocr",
                             "focused_context": {
                                 "value": "secret draft",
@@ -187,8 +189,77 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         recorded = telemetry_store.record_request.call_args.args[0]
+        self.assertEqual(recorded["install_id"], "install-private")
         self.assertEqual(recorded["focused_context"]["value"]["redacted"], True)
         self.assertEqual(recorded["ocr_packet"]["blocks"][0]["text"]["redacted"], True)
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_sends_stateful_context_to_model_and_redacts_storage_without_retention(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            context_text = kwargs["context_text"]
+            self.assertIsNotNone(context_text)
+            self.assertIn("sounds good, i'll take a look", context_text)
+            self.assertIn("Sarah asked for a review", context_text)
+            return {
+                "status": "ok",
+                "tldr": "Sarah needs a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-stateful",
+                            "input_mode": "ocr",
+                            "ocr_packet": {"blocks": [{"text": "current ask"}]},
+                            "stateful_context": {
+                                "schema_version": 1,
+                                "voice_samples": [
+                                    {"text": "sounds good, i'll take a look"}
+                                ],
+                                "recent_surface_history": [
+                                    {
+                                        "tldr": "Sarah asked for a review",
+                                        "custom_reply_text": "i'll review this now",
+                                    }
+                                ],
+                            },
+                            "consent": {
+                                "allow_event_logging": True,
+                                "allow_content_retention": False,
+                            },
+                        }
+                    )
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        recorded = telemetry_store.record_request.call_args.args[0]
+        self.assertEqual(
+            recorded["stateful_context"]["voice_samples"][0]["text"]["redacted"],
+            True,
+        )
+        self.assertEqual(
+            recorded["stateful_context"]["recent_surface_history"][0]["custom_reply_text"]["redacted"],
+            True,
+        )
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
@@ -367,10 +438,13 @@ class MainTests(unittest.TestCase):
                     "request_id": "req-123",
                     "event_type": "capture_started",
                     "created_at": "2026-04-29T00:00:00Z",
+                    "client": {"install_id": "install-abc"},
                 },
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"ok": True, "stored": True})
+        stored_payload = telemetry_store.record_event.call_args.kwargs["payload"]
+        self.assertEqual(stored_payload["install_id"], "install-abc")
 
     def test_events_report_unstored_when_storage_disabled(self) -> None:
         with mock.patch(

@@ -44,8 +44,8 @@ def _schema() -> types.Schema:
         properties={
             "tldr": types.Schema(
                 type=types.Type.STRING,
-                maxLength=180,
-                description="One-sentence summary of the screenshot.",
+                maxLength=360,
+                description="Short takeaway summary of the screenshot.",
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,

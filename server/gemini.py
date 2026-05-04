@@ -65,8 +65,8 @@ def _schema() -> types.Schema:
         properties={
             "tldr": types.Schema(
                 type=types.Type.STRING,
-                maxLength=180,
-                description="One-sentence summary of the screenshot.",
+                maxLength=360,
+                description="Short takeaway summary of the screenshot.",
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
@@ -119,7 +119,7 @@ def request_context_text(envelope: dict[str, Any]) -> str | None:
         "input_mode": envelope.get("input_mode"),
         "capture_mode": envelope.get("capture_mode"),
     }
-    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context"):
+    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context", "stateful_context"):
         value = envelope.get(key)
         if value not in (None, {}, [], ""):
             structured[key] = value
@@ -142,7 +142,11 @@ def generate_tldr_and_suggestions(
     if context_text:
         contents.append(
             "Structured capture context (JSON). Treat it as additional evidence; "
-            "do not repeat it verbatim in the output.\n"
+            "do not repeat it verbatim in the output. If stateful_context is "
+            "present, use voice_samples only as examples of the user's writing "
+            "style, and use recent_surface_history only for continuity in this "
+            "same immediate surface. Current screen evidence wins; never import "
+            "unsupported facts from history.\n"
             + context_text
         )
     if image_bytes is not None:

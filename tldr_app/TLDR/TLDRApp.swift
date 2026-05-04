@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkeys = HotkeyManager(
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
+            isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             onSummarize: { [weak coordinator] in coordinator?.summarizeFrontmostWindow() },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
             onInsert: { [weak coordinator] in

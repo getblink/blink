@@ -52,7 +52,15 @@ _HOP_BY_HOP = {
 
 app = FastAPI(title="Blink TLDR Server")
 logger = logging.getLogger("blink.tldr.server")
-REDACTED_CONTENT_KEYS = {"text", "value", "selected_text", "nearby_relevant_text"}
+REDACTED_CONTENT_KEYS = {
+    "text",
+    "value",
+    "selected_text",
+    "nearby_relevant_text",
+    "custom_reply_text",
+    "chosen_text",
+    "tldr",
+}
 
 
 @lru_cache(maxsize=1)
@@ -185,6 +193,10 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope.get("focused_context"),
         allow_content_retention=allow_content_retention,
     )
+    sanitized["stateful_context"] = _sanitize_content_payload(
+        envelope.get("stateful_context"),
+        allow_content_retention=allow_content_retention,
+    )
     return sanitized
 
 
@@ -213,12 +225,15 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
             detail="input_mode must be screenshot, ocr, or hybrid",
         )
 
+    client = _dict_or_none(payload.get("client")) or {}
+    install_id = str(client.get("install_id") or "").strip() or None
     consent = payload.get("consent")
     consent_dict = consent if isinstance(consent, dict) else {}
     return {
         "schema_version": int(payload.get("schema_version") or 1),
         "request_id": request_id,
-        "client": _dict_or_none(payload.get("client")) or {},
+        "client": client,
+        "install_id": install_id,
         "capture_mode": str(payload.get("capture_mode") or "frontmost_window").strip().lower(),
         "preferences": _dict_or_none(payload.get("preferences")) or {},
         "frontmost_app": _dict_or_none(payload.get("frontmost_app")) or {},
@@ -227,6 +242,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "image_diagnostics": _dict_or_none(payload.get("image_diagnostics")),
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
+        "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "consent": {
             "allow_event_logging": bool(consent_dict.get("allow_event_logging", True)),
             "allow_content_retention": bool(consent_dict.get("allow_content_retention", False)),
@@ -248,7 +264,11 @@ def _normalize_event_payload(payload: Any) -> dict[str, Any]:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="request_id and event_type are required",
         )
-    return payload
+    normalized = dict(payload)
+    client = _dict_or_none(normalized.get("client")) or {}
+    normalized["client"] = client
+    normalized["install_id"] = str(client.get("install_id") or "").strip() or None
+    return normalized
 
 
 def _make_legacy_request_envelope() -> dict[str, Any]:
@@ -256,6 +276,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "schema_version": 1,
         "request_id": f"legacy-{uuid4().hex}",
         "client": {"mode": "legacy_upload"},
+        "install_id": None,
         "capture_mode": "frontmost_window",
         "preferences": {},
         "frontmost_app": {},
@@ -264,6 +285,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "image_diagnostics": None,
         "ocr_packet": None,
         "focused_context": None,
+        "stateful_context": None,
         "consent": {
             "allow_event_logging": False,
             "allow_content_retention": False,
@@ -300,6 +322,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes: bytes | None) -> s
         "frontmost_app": envelope.get("frontmost_app"),
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
+        "stateful_context": envelope.get("stateful_context"),
     }
     if image_bytes is not None:
         material["screenshot_sha256"] = sha256(image_bytes).hexdigest()
@@ -338,6 +361,7 @@ def _record_request(
                 "request_id": envelope["request_id"],
                 "token_id": token_id,
                 "client": envelope.get("client") or {},
+                "install_id": envelope.get("install_id"),
                 "capture_mode": envelope.get("capture_mode"),
                 "input_mode": envelope.get("input_mode"),
                 "frontmost_app": envelope.get("frontmost_app") or {},
@@ -345,6 +369,7 @@ def _record_request(
                 "image_diagnostics": envelope.get("image_diagnostics") or {},
                 "ocr_packet": envelope.get("ocr_packet") or {},
                 "focused_context": envelope.get("focused_context") or {},
+                "stateful_context": envelope.get("stateful_context") or {},
                 "consent": envelope.get("consent") or {},
                 "requested_preferences": envelope.get("preferences") or {},
                 "model_used": settings.get("model"),
