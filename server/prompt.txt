@@ -47,7 +47,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
 9. When referring to the user, use direct second person ("you", "your"). Never "the user", "I see that", "this screen shows", "I can see". (See rule 2 for the one constraint: don't *lead* with "You".)
 
-10. Length and shape. 360 characters or fewer total. 3 sentences or fewer per paragraph. Line breaks are good for separating the takeaway from a "Heads up, ..." clause. No bullets, no numbered lists in the output itself.
+10. Length and shape. 360 characters or fewer total. 3 sentences or fewer per paragraph. Use line breaks to separate distinct beats: for example, the takeaway from supporting context, or context from the ask / next step / "Heads up, ..." clause. When the TLDR has only one beat, one paragraph is fine; when there are two or more, prefer breaking them apart with a blank line. No bullets, no numbered lists in the output itself.
 
 Suggestion rules, in priority order:
 
