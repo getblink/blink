@@ -26,6 +26,53 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "timeout_seconds": 120,
 }
 
+
+def _is_thinking_model(model: str) -> bool:
+    """Gemini 3 Pro / Flash are reasoning models with non-trivial thinking budgets."""
+    if not model:
+        return False
+    name = model.lower()
+    if not name.startswith(("gemini-3-", "gemini-3.")):
+        return False
+    return "flash-lite" not in name
+
+
+def thinking_level_for_model(model: str) -> str | None:
+    """Return the thinking_level for a model, or None to omit it.
+
+    "low" trades a small latency increase for noticeably better factual
+    grounding (Flash at "minimal" hallucinated its own model name across
+    multiple runs). Pro rejects "minimal" outright. Flash-Lite has no biting
+    default, and Gemma is left untouched.
+    """
+    return "low" if _is_thinking_model(model) else None
+
+
+def max_output_tokens_for_model(model: str) -> int | None:
+    """Per-model override for max_output_tokens, or None to honor settings.
+
+    Thinking tokens count against max_output_tokens, so leave headroom for
+    THINKING_BUDGET_TOKENS plus a comfortable JSON reply.
+    """
+    return 2048 if _is_thinking_model(model) else None
+
+
+def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any]):
+    model = settings.get("model", "")
+    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    kwargs = dict(
+        system_instruction=prompt_text,
+        temperature=settings["temperature"],
+        max_output_tokens=max_tokens,
+        media_resolution=settings["media_resolution"],
+        response_mime_type="application/json",
+        response_schema=response_schema(),
+    )
+    level = thinking_level_for_model(model)
+    if level is not None:
+        kwargs["thinking_config"] = types_module.ThinkingConfig(thinking_level=level)
+    return types_module.GenerateContentConfig(**kwargs)
+
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
 DISABLE_PROXY_ENV = "TLDR_DISABLE_PROXY"
@@ -665,6 +712,57 @@ def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
+def extract_partial_suggestions(raw_text: str) -> list[str]:
+    """Parse zero or more suggestion strings from streaming JSON output.
+
+    Returns closed suggestions plus the in-progress one (if any) so the overlay
+    can show suggestions appearing token-by-token. Returns [] if no
+    "suggestions" array has started yet.
+    """
+    marker = '"suggestions"'
+    marker_index = raw_text.find(marker)
+    if marker_index < 0:
+        return []
+    bracket_index = raw_text.find("[", marker_index + len(marker))
+    if bracket_index < 0:
+        return []
+    suggestions: list[str] = []
+    chars: list[str] = []
+    in_string = False
+    escaped = False
+    for char in raw_text[bracket_index + 1:]:
+        if in_string:
+            if escaped:
+                if char == "n":
+                    chars.append("\n")
+                elif char == "t":
+                    chars.append("\t")
+                elif char == "r":
+                    chars.append("\r")
+                else:
+                    chars.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                suggestions.append("".join(chars))
+                chars = []
+                in_string = False
+                continue
+            chars.append(char)
+        else:
+            if char == '"':
+                in_string = True
+                continue
+            if char == "]":
+                break
+    if in_string and chars:
+        suggestions.append("".join(chars))
+    return suggestions
+
+
 def extract_partial_tldr(raw_text: str) -> str | None:
     marker = '"tldr"'
     marker_index = raw_text.find(marker)
@@ -951,14 +1049,7 @@ def generate(
         data=screenshot_path.read_bytes(),
         mime_type="image/png",
     )
-    config = types.GenerateContentConfig(
-        system_instruction=prompt_text,
-        temperature=settings["temperature"],
-        max_output_tokens=settings["max_output_tokens"],
-        media_resolution=settings["media_resolution"],
-        response_mime_type="application/json",
-        response_schema=response_schema(),
-    )
+    config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
@@ -990,18 +1081,13 @@ def generate_streaming(
         data=screenshot_path.read_bytes(),
         mime_type="image/png",
     )
-    config = types.GenerateContentConfig(
-        system_instruction=prompt_text,
-        temperature=settings["temperature"],
-        max_output_tokens=settings["max_output_tokens"],
-        media_resolution=settings["media_resolution"],
-        response_mime_type="application/json",
-        response_schema=response_schema(),
-    )
+    config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     raw_text = ""
     usage = None
     last_partial = ""
+    last_partial_suggestions: list[str] = []
+    first_token_perf: float | None = None
     for chunk in client.models.generate_content_stream(
         model=settings["model"],
         contents=[image_part, MODEL_CONTENT_TEXT],
@@ -1009,20 +1095,35 @@ def generate_streaming(
     ):
         text = getattr(chunk, "text", None) or ""
         if text:
+            if first_token_perf is None:
+                first_token_perf = time.perf_counter()
             raw_text += text
             partial = extract_partial_tldr(raw_text)
             if partial and partial != last_partial:
                 last_partial = partial
                 emit_stream_event("partial_tldr", {"tldr": partial})
+            partial_suggestions = extract_partial_suggestions(raw_text)
+            if partial_suggestions and partial_suggestions != last_partial_suggestions:
+                last_partial_suggestions = list(partial_suggestions)
+                emit_stream_event(
+                    "partial_suggestions",
+                    {"suggestions": partial_suggestions},
+                )
         chunk_usage = getattr(chunk, "usage_metadata", None)
         if chunk_usage is not None:
             usage = chunk_usage
-    duration_ms = int(round((time.perf_counter() - started) * 1000))
-    return build_response_payload(
+    finished_perf = time.perf_counter()
+    duration_ms = int(round((finished_perf - started) * 1000))
+    payload = build_response_payload(
         raw_text=raw_text.strip(),
         usage=usage,
         duration_ms=duration_ms,
     )
+    if first_token_perf is not None:
+        ttft_ms = int(round((first_token_perf - started) * 1000))
+        payload["time_to_first_token_ms"] = ttft_ms
+        payload["streaming_ms"] = max(0, duration_ms - ttft_ms)
+    return payload
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

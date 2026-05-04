@@ -44,6 +44,102 @@ class TldrOnceTests(unittest.TestCase):
         self.assertEqual(tldr, "hi")
         self.assertEqual(suggestions, ["a", "b", "c"])
 
+    def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:
+        captured_config: dict[str, Any] = {}
+        captured_thinking: dict[str, Any] = {}
+
+        class FakeThinkingConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_thinking.update(kwargs)
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_config.update(kwargs)
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        base_settings = {
+            "model": "gemini-3.1-flash-lite-preview",
+            "temperature": 0.2,
+            "max_output_tokens": 512,
+            "media_resolution": "MEDIA_RESOLUTION_LOW",
+        }
+        with mock.patch.object(tldr_once, "response_schema", return_value={"schema": "ok"}):
+            tldr_once.build_generate_config(FakeTypes, "PROMPT", base_settings)
+        self.assertEqual(captured_config["system_instruction"], "PROMPT")
+        self.assertEqual(captured_config["temperature"], 0.2)
+        self.assertEqual(captured_config["max_output_tokens"], 512)
+        self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_LOW")
+        self.assertEqual(captured_config["response_mime_type"], "application/json")
+        self.assertIn("response_schema", captured_config)
+        self.assertNotIn("thinking_config", captured_config)
+        self.assertEqual(captured_thinking, {})
+
+        self.assertEqual(captured_config["max_output_tokens"], 512)
+
+        captured_config.clear()
+        captured_thinking.clear()
+        thinking_settings = dict(base_settings, model="gemini-3.1-pro-preview")
+        with mock.patch.object(tldr_once, "response_schema", return_value={"schema": "ok"}):
+            tldr_once.build_generate_config(FakeTypes, "PROMPT", thinking_settings)
+        self.assertIn("thinking_config", captured_config)
+        self.assertEqual(captured_thinking, {"thinking_level": "low"})
+        self.assertNotIn("thinking_budget", captured_thinking)
+        self.assertEqual(captured_config["max_output_tokens"], 2048)
+
+    def test_max_output_tokens_for_model(self) -> None:
+        self.assertEqual(tldr_once.max_output_tokens_for_model("gemini-3.1-pro-preview"), 2048)
+        self.assertEqual(tldr_once.max_output_tokens_for_model("gemini-3-flash-preview"), 2048)
+        self.assertIsNone(tldr_once.max_output_tokens_for_model("gemini-3.1-flash-lite-preview"))
+        self.assertIsNone(tldr_once.max_output_tokens_for_model("gemma-4-26b-a4b-it"))
+        self.assertIsNone(tldr_once.max_output_tokens_for_model(""))
+
+    def test_thinking_level_for_model(self) -> None:
+        self.assertEqual(tldr_once.thinking_level_for_model("gemini-3.1-pro-preview"), "low")
+        self.assertEqual(tldr_once.thinking_level_for_model("Gemini-3-Pro"), "low")
+        self.assertEqual(tldr_once.thinking_level_for_model("gemini-3-flash-preview"), "low")
+        self.assertIsNone(tldr_once.thinking_level_for_model("gemini-3.1-flash-lite-preview"))
+        self.assertIsNone(tldr_once.thinking_level_for_model("gemma-4-26b-a4b-it"))
+        self.assertIsNone(tldr_once.thinking_level_for_model("gemini-2.5-flash"))
+        self.assertIsNone(tldr_once.thinking_level_for_model(""))
+
+    def test_extract_partial_suggestions(self) -> None:
+        self.assertEqual(tldr_once.extract_partial_suggestions(""), [])
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions('{"tldr":"hi"'),
+            [],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions('{"tldr":"hi","suggestions":['),
+            [],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions('{"tldr":"hi","suggestions":["one"'),
+            ["one"],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions('{"tldr":"hi","suggestions":["one", "tw'),
+            ["one", "tw"],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions(
+                '{"tldr":"hi","suggestions":["one","two","three"]}'
+            ),
+            ["one", "two", "three"],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions(
+                '{"suggestions":["he said \\"hi\\"","next"'
+            ),
+            ['he said "hi"', "next"],
+        )
+        self.assertEqual(
+            tldr_once.extract_partial_suggestions('{"suggestions":["line one\\nline two"'),
+            ["line one\nline two"],
+        )
+
     def test_extract_partial_tldr_handles_incomplete_json_and_escapes(self) -> None:
         self.assertIsNone(tldr_once.extract_partial_tldr('{"status":"thinking"'))
         self.assertEqual(

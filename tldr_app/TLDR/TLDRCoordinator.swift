@@ -224,6 +224,8 @@ final class TLDRCoordinator {
                                 self.overlay.updateSummary(message)
                             case .partialTLDR(let text):
                                 self.overlay.updateSummary(text)
+                            case .partialSuggestions(let list):
+                                self.overlay.updateSuggestions(Array(list.prefix(3)))
                             }
                         }
                     }

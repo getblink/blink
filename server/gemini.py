@@ -17,6 +17,30 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 
+def _is_thinking_model(model: str) -> bool:
+    """Gemini 3 Pro / Flash are reasoning models with non-trivial thinking budgets."""
+    if not model:
+        return False
+    name = model.lower()
+    if not name.startswith(("gemini-3-", "gemini-3.")):
+        return False
+    return "flash-lite" not in name
+
+
+def thinking_level_for_model(model: str) -> str | None:
+    """Return the thinking_level for a model, or None to omit it.
+
+    "low" works for both Pro and Flash; Pro rejects "minimal", and Flash at
+    "minimal" hallucinates its own model name.
+    """
+    return "low" if _is_thinking_model(model) else None
+
+
+def max_output_tokens_for_model(model: str) -> int | None:
+    """Per-model override for max_output_tokens, or None to honor settings."""
+    return 2048 if _is_thinking_model(model) else None
+
+
 def plain_data(value: Any) -> Any:
     if value is None:
         return None
@@ -160,14 +184,20 @@ def generate_tldr_and_suggestions(
     if not contents:
         raise ValueError("No screenshot or structured context was provided.")
 
-    config = types.GenerateContentConfig(
+    model = settings.get("model", "")
+    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    config_kwargs = dict(
         system_instruction=prompt_text,
         temperature=settings["temperature"],
-        max_output_tokens=settings["max_output_tokens"],
+        max_output_tokens=max_tokens,
         media_resolution=settings["media_resolution"],
         response_mime_type="application/json",
         response_schema=_schema(),
     )
+    level = thinking_level_for_model(model)
+    if level is not None:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    config = types.GenerateContentConfig(**config_kwargs)
 
     started = time.perf_counter()
     response = client.models.generate_content(
