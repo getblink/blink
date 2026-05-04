@@ -42,6 +42,7 @@ enum PythonRunner {
     enum StreamEvent {
         case phase(String)
         case partialTLDR(String)
+        case partialSuggestions([String])
     }
 
     final class StreamingRun {
@@ -216,6 +217,10 @@ enum PythonRunner {
             case "partial_tldr":
                 if let text = object["tldr"] as? String, !text.isEmpty {
                     onEvent(.partialTLDR(text))
+                }
+            case "partial_suggestions":
+                if let list = object["suggestions"] as? [String], !list.isEmpty {
+                    onEvent(.partialSuggestions(list))
                 }
             case "final":
                 guard let status = object["status"] as? String,

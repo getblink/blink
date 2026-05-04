@@ -454,6 +454,121 @@ final class SuggestionsOverlay: NSObject {
         )
     }
 
+    func updateSuggestions(_ suggestions: [String]) {
+        guard let panel, let contentView, let summaryCard else { return }
+        let visibleSuggestions = Array(suggestions.prefix(3))
+
+        for card in suggestionCards {
+            card.outer.removeFromSuperview()
+        }
+        suggestionCards = []
+        customInputField?.onFocusChanged?(false)
+        customInputCard?.removeFromSuperview()
+        customInputCard = nil
+        customInputField = nil
+        panel.customReplyField = nil
+        expandedSuggestionIndex = nil
+
+        let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let contentWidth = Layout.panelWidth
+        let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let expandedHeights = visibleSuggestions.map { text in
+            max(
+                Layout.suggestionCollapsedHeight,
+                measureHeight(text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
+                    + Layout.suggestionPaddingY
+                    + Layout.suggestionBottomPaddingExpanded
+            )
+        }
+        let suggestionStackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
+            + CGFloat(max(0, visibleSuggestions.count - 1)) * Layout.suggestionGap
+        let customStackHeight = visibleSuggestions.isEmpty
+            ? Layout.customInputHeight
+            : Layout.suggestionGap + Layout.customInputHeight
+        let stackHeight = suggestionStackHeight + customStackHeight
+
+        let summaryHeight = summaryCard.frame.height
+        let contentHeight = summaryHeight + Layout.sectionGap + stackHeight
+        let newPanelWidth = panel.frame.width
+        let newPanelHeight = contentHeight + Layout.shadowBleed * 2
+
+        let newFrame = NSRect(
+            x: panel.frame.origin.x,
+            y: basePanelTopY - newPanelHeight,
+            width: newPanelWidth,
+            height: newPanelHeight
+        )
+        panel.setFrame(newFrame, display: true, animate: false)
+        contentView.frame = NSRect(x: 0, y: 0, width: newPanelWidth, height: newPanelHeight)
+
+        let contentX = Layout.shadowBleed
+        let contentTop = newPanelHeight - Layout.shadowBleed
+        let summaryY = contentTop - summaryHeight
+        summaryCard.frame = NSRect(
+            x: contentX,
+            y: summaryY,
+            width: contentWidth,
+            height: summaryHeight
+        )
+        summaryBaseFrame = summaryCard.frame
+
+        var cards: [SuggestionCard] = []
+        var y = summaryY - Layout.sectionGap
+        for (offset, text) in visibleSuggestions.enumerated() {
+            y -= Layout.suggestionCollapsedHeight
+            let rowFrame = NSRect(
+                x: contentX,
+                y: y,
+                width: contentWidth,
+                height: Layout.suggestionCollapsedHeight
+            )
+            let collapsedText = collapsedSingleLineText(text, width: suggestionLabelWidth, font: suggestionFont)
+            let card = makeSuggestionCard(
+                frame: rowFrame,
+                index: offset + 1,
+                text: collapsedText,
+                font: suggestionFont
+            )
+            contentView.addSubview(card.outer)
+            cards.append(SuggestionCard(
+                outer: card.outer,
+                content: card.content,
+                tint: card.tint,
+                number: card.number,
+                label: card.label,
+                enterHint: card.enterHint,
+                collapsedFrame: rowFrame,
+                collapsedText: collapsedText,
+                fullText: text,
+                expandedHeight: expandedHeights[offset]
+            ))
+            if offset < visibleSuggestions.count - 1 {
+                y -= Layout.suggestionGap
+            }
+        }
+
+        if !visibleSuggestions.isEmpty {
+            y -= Layout.suggestionGap
+        }
+        y -= Layout.customInputHeight
+        let customFrame = NSRect(
+            x: contentX,
+            y: y,
+            width: contentWidth,
+            height: Layout.customInputHeight
+        )
+        let customCard = makeCustomInputCard(frame: customFrame, font: suggestionFont)
+        contentView.addSubview(customCard.outer)
+
+        self.suggestionCards = cards
+        self.customInputCard = customCard.outer
+        self.customInputBaseFrame = customFrame
+        self.customInputField = customCard.field
+        panel.customReplyField = customCard.field
+        self.basePanelHeight = newPanelHeight
+        self.currentHeightDelta = 0
+    }
+
     func focusCustomInput() {
         guard let panel, let field = customInputField else { return }
         collapseSuggestions()
