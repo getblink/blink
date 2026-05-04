@@ -130,7 +130,11 @@ local DMGs are produced with `bash tldr_app/scripts/make_dmg.sh`. Pending run
 records for crash recovery live under `~/Library/Application Support/TLDR/pending/`.
 If `BLINK_PROXY_URL` + `BLINK_PROXY_TOKEN` are present in `~/.tldr/.env`, the
 packaged flow calls the standalone TLDR server and uploads request/event
-diagnostics; otherwise it falls back to direct Gemini. The installer resets TCC
+diagnostics; otherwise it falls back to direct Gemini. Set
+`TLDR_DISABLE_PROXY=1` in `~/.tldr/.env` to force direct-Gemini routing even
+when proxy credentials are populated (or supplied via a bundled
+`Resources/proxy.env`); useful when iterating on the bundled prompt locally
+without redeploying the server. The installer resets TCC
 on every rebuild so permissions attach to the fresh canonical binary; use
 `--skip-tcc-reset` only for non-dogfood script checks.
 

@@ -11,6 +11,8 @@ TLDR is a menubar app:
   pending-run metadata, and behavior events.
 - The bundled Python runtime calls the TLDR server when `BLINK_PROXY_URL` +
   `BLINK_PROXY_TOKEN` are configured, and otherwise falls back to direct Gemini.
+  `TLDR_DISABLE_PROXY=1` forces direct-Gemini regardless (used when iterating
+  on the bundled prompt locally without redeploying the server).
 - Swift shows a non-activating overlay with a TL;DR and three suggestions.
 - `1`, `2`, or `3` expands a suggestion while the original app keeps focus.
 - Pressing the same number again copies that suggestion and closes the overlay.
@@ -58,6 +60,10 @@ GEMINI_API_KEY=...
 # Optional proxy-backed server mode:
 BLINK_PROXY_URL=http://127.0.0.1:8000
 BLINK_PROXY_TOKEN=...
+# Force direct-Gemini routing even when the two proxy vars (or a bundled
+# Resources/proxy.env) are populated. Use while iterating on the bundled
+# prompt locally without redeploying the server.
+TLDR_DISABLE_PROXY=1
 ```
 
 For dogfood DMGs, prefer baking proxy config at build time so users do not need
