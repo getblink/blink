@@ -3,12 +3,21 @@ import ApplicationServices
 import Foundation
 
 enum FocusedContextCapture {
+    struct Snapshot {
+        let uploadPayload: [String: Any]
+        let meaningfulDraftText: String?
+    }
+
     static func capture(allowContentRetention: Bool) -> [String: Any] {
+        captureSnapshot(allowContentRetention: allowContentRetention).uploadPayload
+    }
+
+    static func captureSnapshot(allowContentRetention: Bool) -> Snapshot {
         guard AXIsProcessTrusted() else {
-            return [
+            return Snapshot(uploadPayload: [
                 "permission_status": "denied",
                 "warnings": ["accessibility_not_trusted"],
-            ]
+            ], meaningfulDraftText: nil)
         }
 
         let systemWide = AXUIElementCreateSystemWide()
@@ -19,10 +28,10 @@ enum FocusedContextCapture {
             &focusedRef
         )
         guard focusedError == .success, let rawFocused = focusedRef else {
-            return [
+            return Snapshot(uploadPayload: [
                 "permission_status": "granted",
                 "warnings": ["no_focused_ui_element"],
-            ]
+            ], meaningfulDraftText: nil)
         }
         let focused = rawFocused as! AXUIElement
 
@@ -51,11 +60,18 @@ enum FocusedContextCapture {
                 "length": range.length,
             ]
         }
-        if let value = payload["value"] as? String, !value.isEmpty {
-            payload["nearby_relevant_text"] = String(value.prefix(400))
-            payload["draft_present"] = true
+        let meaningfulDraft = meaningfulText(payload["value"] as? String)
+        if payload["value"] is String {
+            payload["meaningful_value_char_count"] = meaningfulDraft?.count ?? 0
+            if let meaningfulDraft {
+                payload["nearby_relevant_text"] = String(meaningfulDraft.prefix(400))
+                payload["draft_present"] = true
+            } else {
+                payload["draft_present"] = false
+            }
         } else {
             payload["draft_present"] = false
+            payload["meaningful_value_char_count"] = 0
         }
 
         var pid: pid_t = 0
@@ -64,7 +80,22 @@ enum FocusedContextCapture {
             payload["app_name"] = app.localizedName as Any
             payload["bundle_id"] = app.bundleIdentifier as Any
         }
-        return sanitizeForUpload(payload, allowContentRetention: allowContentRetention)
+        return Snapshot(
+            uploadPayload: sanitizeForUpload(payload, allowContentRetention: allowContentRetention),
+            meaningfulDraftText: meaningfulDraft
+        )
+    }
+
+    static func meaningfulText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let scalars = trimmed.unicodeScalars.filter { scalar in
+            !CharacterSet.controlCharacters.contains(scalar)
+        }
+        let text = String(String.UnicodeScalarView(scalars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     static func sanitizeForUpload(

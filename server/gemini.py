@@ -143,10 +143,11 @@ def generate_tldr_and_suggestions(
         contents.append(
             "Structured capture context (JSON). Treat it as additional evidence; "
             "do not repeat it verbatim in the output. If stateful_context is "
-            "present, use voice_samples only as examples of the user's writing "
-            "style, and use recent_surface_history only for continuity in this "
-            "same immediate surface. Current screen evidence wins; never import "
-            "unsupported facts from history.\n"
+            "present, use preference_examples to infer which suggestions the user "
+            "finds useful, use voice_samples only as examples of the user's writing "
+            "style, and use recent_surface_history only for continuity in this same "
+            "immediate surface. Current screen evidence wins; never import unsupported "
+            "facts from history.\n"
             + context_text
         )
     if image_bytes is not None:

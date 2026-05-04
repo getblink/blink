@@ -49,7 +49,9 @@ echo "[tldr] copying app resources -> $RESOURCES"
 rsync -a "$APP_DIR/Resources/" "$RESOURCES/"
 
 rm -f "$RESOURCES/proxy.env"
-if [[ -n "${TLDR_PROXY_URL:-}" || -n "${TLDR_PROXY_TOKEN:-}" ]]; then
+if [[ "${TLDR_DISABLE_PROXY:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    echo "[tldr] proxy embedding disabled by TLDR_DISABLE_PROXY"
+elif [[ -n "${TLDR_PROXY_URL:-}" || -n "${TLDR_PROXY_TOKEN:-}" ]]; then
     if [[ -z "${TLDR_PROXY_URL:-}" || -z "${TLDR_PROXY_TOKEN:-}" ]]; then
         echo "[tldr] error: set both TLDR_PROXY_URL and TLDR_PROXY_TOKEN, or neither" >&2
         exit 1

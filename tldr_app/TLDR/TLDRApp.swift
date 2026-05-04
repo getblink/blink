@@ -70,6 +70,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return consumed
             },
+            onCustomInsert: { [weak coordinator] in
+                if Thread.isMainThread {
+                    _ = coordinator?.insertCustomReplyFromInput()
+                    return true
+                }
+                DispatchQueue.main.sync {
+                    _ = coordinator?.insertCustomReplyFromInput()
+                }
+                return true
+            },
+            onLeaveCustomInput: { [weak coordinator] in coordinator?.leaveCustomInput() },
+            onTextEditing: { [weak coordinator] shortcut in
+                if Thread.isMainThread {
+                    return coordinator?.performCustomInputShortcut(shortcut) ?? false
+                }
+                var consumed = false
+                DispatchQueue.main.sync {
+                    consumed = coordinator?.performCustomInputShortcut(shortcut) ?? false
+                }
+                return consumed
+            },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

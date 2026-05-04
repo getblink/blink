@@ -8,6 +8,9 @@ final class HotkeyManager {
     private let onSummarize: () -> Void
     private let onChoice: (Int) -> Void
     private let onInsert: () -> Bool
+    private let onCustomInsert: () -> Bool
+    private let onLeaveCustomInput: () -> Void
+    private let onTextEditing: (TextEditingShortcut) -> Bool
     private let onDismiss: () -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -25,6 +28,9 @@ final class HotkeyManager {
         onSummarize: @escaping () -> Void,
         onChoice: @escaping (Int) -> Void,
         onInsert: @escaping () -> Bool,
+        onCustomInsert: @escaping () -> Bool,
+        onLeaveCustomInput: @escaping () -> Void,
+        onTextEditing: @escaping (TextEditingShortcut) -> Bool,
         onDismiss: @escaping () -> Void
     ) {
         self.isOverlayActive = isOverlayActive
@@ -32,6 +38,9 @@ final class HotkeyManager {
         self.onSummarize = onSummarize
         self.onChoice = onChoice
         self.onInsert = onInsert
+        self.onCustomInsert = onCustomInsert
+        self.onLeaveCustomInput = onLeaveCustomInput
+        self.onTextEditing = onTextEditing
         self.onDismiss = onDismiss
     }
 
@@ -100,6 +109,13 @@ final class HotkeyManager {
                 return nil
             case .insert:
                 return manager.onInsert() ? nil : Unmanaged.passUnretained(event)
+            case .insertCustomInput:
+                return manager.onCustomInsert() ? nil : Unmanaged.passUnretained(event)
+            case .leaveCustomInput:
+                DispatchQueue.main.async { manager.onLeaveCustomInput() }
+                return nil
+            case .textEditing(let shortcut):
+                return manager.onTextEditing(shortcut) ? nil : Unmanaged.passUnretained(event)
             }
         }
 
