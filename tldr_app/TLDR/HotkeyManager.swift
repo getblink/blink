@@ -4,6 +4,7 @@ import IOKit.hid
 
 final class HotkeyManager {
     private let isOverlayActive: () -> Bool
+    private let isCustomInputActive: () -> Bool
     private let onSummarize: () -> Void
     private let onChoice: (Int) -> Void
     private let onInsert: () -> Bool
@@ -12,9 +13,6 @@ final class HotkeyManager {
     private var runLoopSource: CFRunLoopSource?
 
     private let summaryKeyCode: CGKeyCode = 17
-    private let choiceKeyCodes: [CGKeyCode: Int] = [18: 0, 19: 1, 20: 2]
-    private let returnKeyCodes: Set<CGKeyCode> = [36, 76]
-    private let escapeKeyCode: CGKeyCode = 53
     private let summaryFlags: CGEventFlags = [.maskControl, .maskShift]
     private let relevantFlags: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift,
@@ -23,12 +21,14 @@ final class HotkeyManager {
 
     init(
         isOverlayActive: @escaping () -> Bool,
+        isCustomInputActive: @escaping () -> Bool,
         onSummarize: @escaping () -> Void,
         onChoice: @escaping (Int) -> Void,
         onInsert: @escaping () -> Bool,
         onDismiss: @escaping () -> Void
     ) {
         self.isOverlayActive = isOverlayActive
+        self.isCustomInputActive = isCustomInputActive
         self.onSummarize = onSummarize
         self.onChoice = onChoice
         self.onInsert = onInsert
@@ -85,16 +85,20 @@ final class HotkeyManager {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags.intersection(manager.relevantFlags)
 
-        if manager.isOverlayActive(), flags.isEmpty {
-            if let index = manager.choiceKeyCodes[keyCode] {
+        if manager.isOverlayActive(),
+           let command = OverlayKeyRouter.command(
+            forCGKeyCode: keyCode,
+            flags: event.flags,
+            customInputActive: manager.isCustomInputActive()
+           ) {
+            switch command {
+            case .choice(let index):
                 DispatchQueue.main.async { manager.onChoice(index) }
                 return nil
-            }
-            if keyCode == manager.escapeKeyCode {
+            case .dismiss:
                 DispatchQueue.main.async { manager.onDismiss() }
                 return nil
-            }
-            if manager.returnKeyCodes.contains(keyCode) {
+            case .insert:
                 return manager.onInsert() ? nil : Unmanaged.passUnretained(event)
             }
         }

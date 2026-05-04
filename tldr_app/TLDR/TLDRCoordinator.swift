@@ -26,6 +26,10 @@ final class TLDRCoordinator {
         overlay.isVisible
     }
 
+    var isCustomInputActive: Bool {
+        choiceState.customInputActive
+    }
+
     static func clientMetadata() -> [String: Any] {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = info["CFBundleShortVersionString"] as? String ?? "0"
@@ -36,6 +40,7 @@ final class TLDRCoordinator {
             "app_version": version,
             "app_build": build,
             "bundle_id": Bundle.main.bundleIdentifier ?? "com.henryz2004.tldr",
+            "install_id": Paths.loadOrCreateInstallID(),
             "platform": "macOS",
             "platform_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
@@ -131,6 +136,7 @@ final class TLDRCoordinator {
                         "height": capture.windowFramePoints.height,
                     ],
                     "frontmost_app": frontmostApp,
+                    "client": clientMetadata,
                     "image_diagnostics": diagnostics,
                 ]
                 try JSONFiles.writeObject(hostProfile, to: hostProfileURL)
@@ -223,6 +229,21 @@ final class TLDRCoordinator {
                     self.currentBundleDir = bundleDir
                     self.currentRequestID = requestID
                     self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
+                    self.overlay.onCustomInputFocusChanged = { [weak self] active in
+                        self?.choiceState.setCustomInputActive(active)
+                    }
+                    self.overlay.onCustomInsert = { [weak self] text in
+                        self?.insertCustomReply(text: text)
+                    }
+                    self.overlay.onChoiceKey = { [weak self] index in
+                        self?.chooseSuggestion(index: index)
+                    }
+                    self.overlay.onInsertKey = { [weak self] in
+                        self?.insertExpandedSuggestion() ?? false
+                    }
+                    self.overlay.onDismissKey = { [weak self] in
+                        self?.dismissOverlay()
+                    }
                     self.overlay.show(
                         tldr: result.tldr,
                         suggestions: self.currentSuggestions
@@ -270,6 +291,9 @@ final class TLDRCoordinator {
             expandSuggestion(index: index)
         case .copy(let index):
             copySuggestion(index: index)
+        case .focusInput:
+            overlay.focusCustomInput()
+            status("type your own reply")
         }
     }
 
@@ -282,6 +306,14 @@ final class TLDRCoordinator {
             insertSuggestion(index: index)
             return true
         }
+    }
+
+    @MainActor
+    func insertCustomReplyFromInput() -> Bool {
+        let text = overlay.customInputText
+        guard !text.isEmpty else { return false }
+        insertCustomReply(text: text)
+        return true
     }
 
     @MainActor
@@ -421,11 +453,85 @@ final class TLDRCoordinator {
     }
 
     @MainActor
+    private func insertCustomReply(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let requestID = currentRequestID
+        let clientMetadata = Self.clientMetadata()
+        overlay.close()
+        recordCustomReply(text: trimmed)
+        status("inserting your reply...")
+
+        if let requestID {
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = "paste_started"
+                payload["chosen_action"] = "user_typed"
+                payload["custom_reply_at"] = JSONFiles.isoString()
+            }
+            emitEvent(
+                requestID: requestID,
+                type: "paste_started",
+                allowLogging: runtimeStore.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: ["chosen_action": "user_typed"]
+            )
+        }
+
+        Inserter.insert(text: trimmed, activationDelay: 0.15) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.status("inserted your reply")
+                if let requestID {
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "run_completed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["outcome": "user_typed"]
+                    )
+                    PendingRunStore.finish(requestID: requestID)
+                }
+            case .failure(let error):
+                if let requestID {
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "paste_failed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: [
+                            "chosen_action": "user_typed",
+                            "error": self.shortErrorSummary(error),
+                        ]
+                    )
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "run_completed",
+                        allowLogging: self.runtimeStore.allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["outcome": "paste_failed", "chosen_action": "user_typed"]
+                    )
+                    PendingRunStore.finish(requestID: requestID)
+                }
+                self.reportFailure(
+                    title: "Paste Failed",
+                    statusText: "paste failed: \(self.shortErrorSummary(error))",
+                    detail: self.detailedErrorMessage(error)
+                )
+            }
+        }
+
+        resetCurrentRun()
+    }
+
+    @MainActor
     private func resetCurrentRun() {
         currentSuggestions = []
         currentBundleDir = nil
         currentRequestID = nil
         choiceState = SuggestionChoiceState(suggestionCount: 0)
+        overlay.onCustomInputFocusChanged = nil
+        overlay.onCustomInsert = nil
     }
 
     @MainActor
@@ -562,6 +668,20 @@ final class TLDRCoordinator {
         payload["chosen_text"] = text
         payload["chosen_at"] = JSONFiles.isoString()
         payload["chosen_action"] = action
+        try? JSONFiles.writeObject(payload, to: path)
+    }
+
+    @MainActor
+    private func recordCustomReply(text: String) {
+        guard let bundleDir = currentBundleDir else { return }
+        let path = bundleDir.appendingPathComponent("run.json")
+        var payload = JSONFiles.readObject(at: path) ?? [:]
+        payload["chosen_index"] = NSNull()
+        payload["chosen_text"] = NSNull()
+        payload["chosen_at"] = JSONFiles.isoString()
+        payload["chosen_action"] = "user_typed"
+        payload["custom_reply_text"] = text
+        payload["custom_reply_at"] = payload["chosen_at"]
         try? JSONFiles.writeObject(payload, to: path)
     }
 

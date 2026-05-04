@@ -39,6 +39,22 @@ enum Paths {
         runtimeDir.appendingPathComponent("settings.json")
     }
 
+    static var installIDPath: URL {
+        runtimeDir.appendingPathComponent("install_id")
+    }
+
+    static func loadOrCreateInstallID() -> String {
+        let path = installIDPath
+        if let existing = try? String(contentsOf: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !existing.isEmpty {
+            return existing
+        }
+        let installID = UUID().uuidString.lowercased()
+        try? installID.write(to: path, atomically: true, encoding: .utf8)
+        return installID
+    }
+
     static var appSupportDir: URL {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask

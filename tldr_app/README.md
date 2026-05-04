@@ -15,6 +15,8 @@ TLDR is a menubar app:
 - `1`, `2`, or `3` expands a suggestion while the original app keeps focus.
 - Pressing the same number again copies that suggestion and closes the overlay.
 - `Return` inserts the expanded suggestion through the clipboard + Cmd+V path.
+- Pressing `4` focuses the custom reply field; custom replies become the
+  highest-quality local voice samples for future suggestions.
 - `Return` with no expanded suggestion falls through to the focused app.
 - `Esc` dismisses the overlay.
 
@@ -24,6 +26,15 @@ Runtime state:
 - Run artifacts: `~/Library/Application Support/TLDR/runs/`
 - Pending crash-recovery records: `~/Library/Application Support/TLDR/pending/`
 - Local install: `~/Applications/TLDR.app`
+
+Stateful POC:
+
+- Before each request, `tldr_once.py` scans recent local run artifacts.
+- It includes up to five user-typed custom replies as voice samples.
+- It includes up to three recent same-surface outcomes when the app bundle and
+  focused title match within a 15-minute window.
+- The proxy receives this as `stateful_context`; the server may use it for model
+  context, but storage redacts text fields unless content retention is enabled.
 
 ## Build
 
