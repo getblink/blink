@@ -8,6 +8,9 @@ struct ProxyConfig {
 enum RuntimeEnvironment {
     static func proxyConfig() -> ProxyConfig? {
         let env = mergedEnvironment()
+        guard !proxyDisabled(in: env) else {
+            return nil
+        }
         let rawURL = (env["BLINK_PROXY_URL"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let token = (env["BLINK_PROXY_TOKEN"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawURL.isEmpty, !token.isEmpty, let url = URL(string: rawURL) else {
@@ -53,5 +56,18 @@ enum RuntimeEnvironment {
             value.removeLast()
         }
         return (key, value)
+    }
+
+    static func proxyDisabled(in env: [String: String]) -> Bool {
+        isTruthy(env["TLDR_DISABLE_PROXY"])
+    }
+
+    private static func isTruthy(_ value: String?) -> Bool {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
     }
 }

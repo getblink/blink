@@ -3,6 +3,46 @@ import CoreGraphics
 @testable import TLDR
 
 final class SuggestionChoiceStateTests: XCTestCase {
+    func testPrefixStripperRemovesDuplicatedDraftPrefix() {
+        XCTAssertEqual(
+            SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: "I think we should ship this today",
+                draft: "I think we should"
+            ),
+            "ship this today"
+        )
+    }
+
+    func testPrefixStripperNormalizesWhitespaceAndCase() {
+        XCTAssertEqual(
+            SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: "i think   we should ship this today",
+                draft: "I think we should"
+            ),
+            "ship this today"
+        )
+    }
+
+    func testPrefixStripperLeavesPartialOverlapAlone() {
+        XCTAssertEqual(
+            SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: "We should ship this today",
+                draft: "I think we should"
+            ),
+            "We should ship this today"
+        )
+    }
+
+    func testPrefixStripperIgnoresEmptyOrSentinelDraft() {
+        XCTAssertEqual(
+            SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: "Ship this today",
+                draft: "\n"
+            ),
+            "Ship this today"
+        )
+    }
+
     func testNumberPressExpandsBeforeCopyingSameSuggestion() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
@@ -43,6 +83,24 @@ final class SuggestionChoiceStateTests: XCTestCase {
         XCTAssertNil(state.expandedIndex)
         XCTAssertTrue(state.customInputActive)
         XCTAssertEqual(state.pressReturn(), .propagate)
+    }
+
+    func testFourthNumberIgnoredWhenCustomInputDisabled() {
+        var state = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+
+        XCTAssertEqual(state.pressNumber(index: 3), .ignored)
+        XCTAssertFalse(state.customInputActive)
+    }
+
+    func testLeavingCustomInputRestoresSuggestionMode() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.pressNumber(index: 3), .focusInput)
+        state.setCustomInputActive(false)
+
+        XCTAssertFalse(state.customInputActive)
+        XCTAssertEqual(state.pressNumber(index: 0), .expand(0))
+        XCTAssertEqual(state.pressReturn(), .insert(0))
     }
 
     func testSuggestionNumberLeavesCustomInputMode() {
@@ -88,13 +146,42 @@ final class SuggestionChoiceStateTests: XCTestCase {
         }
     }
 
-    func testOverlayRouterLetsCustomInputKeepTypingExceptEscape() {
+    func testOverlayRouterLetsCustomInputKeepTypingExceptEscapeAndReturn() {
         XCTAssertNil(
             OverlayKeyRouter.command(forCGKeyCode: 18, flags: [], customInputActive: true)
         )
         XCTAssertEqual(
             OverlayKeyRouter.command(forCGKeyCode: 53, flags: [.maskAlphaShift], customInputActive: true),
-            .dismiss
+            .leaveCustomInput
+        )
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 36, flags: [], customInputActive: true),
+            .insertCustomInput
+        )
+    }
+
+    func testOverlayRouterRoutesCommandEditingShortcutsInCustomInput() {
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 0, flags: [.maskCommand], customInputActive: true),
+            .textEditing(.selectAll)
+        )
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 8, flags: [.maskCommand], customInputActive: true),
+            .textEditing(.copy)
+        )
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 9, flags: [.maskCommand], customInputActive: true),
+            .textEditing(.paste)
+        )
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 7, flags: [.maskCommand], customInputActive: true),
+            .textEditing(.cut)
+        )
+    }
+
+    func testOverlayRouterDoesNotStealCommandEditingShortcutsOutsideCustomInput() {
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 0, flags: [.maskCommand], customInputActive: false)
         )
     }
 }

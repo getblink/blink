@@ -5,10 +5,26 @@ enum OverlayKeyCommand: Equatable {
     case choice(Int)
     case dismiss
     case insert
+    case insertCustomInput
+    case leaveCustomInput
+    case textEditing(TextEditingShortcut)
+}
+
+enum TextEditingShortcut: Equatable {
+    case selectAll
+    case copy
+    case paste
+    case cut
 }
 
 struct OverlayKeyRouter {
     private static let choiceKeyCodes: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3]
+    private static let textEditingKeyCodes: [UInt16: TextEditingShortcut] = [
+        0: .selectAll,
+        8: .copy,
+        9: .paste,
+        7: .cut,
+    ]
     private static let returnKeyCodes: Set<UInt16> = [36, 76]
     private static let escapeKeyCode: UInt16 = 53
     private static let blockingCGFlags: CGEventFlags = [
@@ -21,6 +37,7 @@ struct OverlayKeyRouter {
     static func command(forCGKeyCode keyCode: CGKeyCode, flags: CGEventFlags, customInputActive: Bool) -> OverlayKeyCommand? {
         command(
             keyCode: UInt16(keyCode),
+            hasCommandOnlyModifier: flags.intersection(blockingCGFlags) == .maskCommand,
             hasBlockingModifier: !flags.intersection(blockingCGFlags).isEmpty,
             customInputActive: customInputActive
         )
@@ -29,17 +46,33 @@ struct OverlayKeyRouter {
     static func command(for event: NSEvent, customInputActive: Bool) -> OverlayKeyCommand? {
         command(
             keyCode: event.keyCode,
+            hasCommandOnlyModifier: event.modifierFlags.intersection(blockingNSEventFlags) == .command,
             hasBlockingModifier: !event.modifierFlags.intersection(blockingNSEventFlags).isEmpty,
             customInputActive: customInputActive
         )
     }
 
-    private static func command(keyCode: UInt16, hasBlockingModifier: Bool, customInputActive: Bool) -> OverlayKeyCommand? {
-        guard !hasBlockingModifier else { return nil }
-
+    private static func command(
+        keyCode: UInt16,
+        hasCommandOnlyModifier: Bool,
+        hasBlockingModifier: Bool,
+        customInputActive: Bool
+    ) -> OverlayKeyCommand? {
         if customInputActive {
-            return keyCode == escapeKeyCode ? .dismiss : nil
+            if hasCommandOnlyModifier, let shortcut = textEditingKeyCodes[keyCode] {
+                return .textEditing(shortcut)
+            }
+            guard !hasBlockingModifier else { return nil }
+            if keyCode == escapeKeyCode {
+                return .leaveCustomInput
+            }
+            if returnKeyCodes.contains(keyCode) {
+                return .insertCustomInput
+            }
+            return nil
         }
+
+        guard !hasBlockingModifier else { return nil }
 
         if let index = choiceKeyCodes[keyCode] {
             return .choice(index)

@@ -10,6 +10,7 @@ final class TLDRCoordinator {
     private var currentSuggestions: [String] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    private var currentStreamingRun: PythonRunner.StreamingRun?
     private var choiceState = SuggestionChoiceState(suggestionCount: 0)
     private var running = false
 
@@ -97,9 +98,10 @@ final class TLDRCoordinator {
                 let captureStartedPerf = monotonicNow()
                 let capture = try ScreenCapture.captureFrontmostWindowSync()
                 let captureMS = durationMS(since: captureStartedPerf)
-                let focusedContext = FocusedContextCapture.capture(
+                let focusedSnapshot = FocusedContextCapture.captureSnapshot(
                     allowContentRetention: runtime.allowContentRetention
                 )
+                let focusedContext = focusedSnapshot.uploadPayload
                 guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
                     throw NSError(domain: "TLDRCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
                 }
@@ -182,8 +184,25 @@ final class TLDRCoordinator {
                 )
 
                 status("calling TLDR backend...")
+                DispatchQueue.main.async {
+                    self.currentRequestID = requestID
+                    self.currentSuggestions = []
+                    self.currentBundleDir = nil
+                    self.choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+                    self.overlay.onCustomInputFocusChanged = nil
+                    self.overlay.onCustomInsert = nil
+                    self.overlay.onCustomInsertKey = nil
+                    self.overlay.onLeaveCustomInputKey = nil
+                    self.overlay.onTextEditingKey = nil
+                    self.overlay.onChoiceKey = { _ in }
+                    self.overlay.onInsertKey = { true }
+                    self.overlay.onDismissKey = { [weak self] in
+                        self?.dismissOverlay()
+                    }
+                    self.overlay.showLoading(tldr: "Reading this screen...")
+                }
                 let pythonStartedPerf = monotonicNow()
-                let result = try PythonRunner.runOnceSync(
+                let result = try PythonRunner.runOnceStreaming(
                     config: config,
                     screenshotPNG: screenshotURL,
                     runtimeJSON: runtimeURL,
@@ -191,8 +210,30 @@ final class TLDRCoordinator {
                     prompt: Paths.promptPath,
                     requestJSON: requestURL,
                     outputParent: Paths.runsDir,
-                    hostProfileJSON: hostProfileURL
+                    hostProfileJSON: hostProfileURL,
+                    onRunStarted: { run in
+                        DispatchQueue.main.async {
+                            self.currentStreamingRun = run
+                        }
+                    },
+                    onEvent: { event in
+                        DispatchQueue.main.async {
+                            guard self.currentRequestID == requestID else { return }
+                            switch event {
+                            case .phase(let message):
+                                self.overlay.updateSummary(message)
+                            case .partialTLDR(let text):
+                                self.overlay.updateSummary(text)
+                            }
+                        }
+                    }
                 )
+                DispatchQueue.main.async {
+                    if self.currentRequestID == requestID {
+                        self.currentStreamingRun = nil
+                    }
+                }
+                guard isCurrentRequest(requestID) else { return }
                 let pythonMS = durationMS(since: pythonStartedPerf)
                 let totalMS = durationMS(since: startedPerf)
 
@@ -225,7 +266,13 @@ final class TLDRCoordinator {
 
                 status("ready - press 1/2/3 to expand")
                 DispatchQueue.main.async {
-                    self.currentSuggestions = Array(result.suggestions.prefix(3))
+                    guard self.currentRequestID == requestID else { return }
+                    self.currentSuggestions = Array(result.suggestions.prefix(3)).map { suggestion in
+                        SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                            from: suggestion,
+                            draft: focusedSnapshot.meaningfulDraftText
+                        )
+                    }
                     self.currentBundleDir = bundleDir
                     self.currentRequestID = requestID
                     self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
@@ -240,6 +287,16 @@ final class TLDRCoordinator {
                     }
                     self.overlay.onInsertKey = { [weak self] in
                         self?.insertExpandedSuggestion() ?? false
+                    }
+                    self.overlay.onCustomInsertKey = { [weak self] in
+                        _ = self?.insertCustomReplyFromInput()
+                        return true
+                    }
+                    self.overlay.onLeaveCustomInputKey = { [weak self] in
+                        self?.leaveCustomInput()
+                    }
+                    self.overlay.onTextEditingKey = { [weak self] shortcut in
+                        self?.performCustomInputShortcut(shortcut) ?? false
                     }
                     self.overlay.onDismissKey = { [weak self] in
                         self?.dismissOverlay()
@@ -257,6 +314,12 @@ final class TLDRCoordinator {
                     )
                 }
             } catch {
+                let wasDismissed = DispatchQueue.main.sync {
+                    self.currentRequestID != requestID
+                }
+                if wasDismissed {
+                    return
+                }
                 PendingRunStore.update(requestID: requestID) { payload in
                     payload["last_phase"] = lastPhase
                     payload["error"] = self.shortErrorSummary(error)
@@ -284,6 +347,7 @@ final class TLDRCoordinator {
 
     @MainActor
     func chooseSuggestion(index: Int) {
+        guard currentBundleDir != nil else { return }
         switch choiceState.pressNumber(index: index) {
         case .ignored:
             return
@@ -299,6 +363,7 @@ final class TLDRCoordinator {
 
     @MainActor
     func insertExpandedSuggestion() -> Bool {
+        guard currentBundleDir != nil else { return true }
         switch choiceState.pressReturn() {
         case .propagate:
             return false
@@ -310,10 +375,24 @@ final class TLDRCoordinator {
 
     @MainActor
     func insertCustomReplyFromInput() -> Bool {
+        guard currentBundleDir != nil else { return true }
         let text = overlay.customInputText
         guard !text.isEmpty else { return false }
         insertCustomReply(text: text)
         return true
+    }
+
+    @MainActor
+    func leaveCustomInput() {
+        guard choiceState.customInputActive else { return }
+        choiceState.setCustomInputActive(false)
+        overlay.leaveCustomInput()
+        status("ready - press 1/2/3 to expand")
+    }
+
+    @MainActor
+    func performCustomInputShortcut(_ shortcut: TextEditingShortcut) -> Bool {
+        overlay.performCustomInputShortcut(shortcut)
     }
 
     @MainActor
@@ -529,15 +608,33 @@ final class TLDRCoordinator {
         currentSuggestions = []
         currentBundleDir = nil
         currentRequestID = nil
+        currentStreamingRun = nil
         choiceState = SuggestionChoiceState(suggestionCount: 0)
         overlay.onCustomInputFocusChanged = nil
         overlay.onCustomInsert = nil
+        overlay.onCustomInsertKey = nil
+        overlay.onLeaveCustomInputKey = nil
+        overlay.onTextEditingKey = nil
+        overlay.onChoiceKey = nil
+        overlay.onInsertKey = nil
+        overlay.onDismissKey = nil
+    }
+
+    private func isCurrentRequest(_ requestID: String) -> Bool {
+        if Thread.isMainThread {
+            return currentRequestID == requestID
+        }
+        return DispatchQueue.main.sync {
+            currentRequestID == requestID
+        }
     }
 
     @MainActor
     func dismissOverlay() {
         guard overlay.isVisible else { return }
         let requestID = currentRequestID
+        currentStreamingRun?.terminate()
+        currentStreamingRun = nil
         overlay.close()
         status("dismissed")
         recordDismiss()

@@ -28,13 +28,33 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
+DISABLE_PROXY_ENV = "TLDR_DISABLE_PROXY"
+MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
+SERVER_CONTEXT_PREFIX = (
+    "Structured capture context (JSON). Treat it as additional evidence; "
+    "do not repeat it verbatim in the output. If stateful_context is "
+    "present, use preference_examples to infer which suggestions the user "
+    "finds useful, use voice_samples only as examples of the user's writing "
+    "style, and use recent_surface_history only for continuity in this same "
+    "immediate surface. Current screen evidence wins; never import unsupported "
+    "facts from history."
+)
+SERVER_CONTENT_TEXT = (
+    "Summarize this active window and propose three replies. Use any "
+    "structured capture context if it is present."
+)
 
 STATEFUL_CONTEXT_VERSION = 1
 VOICE_SAMPLE_LIMIT = 5
 SURFACE_HISTORY_LIMIT = 3
+RELAXED_SURFACE_HISTORY_LIMIT = 2
+PREFERENCE_EXAMPLE_LIMIT = 3
+PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
 SURFACE_TEXT_MAX_CHARS = 500
+PREFERENCE_TEXT_MAX_CHARS = 360
 STATEFUL_CONTEXT_WINDOW_SECONDS = 15 * 60
+RELAXED_STATEFUL_CONTEXT_WINDOW_SECONDS = 10 * 60
 
 DEFAULT_PROMPT = """You are looking at a single screenshot of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
@@ -64,7 +84,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
      Good: "Sarah's waiting on your estimate. She needs it before 4pm."
      Good: "$1,247 invoice due Mar 15. Card on file expired last week."
 
-5. Surface the CTA, blocker, deadline, owner, or decision the user is on the hook for. When timestamps are visible, weight recent messages and approaching deadlines as the most likely takeaway.
+5. Surface the concrete takeaway: blocker, decision, ask, risk, next useful fact, deadline, owner, or CTA. When timestamps are visible, weight recent messages and approaching deadlines as the most likely takeaway. Avoid summarizing internal TLDR diagnostics or app state unless that is the visible topic.
 
 6. Skip facts the user already knows from being on the screen: app name, current channel, who they're chatting with. Only surface what changes their next decision. If there is no actionable thing on screen, lead with the most concrete detail visible (a number, a deadline, a name, an unread count).
 
@@ -92,15 +112,13 @@ Suggestion rules, in priority order:
 
 4. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
    - If the user has already started typing, suggestions are paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
+   - Do not repeat the existing draft prefix. Continue after the caret.
    - If the draft ends mid-sentence, continue it naturally.
    - If the draft is already a full sentence, suggest text that could follow it.
 
-5. Make the three suggestions meaningfully different:
-   - one concise, direct reply,
-   - one warmer or more collaborative reply,
-   - one that asks a useful clarifying question or proposes a next step.
+5. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current screen does not need.
 
-6. Match the user's register. Study any of the user's own prior messages visible in the screenshot, and match their length, punctuation, casing habits, and emoji/no-emoji style. If their style isn't visible, default to neutral-friendly.
+6. Match the user's register. Study any of the user's own prior messages visible in the screenshot, and match their casing, punctuation, directness, vocabulary, and emoji/no-emoji style. Same-surface voice examples are style guides only. Do not force shortness when a more complete answer is more valuable. Current screen evidence wins.
 
 7. Never use em dashes ("—") or en dashes ("–") in any suggestion. Substitute a period, comma, semicolon, or new line.
    - Bad: "Sounds good — I'll send the doc by EOD."
@@ -108,7 +126,9 @@ Suggestion rules, in priority order:
 
 8. If the screen has no message to reply to, treat suggestions as next actions or paste-ready phrasings appropriate to the surface: a code-review comment, a meeting-decline reason, a draft email, a search query, a commit message.
 
-9. Don't mention that you saw a screenshot.
+9. On AI-agent or coding-agent surfaces, suggestions should steer the agent, ask for evidence, request implementation, or push back. Phrase these as requests or directions to the agent ("Can you...", "Please...", "Show me..."), not as the user's own future work. Avoid "I agree...", "I'll test...", or self-referential agent-progress phrasing unless the visible context truly calls for that as the user's message.
+
+10. Don't mention that you saw a screenshot.
 
 Output JSON only:
 
@@ -173,6 +193,10 @@ def read_text(path: Path | None, fallback: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def env_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _bounded_text(value: Any, limit: int) -> str | None:
     text = str(value or "").strip()
     if not text:
@@ -227,7 +251,7 @@ def _load_run_pair(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]] | Non
     return run_log, request_log
 
 
-def _surface_key(envelope: dict[str, Any]) -> tuple[str | None, str | None]:
+def _surface_key(envelope: dict[str, Any]) -> dict[str, str | None]:
     frontmost = envelope.get("frontmost_app")
     if not isinstance(frontmost, dict):
         frontmost = {}
@@ -239,17 +263,46 @@ def _surface_key(envelope: dict[str, Any]) -> tuple[str | None, str | None]:
         160,
     )
     title = _bounded_text(focused.get("title"), 160)
-    return bundle_id, title
+    role = _bounded_text(
+        focused.get("role") or focused.get("ax_role") or focused.get("focused_role"),
+        160,
+    )
+    return {
+        "bundle_id": bundle_id,
+        "title": title,
+        "role": role,
+    }
 
 
-def _same_surface(current: dict[str, Any], previous: dict[str, Any]) -> bool:
-    current_bundle, current_title = _surface_key(current)
-    previous_bundle, previous_title = _surface_key(previous)
-    if not current_bundle or current_bundle != previous_bundle:
-        return False
-    # The POC intentionally avoids app-wide "memory" when no focused title is
-    # available; same-app-only history gets noisy fast.
-    return bool(current_title and previous_title and current_title == previous_title)
+def _surface_match(
+    current_key: dict[str, str | None],
+    previous_key: dict[str, str | None],
+) -> tuple[str | None, str | None]:
+    current_bundle = current_key.get("bundle_id")
+    previous_bundle = previous_key.get("bundle_id")
+    if not current_bundle:
+        return None, "current_missing_bundle_id"
+    if not previous_bundle:
+        return None, "previous_missing_bundle_id"
+    if current_bundle != previous_bundle:
+        return None, "bundle_id_mismatch"
+
+    current_title = current_key.get("title")
+    previous_title = previous_key.get("title")
+    if current_title and previous_title:
+        if current_title == previous_title:
+            return "title_match", None
+        return None, "title_mismatch"
+    if current_title or previous_title:
+        return None, "one_title_missing"
+
+    current_role = current_key.get("role")
+    previous_role = previous_key.get("role")
+    if current_role and previous_role:
+        if current_role == previous_role:
+            return "relaxed_same_app_role", None
+        return None, "role_mismatch"
+    return None, "empty_title_missing_role"
 
 
 def build_stateful_context(
@@ -274,10 +327,87 @@ def build_stateful_context(
 
     voice_samples: list[dict[str, Any]] = []
     seen_voice: set[str] = set()
+    preference_examples: list[dict[str, Any]] = []
+    seen_preference: set[str] = set()
     recent_surface_history: list[dict[str, Any]] = []
+    current_surface_key = _surface_key(current_envelope)
+    surface_match_debug: dict[str, Any] = {
+        "match_mode": "no_match",
+        "matched_run_ids": [],
+        "skipped_reasons": {},
+    }
 
     for run_dir, run_log, request_log, sort_time in run_pairs:
+        previous_surface_key = _surface_key(request_log)
+        match_mode, skipped_reason = _surface_match(current_surface_key, previous_surface_key)
+        if match_mode is None:
+            reason = skipped_reason or "no_match"
+            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
+            continue
+
+        age_seconds = (now - sort_time).total_seconds()
+        window_seconds = (
+            RELAXED_STATEFUL_CONTEXT_WINDOW_SECONDS
+            if match_mode == "relaxed_same_app_role"
+            else STATEFUL_CONTEXT_WINDOW_SECONDS
+        )
+        history_limit = (
+            RELAXED_SURFACE_HISTORY_LIMIT
+            if match_mode == "relaxed_same_app_role"
+            else SURFACE_HISTORY_LIMIT
+        )
+        if age_seconds < 0:
+            surface_match_debug["skipped_reasons"]["future_run"] = surface_match_debug["skipped_reasons"].get("future_run", 0) + 1
+            continue
+        if age_seconds > window_seconds:
+            reason = f"{match_mode}_too_old"
+            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
+            continue
+        response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
+        if len(recent_surface_history) < history_limit:
+            history_item = {
+                "created_at": run_log.get("finished_at") or run_log.get("started_at"),
+                "tldr": _bounded_text(response.get("tldr"), SURFACE_TEXT_MAX_CHARS),
+                "chosen_action": run_log.get("chosen_action"),
+                "chosen_index": run_log.get("chosen_index"),
+                "custom_reply_text": _bounded_text(run_log.get("custom_reply_text"), SURFACE_TEXT_MAX_CHARS),
+                "chosen_text": _bounded_text(run_log.get("chosen_text"), SURFACE_TEXT_MAX_CHARS),
+                "run_dir": run_dir.name,
+                "match_mode": match_mode,
+            }
+            history_item = {key: value for key, value in history_item.items() if value not in (None, "", [])}
+            if len(history_item) > 3:
+                recent_surface_history.append(history_item)
+                surface_match_debug["matched_run_ids"].append(run_dir.name)
+                if surface_match_debug["match_mode"] == "no_match":
+                    surface_match_debug["match_mode"] = match_mode
+
         custom_text = _bounded_text(run_log.get("custom_reply_text"), VOICE_SAMPLE_MAX_CHARS)
+        raw_suggestions = response.get("suggestions")
+        rejected_suggestions = []
+        if isinstance(raw_suggestions, list):
+            rejected_suggestions = [
+                text
+                for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in raw_suggestions)
+                if text
+            ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
+        if (
+            custom_text
+            and custom_text not in seen_preference
+            and rejected_suggestions
+            and len(preference_examples) < PREFERENCE_EXAMPLE_LIMIT
+        ):
+            preference_examples.append(
+                {
+                    "screen_takeaway": _bounded_text(response.get("tldr"), PREFERENCE_TEXT_MAX_CHARS),
+                    "rejected_suggestions": rejected_suggestions,
+                    "user_typed": _bounded_text(custom_text, PREFERENCE_TEXT_MAX_CHARS),
+                    "run_dir": run_dir.name,
+                    "match_mode": match_mode,
+                }
+            )
+            seen_preference.add(custom_text)
+
         if custom_text and custom_text not in seen_voice and len(voice_samples) < VOICE_SAMPLE_LIMIT:
             frontmost = request_log.get("frontmost_app")
             if not isinstance(frontmost, dict):
@@ -288,36 +418,42 @@ def build_stateful_context(
                     "created_at": run_log.get("custom_reply_at") or run_log.get("chosen_at") or run_log.get("finished_at"),
                     "app_bundle_id": frontmost.get("bundle_id"),
                     "app_name": frontmost.get("app_name"),
+                    "match_mode": match_mode,
                 }
             )
             seen_voice.add(custom_text)
 
-        if len(recent_surface_history) < SURFACE_HISTORY_LIMIT and _same_surface(current_envelope, request_log):
-            age_seconds = (now - sort_time).total_seconds()
-            if 0 <= age_seconds <= STATEFUL_CONTEXT_WINDOW_SECONDS:
-                response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
-                history_item = {
-                    "created_at": run_log.get("finished_at") or run_log.get("started_at"),
-                    "tldr": _bounded_text(response.get("tldr"), SURFACE_TEXT_MAX_CHARS),
-                    "chosen_action": run_log.get("chosen_action"),
-                    "chosen_index": run_log.get("chosen_index"),
-                    "custom_reply_text": _bounded_text(run_log.get("custom_reply_text"), SURFACE_TEXT_MAX_CHARS),
-                    "chosen_text": _bounded_text(run_log.get("chosen_text"), SURFACE_TEXT_MAX_CHARS),
-                    "run_dir": run_dir.name,
-                }
-                history_item = {key: value for key, value in history_item.items() if value not in (None, "", [])}
-                if len(history_item) > 2:
-                    recent_surface_history.append(history_item)
-
-        if len(voice_samples) >= VOICE_SAMPLE_LIMIT and len(recent_surface_history) >= SURFACE_HISTORY_LIMIT:
+        if (
+            len(recent_surface_history) >= history_limit
+            and len(voice_samples) >= VOICE_SAMPLE_LIMIT
+            and len(preference_examples) >= PREFERENCE_EXAMPLE_LIMIT
+        ):
             break
 
-    if not voice_samples and not recent_surface_history:
-        return None
+    if not voice_samples and not recent_surface_history and not preference_examples:
+        if not surface_match_debug["skipped_reasons"]:
+            return None
+        return {
+            "schema_version": STATEFUL_CONTEXT_VERSION,
+            "voice_samples": [],
+            "preference_examples": [],
+            "recent_surface_history": [],
+            "surface_match_debug": surface_match_debug,
+            "surface_key": current_surface_key,
+            "matched_history_count": 0,
+            "voice_sample_count": 0,
+            "preference_example_count": 0,
+        }
     return {
         "schema_version": STATEFUL_CONTEXT_VERSION,
         "voice_samples": voice_samples,
+        "preference_examples": preference_examples,
         "recent_surface_history": recent_surface_history,
+        "surface_match_debug": surface_match_debug,
+        "surface_key": current_surface_key,
+        "matched_history_count": len(recent_surface_history),
+        "voice_sample_count": len(voice_samples),
+        "preference_example_count": len(preference_examples),
     }
 
 
@@ -325,26 +461,75 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     if not stateful_context:
         return prompt_text
     voice_samples = stateful_context.get("voice_samples")
+    preference_examples = stateful_context.get("preference_examples")
     surface_history = stateful_context.get("recent_surface_history")
     if not isinstance(voice_samples, list):
         voice_samples = []
+    if not isinstance(preference_examples, list):
+        preference_examples = []
     if not isinstance(surface_history, list):
         surface_history = []
-    if not voice_samples and not surface_history:
+    if not voice_samples and not preference_examples and not surface_history:
         return prompt_text
+    preference_texts = {
+        text
+        for example in preference_examples
+        if isinstance(example, dict)
+        for text in [_bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)]
+        if text
+    }
     lines = [
         "",
         "Stateful TLDR context:",
+        "Use user preference examples to infer which suggestions are useful in this surface.",
         "Use user voice examples for style only. Do not copy facts from them into the current reply unless the current screen supports those facts.",
         "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
     ]
+    if preference_examples:
+        lines.extend(
+            [
+                "User preference examples from this same surface:",
+                "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
+                "Infer the preference lesson. Prefer the user's demonstrated intent over generic agreement.",
+            ]
+        )
+        for index, example in enumerate(preference_examples[:PREFERENCE_EXAMPLE_LIMIT], start=1):
+            if not isinstance(example, dict):
+                continue
+            screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
+            user_typed = _bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)
+            rejected = example.get("rejected_suggestions")
+            if not user_typed or not isinstance(rejected, list):
+                continue
+            rejected_texts = [
+                text
+                for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in rejected)
+                if text
+            ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
+            if not rejected_texts:
+                continue
+            lines.append(f"Example {index}:")
+            if screen_takeaway:
+                lines.append(f"Screen takeaway: {screen_takeaway}")
+            lines.append("Model suggestions the user did not use:")
+            for suggestion in rejected_texts:
+                lines.append(f"- {suggestion}")
+            lines.append(f"User typed instead: {user_typed}")
+            lines.append(
+                "Preference lesson: Generate suggestions that match the user's demonstrated move. "
+                "Favor evidence requests, premise checks, concrete agent instructions, or clarifying questions when the user typed those instead of generic agreement."
+            )
     if voice_samples:
-        lines.append("User voice examples:")
+        rendered_voice_samples = []
         for sample in voice_samples:
             if not isinstance(sample, dict):
                 continue
             text = _bounded_text(sample.get("text"), VOICE_SAMPLE_MAX_CHARS)
-            if text:
+            if text and text not in preference_texts:
+                rendered_voice_samples.append(text)
+        if rendered_voice_samples:
+            lines.append("User voice examples:")
+            for text in rendered_voice_samples:
                 lines.append(f"- {text}")
     if surface_history:
         lines.append("Recent same-surface history:")
@@ -352,12 +537,39 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
             if not isinstance(item, dict):
                 continue
             tldr = _bounded_text(item.get("tldr"), SURFACE_TEXT_MAX_CHARS)
-            reply = _bounded_text(item.get("custom_reply_text") or item.get("chosen_text"), SURFACE_TEXT_MAX_CHARS)
+            custom_reply = _bounded_text(item.get("custom_reply_text"), SURFACE_TEXT_MAX_CHARS)
+            chosen_text = _bounded_text(item.get("chosen_text"), SURFACE_TEXT_MAX_CHARS)
+            chosen_action = _bounded_text(item.get("chosen_action"), 80)
+            chosen_index = item.get("chosen_index")
             if tldr:
                 lines.append(f"- Prior TLDR: {tldr}")
-            if reply:
-                lines.append(f"  Prior outcome: {reply}")
+            if custom_reply:
+                if custom_reply in preference_texts:
+                    lines.append("  Prior outcome: user typed a custom reply instead of using the suggestions.")
+                else:
+                    lines.append(f"  Prior outcome: {custom_reply}")
+            elif chosen_text:
+                index_text = f" #{chosen_index + 1}" if isinstance(chosen_index, int) else ""
+                action_text = chosen_action or "used"
+                lines.append(
+                    f"  Prior outcome: user {action_text} model suggestion{index_text}; "
+                    "do not copy that prior model-authored wording into new suggestions."
+                )
     return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
+
+
+def proxy_request_context_text(envelope: dict[str, Any]) -> str | None:
+    structured: dict[str, Any] = {
+        "input_mode": envelope.get("input_mode"),
+        "capture_mode": envelope.get("capture_mode"),
+    }
+    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context", "stateful_context"):
+        value = envelope.get(key)
+        if value not in (None, {}, [], ""):
+            structured[key] = value
+    if len(structured) <= 2:
+        return None
+    return json.dumps(structured, ensure_ascii=True, sort_keys=True)
 
 
 def response_schema():
@@ -448,7 +660,51 @@ def build_response_payload(
     return payload
 
 
+def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
+    event = {"event": kind, **payload}
+    print(json.dumps(event, ensure_ascii=True), flush=True)
+
+
+def extract_partial_tldr(raw_text: str) -> str | None:
+    marker = '"tldr"'
+    marker_index = raw_text.find(marker)
+    if marker_index < 0:
+        return None
+    colon_index = raw_text.find(":", marker_index + len(marker))
+    if colon_index < 0:
+        return None
+    quote_index = raw_text.find('"', colon_index + 1)
+    if quote_index < 0:
+        return None
+
+    chars: list[str] = []
+    escaped = False
+    for char in raw_text[quote_index + 1:]:
+        if escaped:
+            if char == "n":
+                chars.append("\n")
+            elif char == "t":
+                chars.append("\t")
+            elif char == "r":
+                chars.append("\r")
+            else:
+                chars.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            break
+        chars.append(char)
+
+    text = "".join(chars).strip()
+    return text or None
+
+
 def proxy_settings_from_env() -> dict[str, str] | None:
+    if env_truthy(os.environ.get(DISABLE_PROXY_ENV)):
+        return None
     proxy_url = (os.environ.get(PROXY_URL_ENV) or "").strip()
     proxy_token = (os.environ.get(PROXY_TOKEN_ENV) or "").strip()
     if not proxy_url and not proxy_token:
@@ -459,6 +715,101 @@ def proxy_settings_from_env() -> dict[str, str] | None:
         "url": proxy_url.rstrip("/"),
         "token": proxy_token,
     }
+
+
+def write_model_input(
+    path: Path,
+    *,
+    generation_path: str,
+    prompt_text: str,
+    request_payload: dict[str, Any],
+) -> None:
+    lines = [f"generation_path: {generation_path}", ""]
+    if generation_path == "proxy":
+        context_text = proxy_request_context_text(request_payload)
+        lines.extend(
+            [
+                "scope:",
+                "Client-side diagnostic preview for the proxy request. The packaged app sends request.json plus the screenshot to the server; the server renders the final Gemini request with its deployed prompt.",
+                "",
+                "proxy_server_system_instruction_preview:",
+                prompt_text.rstrip(),
+                "",
+                "proxy_server_contents_preview:",
+            ]
+        )
+        if context_text:
+            lines.extend([SERVER_CONTEXT_PREFIX, context_text])
+        lines.extend(
+            [
+                SERVER_CONTENT_TEXT,
+                "",
+                "submitted_proxy_request_json:",
+                json.dumps(plain_data(request_payload), indent=2, ensure_ascii=True, sort_keys=True),
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "scope:",
+                "Actual local Gemini system instruction and text content for this run path.",
+                "",
+                "system_instruction:",
+                prompt_text.rstrip(),
+                "",
+                "contents_text:",
+                MODEL_CONTENT_TEXT,
+                "",
+                "structured_request_context_json:",
+                json.dumps(plain_data(request_payload), indent=2, ensure_ascii=True, sort_keys=True),
+                "",
+            ]
+        )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_model_context(
+    path: Path,
+    *,
+    generation_path: str,
+    prompt_text: str,
+    request_payload: dict[str, Any],
+    stateful_context: dict[str, Any] | None,
+    settings: dict[str, Any],
+) -> None:
+    context_text = proxy_request_context_text(request_payload)
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "generation_path": generation_path,
+        "model": settings.get("model"),
+        "stateful_context_summary": {
+            "voice_sample_count": len(stateful_context.get("voice_samples", [])) if stateful_context else 0,
+            "preference_example_count": len(stateful_context.get("preference_examples", [])) if stateful_context else 0,
+            "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
+            "surface_match_debug": stateful_context.get("surface_match_debug") if stateful_context else None,
+        },
+        "submitted_request": request_payload,
+    }
+    if generation_path == "proxy":
+        payload["model_input_scope"] = (
+            "client_proxy_payload_with_server_rendering_preview"
+        )
+        payload["proxy_server_preview"] = {
+            "system_instruction": prompt_text,
+            "context_text": context_text,
+            "contents": (
+                [SERVER_CONTEXT_PREFIX + "\n" + context_text] if context_text else []
+            ) + [SERVER_CONTENT_TEXT],
+            "note": "The deployed server owns the exact final model input for proxy runs; this preview mirrors the local server renderer.",
+        }
+    else:
+        payload["model_input_scope"] = "actual_local_gemini_input"
+        payload["local_gemini_input"] = {
+            "system_instruction": prompt_text,
+            "contents_text": MODEL_CONTENT_TEXT,
+        }
+    save_json(path, payload)
 
 
 def _proxy_error_payload(message: str, *, duration_ms: int | None) -> dict[str, Any]:
@@ -611,7 +962,7 @@ def generate(
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
-        contents=[image_part, "Summarize this active window and propose three replies."],
+        contents=[image_part, MODEL_CONTENT_TEXT],
         config=config,
     )
     duration_ms = int(round((time.perf_counter() - started) * 1000))
@@ -619,6 +970,57 @@ def generate(
     return build_response_payload(
         raw_text=raw_text,
         usage=getattr(response, "usage_metadata", None),
+        duration_ms=duration_ms,
+    )
+
+
+def generate_streaming(
+    screenshot_path: Path,
+    prompt_text: str,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
+    )
+    image_part = types.Part.from_bytes(
+        data=screenshot_path.read_bytes(),
+        mime_type="image/png",
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=prompt_text,
+        temperature=settings["temperature"],
+        max_output_tokens=settings["max_output_tokens"],
+        media_resolution=settings["media_resolution"],
+        response_mime_type="application/json",
+        response_schema=response_schema(),
+    )
+    started = time.perf_counter()
+    raw_text = ""
+    usage = None
+    last_partial = ""
+    for chunk in client.models.generate_content_stream(
+        model=settings["model"],
+        contents=[image_part, MODEL_CONTENT_TEXT],
+        config=config,
+    ):
+        text = getattr(chunk, "text", None) or ""
+        if text:
+            raw_text += text
+            partial = extract_partial_tldr(raw_text)
+            if partial and partial != last_partial:
+                last_partial = partial
+                emit_stream_event("partial_tldr", {"tldr": partial})
+        chunk_usage = getattr(chunk, "usage_metadata", None)
+        if chunk_usage is not None:
+            usage = chunk_usage
+    duration_ms = int(round((time.perf_counter() - started) * 1000))
+    return build_response_payload(
+        raw_text=raw_text.strip(),
+        usage=usage,
         duration_ms=duration_ms,
     )
 
@@ -633,6 +1035,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--host-profile", type=Path)
     parser.add_argument("--request-json", type=Path)
     parser.add_argument("--skip-gemini", action="store_true")
+    parser.add_argument("--stream-events", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -650,10 +1053,19 @@ def main(argv: list[str] | None = None) -> int:
         "input_mode": "screenshot",
     }
     stateful_context = build_stateful_context(args.out_dir, request_payload)
+    proxy_settings = proxy_settings_from_env()
     if stateful_context is not None:
         request_payload["stateful_context"] = stateful_context
-        prompt_text = prompt_with_stateful_context(prompt_text, stateful_context)
-    proxy_settings = proxy_settings_from_env()
+    generation_path = (
+        "skip_gemini"
+        if args.skip_gemini
+        else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
+    )
+    model_prompt_text = (
+        prompt_text
+        if generation_path == "proxy"
+        else prompt_with_stateful_context(prompt_text, stateful_context)
+    )
 
     run_dir = args.out_dir / bundle_id()
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -662,6 +1074,20 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_out = run_dir / "screenshot.png"
     shutil.copy2(args.screenshot, screenshot_out)
     save_json(run_dir / "request.json", request_payload)
+    write_model_input(
+        run_dir / "model_input.txt",
+        generation_path=generation_path,
+        prompt_text=model_prompt_text,
+        request_payload=request_payload,
+    )
+    write_model_context(
+        run_dir / "model_context.json",
+        generation_path=generation_path,
+        prompt_text=model_prompt_text,
+        request_payload=request_payload,
+        stateful_context=stateful_context,
+        settings=settings,
+    )
 
     host_profile = {}
     if args.host_profile and args.host_profile.exists():
@@ -679,6 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
         "settings": settings,
         "stateful_context": {
             "voice_sample_count": len(stateful_context.get("voice_samples", [])) if stateful_context else 0,
+            "preference_example_count": len(stateful_context.get("preference_examples", [])) if stateful_context else 0,
             "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
         },
         "screenshot": {"path": "screenshot.png", "bytes": screenshot_out.stat().st_size},
@@ -686,6 +1113,8 @@ def main(argv: list[str] | None = None) -> int:
     save_json(run_dir / "host_profile.json", host_profile)
 
     try:
+        if args.stream_events:
+            emit_stream_event("phase", {"phase": "model_started", "message": "Reading this screen..."})
         if args.skip_gemini:
             response = {
                 "status": "ok",
@@ -703,6 +1132,8 @@ def main(argv: list[str] | None = None) -> int:
                 "request_id": request_payload.get("request_id"),
                 "model": settings["model"],
             }
+            if args.stream_events:
+                emit_stream_event("partial_tldr", {"tldr": response["tldr"]})
         else:
             if proxy_settings is not None and request_payload.get("request_id"):
                 response = generate_via_proxy(
@@ -714,7 +1145,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 if not os.environ.get("GEMINI_API_KEY"):
                     raise RuntimeError("Set GEMINI_API_KEY in ~/.tldr/.env or the launch environment.")
-                response = generate(screenshot_out, prompt_text, settings)
+                if args.stream_events and generation_path == "local_gemini":
+                    response = generate_streaming(screenshot_out, model_prompt_text, settings)
+                else:
+                    response = generate(screenshot_out, model_prompt_text, settings)
                 response["request_id"] = request_payload.get("request_id")
                 response["warnings"] = []
                 response["model"] = settings["model"]
@@ -744,12 +1178,17 @@ def main(argv: list[str] | None = None) -> int:
             "warnings": response.get("warnings"),
             "model": response.get("model"),
         }
-        print(json.dumps(stdout, ensure_ascii=True), flush=True)
+        if args.stream_events:
+            emit_stream_event("final", stdout)
+        else:
+            print(json.dumps(stdout, ensure_ascii=True), flush=True)
         return 0
     except Exception as exc:
         error_text = traceback.format_exc()
         stderr_log.write_text(error_text, encoding="utf-8")
         print(error_text, file=sys.stderr, end="")
+        if args.stream_events:
+            emit_stream_event("error", {"message": str(exc), "traceback": error_text})
         run_log.update(
             {
                 "status": "error",

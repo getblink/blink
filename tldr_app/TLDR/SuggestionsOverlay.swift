@@ -2,9 +2,19 @@ import AppKit
 
 final class SuggestionsPanel: NSPanel {
     var onLocalKeyDown: ((NSEvent) -> Bool)?
+    weak var customReplyField: CustomReplyField?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let field = customReplyField,
+           field.isEditing,
+           field.performTextFieldKeyEquivalent(with: event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         if onLocalKeyDown?(event) == true {
@@ -40,23 +50,62 @@ final class CustomReplyField: NSTextField {
         }
         super.keyDown(with: event)
     }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if performTextFieldKeyEquivalent(with: event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    func performTextFieldKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command),
+              flags.intersection([.control, .option]).isEmpty,
+              let characters = event.charactersIgnoringModifiers?.lowercased(),
+              ["a", "c", "v", "x"].contains(characters),
+              let editor = currentEditor()
+        else {
+            return false
+        }
+        return editor.performKeyEquivalent(with: event)
+    }
+
+    func performTextEditingShortcut(_ shortcut: TextEditingShortcut) -> Bool {
+        guard let editor = currentEditor() else { return false }
+        switch shortcut {
+        case .selectAll:
+            editor.selectAll(nil)
+        case .copy:
+            editor.copy(nil)
+        case .paste:
+            editor.paste(nil)
+        case .cut:
+            editor.cut(nil)
+        }
+        return true
+    }
+
+    var isEditing: Bool {
+        currentEditor() != nil || window?.firstResponder === self
+    }
 }
 
 final class SuggestionsOverlay: NSObject {
     private enum Layout {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
-        static let summaryMinHeight: CGFloat = 132
+        static let summaryMinHeight: CGFloat = 144
         static let sectionGap: CGFloat = 14
         static let suggestionGap: CGFloat = 8
-        static let summaryFontSize: CGFloat = 16.5
+        static let summaryFontSize: CGFloat = 16
         static let suggestionFontSize: CGFloat = 16
         static let hintFontSize: CGFloat = 12
-        static let summaryTopInset: CGFloat = 22
-        static let summaryBottomInset: CGFloat = 16
+        static let summaryTopInset: CGFloat = 26
+        static let summaryBottomInset: CGFloat = 18
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
-        static let summaryLineSpacing: CGFloat = 5
+        static let summaryLineSpacing: CGFloat = 7
         static let cardPaddingX: CGFloat = 24
         static let suggestionCollapsedHeight: CGFloat = 62
         static let customInputHeight: CGFloat = 62
@@ -101,7 +150,9 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelHeight: CGFloat = 0
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
+    private var summaryLabel: NSTextField?
     private var summaryBaseFrame: NSRect = .zero
+    private var summaryTextY: CGFloat = 0
     private var suggestionCards: [SuggestionCard] = []
     private var customInputCard: NSView?
     private var customInputBaseFrame: NSRect = .zero
@@ -114,6 +165,9 @@ final class SuggestionsOverlay: NSObject {
     var onCustomInsert: ((String) -> Void)?
     var onChoiceKey: ((Int) -> Void)?
     var onInsertKey: (() -> Bool)?
+    var onCustomInsertKey: (() -> Bool)?
+    var onLeaveCustomInputKey: (() -> Void)?
+    var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onDismissKey: (() -> Void)?
 
     var isVisible: Bool {
@@ -121,15 +175,38 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func show(tldr: String, suggestions: [String]) {
+        show(
+            tldr: tldr,
+            suggestions: suggestions,
+            showsCustomInput: true,
+            hintText: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss"
+        )
+    }
+
+    func showLoading(tldr: String) {
+        show(
+            tldr: tldr,
+            suggestions: [],
+            showsCustomInput: false,
+            hintText: nil
+        )
+    }
+
+    private func show(
+        tldr: String,
+        suggestions: [String],
+        showsCustomInput: Bool,
+        hintText: String?
+    ) {
         close()
 
         let visibleSuggestions = Array(suggestions.prefix(3))
-        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .semibold)
+        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let contentWidth = Layout.panelWidth
         let summaryLabelWidth = contentWidth - 48
-        let summaryTextY = Layout.summaryBottomInset + Layout.summaryHintHeight + Layout.summaryHintGap
+        let summaryTextY = Layout.summaryBottomInset + (hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap)
         let summaryHeight = max(
             Layout.summaryMinHeight,
             measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
@@ -145,11 +222,13 @@ final class SuggestionsOverlay: NSObject {
                     + Layout.suggestionBottomPaddingExpanded
             )
         }
-        let stackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
+        let suggestionStackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
             + CGFloat(max(0, visibleSuggestions.count - 1)) * Layout.suggestionGap
-            + Layout.suggestionGap
-            + Layout.customInputHeight
-        let contentHeight = summaryHeight + Layout.sectionGap + stackHeight
+        let customStackHeight = showsCustomInput
+            ? (visibleSuggestions.isEmpty ? Layout.customInputHeight : Layout.suggestionGap + Layout.customInputHeight)
+            : 0
+        let stackHeight = suggestionStackHeight + customStackHeight
+        let contentHeight = summaryHeight + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
         let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
         let panelHeight = contentHeight + Layout.shadowBleed * 2
 
@@ -196,20 +275,22 @@ final class SuggestionsOverlay: NSObject {
         let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
         let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
 
-        let hint = label(
-            frame: NSRect(
-                x: 24,
-                y: Layout.summaryBottomInset,
-                width: contentWidth - 48,
-                height: Layout.summaryHintHeight
-            ),
-            text: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss",
-            font: hintFont,
-            color: .tertiaryLabelColor,
-            singleLine: true
-        )
-        hint.alignment = .center
-        summary.content.addSubview(hint)
+        if let hintText {
+            let hint = label(
+                frame: NSRect(
+                    x: 24,
+                    y: Layout.summaryBottomInset,
+                    width: contentWidth - 48,
+                    height: Layout.summaryHintHeight
+                ),
+                text: hintText,
+                font: hintFont,
+                color: .tertiaryLabelColor,
+                singleLine: true
+            )
+            hint.alignment = .center
+            summary.content.addSubview(hint)
+        }
 
         let summaryLabel = label(
             frame: NSRect(
@@ -261,27 +342,40 @@ final class SuggestionsOverlay: NSObject {
             }
         }
 
-        y -= Layout.suggestionGap
-        y -= Layout.customInputHeight
-        let customFrame = NSRect(
-            x: contentX,
-            y: y,
-            width: contentWidth,
-            height: Layout.customInputHeight
-        )
-        let custom = makeCustomInputCard(frame: customFrame, font: suggestionFont)
-        content.addSubview(custom.outer)
+        let custom: (outer: NSView, content: NSView, field: CustomReplyField)?
+        let customFrame: NSRect
+        if showsCustomInput {
+            if !visibleSuggestions.isEmpty {
+                y -= Layout.suggestionGap
+            }
+            y -= Layout.customInputHeight
+            customFrame = NSRect(
+                x: contentX,
+                y: y,
+                width: contentWidth,
+                height: Layout.customInputHeight
+            )
+            let customCard = makeCustomInputCard(frame: customFrame, font: suggestionFont)
+            content.addSubview(customCard.outer)
+            custom = customCard
+        } else {
+            customFrame = .zero
+            custom = nil
+        }
 
         self.panel = panel
         self.contentView = content
         self.basePanelHeight = panelHeight
         self.basePanelTopY = frame.maxY
         self.summaryCard = summary.outer
+        self.summaryLabel = summaryLabel
         self.summaryBaseFrame = summaryFrame
+        self.summaryTextY = summaryTextY
         self.suggestionCards = cards
-        self.customInputCard = custom.outer
+        self.customInputCard = custom?.outer
         self.customInputBaseFrame = customFrame
-        self.customInputField = custom.field
+        self.customInputField = custom?.field
+        panel.customReplyField = custom?.field
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
 
@@ -312,11 +406,68 @@ final class SuggestionsOverlay: NSObject {
         panel.makeFirstResponder(nil)
     }
 
+    func updateSummary(_ text: String) {
+        guard let panel,
+              let contentView,
+              let summaryCard,
+              let summaryLabel
+        else { return }
+        let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
+        let labelWidth = Layout.panelWidth - 48
+        let requiredSummaryHeight = max(
+            summaryBaseFrame.height,
+            measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing)
+                + summaryTextY
+                + Layout.summaryTopInset
+        )
+        let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
+        if summaryDelta > 0 {
+            let newPanelHeight = basePanelHeight + summaryDelta
+            let newFrame = NSRect(
+                x: panel.frame.origin.x,
+                y: basePanelTopY - newPanelHeight,
+                width: panel.frame.width,
+                height: newPanelHeight
+            )
+            panel.setFrame(newFrame, display: true, animate: false)
+            contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
+            summaryCard.frame = NSRect(
+                x: summaryBaseFrame.origin.x,
+                y: summaryBaseFrame.origin.y,
+                width: summaryBaseFrame.width,
+                height: requiredSummaryHeight
+            )
+            summaryLabel.frame = NSRect(
+                x: 24,
+                y: summaryTextY,
+                width: labelWidth,
+                height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
+            )
+        }
+        setLabelText(
+            summaryLabel,
+            text: text,
+            font: font,
+            color: .labelColor,
+            lineSpacing: Layout.summaryLineSpacing,
+            singleLine: false
+        )
+    }
+
     func focusCustomInput() {
         guard let panel, let field = customInputField else { return }
         collapseSuggestions()
         field.onFocusChanged?(true)
         panel.makeFirstResponder(field)
+    }
+
+    func leaveCustomInput() {
+        guard let panel, panel.firstResponder === customInputField else { return }
+        panel.makeFirstResponder(nil)
+    }
+
+    func performCustomInputShortcut(_ shortcut: TextEditingShortcut) -> Bool {
+        customInputField?.performTextEditingShortcut(shortcut) ?? false
     }
 
     var customInputText: String {
@@ -530,6 +681,8 @@ final class SuggestionsOverlay: NSObject {
         panel = nil
         contentView = nil
         summaryCard = nil
+        summaryLabel = nil
+        summaryTextY = 0
         suggestionCards = []
         customInputField?.onFocusChanged?(false)
         customInputCard = nil
@@ -734,7 +887,7 @@ final class SuggestionsOverlay: NSObject {
     }
 
     private func handleLocalKeyDown(_ event: NSEvent) -> Bool {
-        let customInputActive = panel?.firstResponder === customInputField
+        let customInputActive = customInputField?.isEditing == true
         guard let command = OverlayKeyRouter.command(for: event, customInputActive: customInputActive) else {
             return false
         }
@@ -748,6 +901,13 @@ final class SuggestionsOverlay: NSObject {
             return true
         case .insert:
             return onInsertKey?() ?? false
+        case .insertCustomInput:
+            return onCustomInsertKey?() ?? true
+        case .leaveCustomInput:
+            onLeaveCustomInputKey?()
+            return true
+        case .textEditing(let shortcut):
+            return onTextEditingKey?(shortcut) ?? false
         }
     }
 
