@@ -44,6 +44,7 @@ targets:
         CFBundleExecutable: TLDR
         LSMinimumSystemVersion: "14.0"
         LSUIElement: true
+        NSHumanReadableCopyright: "© 2026 Henry Zhang. All rights reserved."
         NSAppleEventsUsageDescription: "TLDR uses accessibility events to paste selected suggestions."
         NSScreenCaptureUsageDescription: "TLDR captures the active window to summarize it and suggest replies."
         NSInputMonitoringUsageDescription: "TLDR listens for the summary hotkey and numbered overlay choices."
