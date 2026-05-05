@@ -66,18 +66,29 @@ BLINK_PROXY_TOKEN=...
 TLDR_DISABLE_PROXY=1
 ```
 
-For dogfood DMGs, prefer baking proxy config at build time so users do not need
-to create `~/.tldr/.env`:
+## Signed Dogfood DMG
+
+One-time local notarization setup:
 
 ```bash
-TLDR_PROXY_URL=https://your-railway-service.up.railway.app \
-TLDR_PROXY_TOKEN=... \
-bash tldr_app/scripts/make_dmg.sh
+xcrun notarytool store-credentials TLDR-NOTARY
 ```
 
-The build writes those values into `Contents/Resources/proxy.env` inside
-`TLDR.app`. Treat the token as a revocable dogfood token, because anything
-inside a shipped app bundle can be extracted by a user.
+Create `tldr_app/scripts/config.env` locally; it is gitignored:
+
+```bash
+TLDR_TEAM_ID=YOUR_TEAM_ID
+TLDR_PROXY_URL=https://your-railway-service.up.railway.app
+TLDR_PROXY_TOKEN=revocable-dogfood-token
+```
+
+`make_dmg.sh` builds the app if needed, verifies the bundled runtime, signs and
+notarizes `TLDR.app`, packages the DMG, then signs, notarizes, staples, and
+assesses the DMG. The build writes the proxy values into
+`Contents/Resources/proxy.env` with mode `600`, so users do not need to create
+`~/.tldr/.env`. Treat the token as compromised after shipping; cap it with the
+server-side per-token rate limit (`TLDR_TOKEN_RATE_LIMIT_PER_MINUTE`, backed by
+`REDIS_URL` when available) and revoke it in `BLINK_API_TOKENS` when needed.
 
 Optional overrides:
 

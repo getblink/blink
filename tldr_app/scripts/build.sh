@@ -19,6 +19,7 @@ echo "[tldr] generating Xcode project"
 (cd "$APP_DIR" && xcodegen generate --spec project.yml)
 
 echo "[tldr] xcodebuild ($CONFIG)"
+# Build unsigned (ad-hoc); sign_and_notarize.sh handles real Developer ID signing.
 xcodebuild \
     -project "$APP_DIR/TLDR.xcodeproj" \
     -scheme TLDR \
@@ -26,6 +27,9 @@ xcodebuild \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
     -destination 'generic/platform=macOS' \
     BUILD_DIR="$BUILD_DIR" \
+    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGNING_ALLOWED=YES \
     build | xcbeautify 2>/dev/null || xcodebuild \
     -project "$APP_DIR/TLDR.xcodeproj" \
     -scheme TLDR \
@@ -33,6 +37,9 @@ xcodebuild \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
     -destination 'generic/platform=macOS' \
     BUILD_DIR="$BUILD_DIR" \
+    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGNING_ALLOWED=YES \
     build
 
 APP_PATH="$BUILD_DIR/$CONFIG/TLDR.app"

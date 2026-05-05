@@ -24,6 +24,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Henry Zhang. All rights reserved.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>TLDR uses accessibility events to paste selected suggestions.</string>
 	<key>NSInputMonitoringUsageDescription</key>
