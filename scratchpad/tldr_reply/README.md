@@ -38,11 +38,45 @@ Artifacts are written under `scratchpad/tldr_runs/<timestamp>/`:
 
 `meta.json` records the proxy URL when proxy mode is active.
 
+## Fixture capture and sweeps
+
+To capture a screenshot fixture without sending it to Gemini:
+
+```bash
+./tldr --save-fixture scratchpad/tldr_reply/fixtures/<slug>
+```
+
+Press `ctrl+shift+t`, pick the window, and the runner writes:
+
+- `screenshot.png`
+- `tldr_fixture.json`
+
+To compare compression/OCR configs across fixtures:
+
+```bash
+python scratchpad/tldr_reply/eval_sweep.py \
+  --fixtures 'scratchpad/tldr_reply/fixtures/*' \
+  --configs 'scratchpad/eval_configs/tldr_*.json' \
+  --out scratchpad/sweeps/tldr_{auto-timestamp}
+```
+
+The sweep writes `summary.md`, `compare.html`, and per-cell `run.json` /
+`output.txt` artifacts. The OCR-backed configs run Vision OCR on the original
+screenshot while the request image is compressed for Gemini. Generated request
+JPEGs are written into each per-cell sweep directory, not beside the shared
+fixture PNG.
+
+Latency accounting is intentionally conservative: `summary.md` reports local
+parallel prep, OCR, Gemini SDK network/model time, and total time separately.
+The SDK does not expose upload time apart from the network/model call, so these
+sweeps cannot prove OCR is hidden behind upload.
+
 Known v0 limitations:
 
 - Window capture uses `screencapture -W`, so each invocation requires clicking
   the target window.
-- There is no replay/sweep support and no schema-v1 fixture compatibility.
+- Sweep grading is manual; use `compare.html` to judge TLDR accuracy and reply
+  plausibility before promoting any config into `tldr_app/`.
 - Tone is inferred only from messages visible in the screenshot.
 - The Python interpreter running this script needs Input Monitoring and Screen
   Recording permission for hotkeys and screenshots.

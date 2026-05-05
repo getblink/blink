@@ -108,6 +108,9 @@ final class TLDRCoordinator {
                 let screenshotMeta = capturePayload.screenshot
                 let diagnostics = capturePayload.diagnostics
 
+                var frontmostAppWithWindow = frontmostApp
+                frontmostAppWithWindow["window_id"] = Int(capture.windowID)
+
                 let staging = try makeStagingDir()
                 let screenshotURL = staging.appendingPathComponent("screenshot.png")
                 let runtimeURL = staging.appendingPathComponent("runtime.json")
@@ -120,7 +123,7 @@ final class TLDRCoordinator {
                     requestID: requestID,
                     runtime: runtime,
                     clientMetadata: clientMetadata,
-                    frontmostApp: frontmostApp,
+                    frontmostApp: frontmostAppWithWindow,
                     screenshotMeta: screenshotMeta,
                     diagnostics: diagnostics,
                     focusedContext: focusedContext

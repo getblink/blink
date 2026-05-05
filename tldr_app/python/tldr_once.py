@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from env_loader import load_runtime_env
+from image_prep import prepare_request_image
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -23,6 +24,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "temperature": 0.2,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",
+    "preprocess_request_images": True,
+    "request_image_format": "jpeg",
+    "request_image_max_dimension": 1600,
+    "request_image_jpeg_quality": 70,
     "timeout_seconds": 120,
 }
 
@@ -57,14 +62,21 @@ def max_output_tokens_for_model(model: str) -> int | None:
     return 2048 if _is_thinking_model(model) else None
 
 
+def media_resolution_for_model(model: str, base: str) -> str:
+    if model == "gemini-3-flash-preview":
+        return "MEDIA_RESOLUTION_MEDIUM"
+    return base
+
+
 def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any]):
     model = settings.get("model", "")
     max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    media_resolution = media_resolution_for_model(model, settings["media_resolution"])
     kwargs = dict(
         system_instruction=prompt_text,
         temperature=settings["temperature"],
         max_output_tokens=max_tokens,
-        media_resolution=settings["media_resolution"],
+        media_resolution=media_resolution,
         response_mime_type="application/json",
         response_schema=response_schema(),
     )
@@ -94,14 +106,12 @@ SERVER_CONTENT_TEXT = (
 STATEFUL_CONTEXT_VERSION = 1
 VOICE_SAMPLE_LIMIT = 5
 SURFACE_HISTORY_LIMIT = 3
-RELAXED_SURFACE_HISTORY_LIMIT = 2
 PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 STATEFUL_CONTEXT_WINDOW_SECONDS = 15 * 60
-RELAXED_STATEFUL_CONTEXT_WINDOW_SECONDS = 10 * 60
 
 DEFAULT_PROMPT = """You are looking at a single screenshot of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
@@ -298,7 +308,7 @@ def _load_run_pair(run_dir: Path) -> tuple[dict[str, Any], dict[str, Any]] | Non
     return run_log, request_log
 
 
-def _surface_key(envelope: dict[str, Any]) -> dict[str, str | None]:
+def _surface_key(envelope: dict[str, Any]) -> dict[str, Any]:
     frontmost = envelope.get("frontmost_app")
     if not isinstance(frontmost, dict):
         frontmost = {}
@@ -314,16 +324,19 @@ def _surface_key(envelope: dict[str, Any]) -> dict[str, str | None]:
         focused.get("role") or focused.get("ax_role") or focused.get("focused_role"),
         160,
     )
+    raw_window_id = frontmost.get("window_id")
+    window_id = raw_window_id if isinstance(raw_window_id, int) else None
     return {
         "bundle_id": bundle_id,
         "title": title,
         "role": role,
+        "window_id": window_id,
     }
 
 
 def _surface_match(
-    current_key: dict[str, str | None],
-    previous_key: dict[str, str | None],
+    current_key: dict[str, Any],
+    previous_key: dict[str, Any],
 ) -> tuple[str | None, str | None]:
     current_bundle = current_key.get("bundle_id")
     previous_bundle = previous_key.get("bundle_id")
@@ -333,23 +346,13 @@ def _surface_match(
         return None, "previous_missing_bundle_id"
     if current_bundle != previous_bundle:
         return None, "bundle_id_mismatch"
-
-    current_title = current_key.get("title")
-    previous_title = previous_key.get("title")
-    if current_title and previous_title:
-        if current_title == previous_title:
-            return "title_match", None
-        return None, "title_mismatch"
-    if current_title or previous_title:
-        return None, "one_title_missing"
-
-    current_role = current_key.get("role")
-    previous_role = previous_key.get("role")
-    if current_role and previous_role:
-        if current_role == previous_role:
-            return "relaxed_same_app_role", None
-        return None, "role_mismatch"
-    return None, "empty_title_missing_role"
+    current_window = current_key.get("window_id")
+    previous_window = previous_key.get("window_id")
+    if isinstance(current_window, int) and isinstance(previous_window, int):
+        if current_window != previous_window:
+            return None, "window_id_mismatch"
+        return "window_match", None
+    return "bundle_match", None
 
 
 def build_stateful_context(
@@ -393,25 +396,15 @@ def build_stateful_context(
             continue
 
         age_seconds = (now - sort_time).total_seconds()
-        window_seconds = (
-            RELAXED_STATEFUL_CONTEXT_WINDOW_SECONDS
-            if match_mode == "relaxed_same_app_role"
-            else STATEFUL_CONTEXT_WINDOW_SECONDS
-        )
-        history_limit = (
-            RELAXED_SURFACE_HISTORY_LIMIT
-            if match_mode == "relaxed_same_app_role"
-            else SURFACE_HISTORY_LIMIT
-        )
         if age_seconds < 0:
             surface_match_debug["skipped_reasons"]["future_run"] = surface_match_debug["skipped_reasons"].get("future_run", 0) + 1
             continue
-        if age_seconds > window_seconds:
+        if age_seconds > STATEFUL_CONTEXT_WINDOW_SECONDS:
             reason = f"{match_mode}_too_old"
             surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
             continue
         response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
-        if len(recent_surface_history) < history_limit:
+        if len(recent_surface_history) < SURFACE_HISTORY_LIMIT:
             history_item = {
                 "created_at": run_log.get("finished_at") or run_log.get("started_at"),
                 "tldr": _bounded_text(response.get("tldr"), SURFACE_TEXT_MAX_CHARS),
@@ -471,7 +464,7 @@ def build_stateful_context(
             seen_voice.add(custom_text)
 
         if (
-            len(recent_surface_history) >= history_limit
+            len(recent_surface_history) >= SURFACE_HISTORY_LIMIT
             and len(voice_samples) >= VOICE_SAMPLE_LIMIT
             and len(preference_examples) >= PREFERENCE_EXAMPLE_LIMIT
         ):
@@ -665,6 +658,7 @@ def build_response_payload(
     raw_text: str,
     usage: Any,
     duration_ms: int,
+    image_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     parsed, parse_error = parse_json_response(raw_text)
     payload: dict[str, Any] = {
@@ -675,6 +669,8 @@ def build_response_payload(
         "warnings": [],
         "request_id": None,
     }
+    if image_diagnostics:
+        payload.update(image_diagnostics)
     if parsed is None:
         payload.update(
             {
@@ -705,6 +701,28 @@ def build_response_payload(
         return payload
     payload.update({"status": "ok", "tldr": tldr, "suggestions": suggestions})
     return payload
+
+
+def prepare_screenshot_part(
+    types_module,
+    screenshot_path: Path,
+    settings: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
+    request_image = prepare_request_image(screenshot_path, settings)
+    image_part = types_module.Part.from_bytes(
+        data=request_image["bytes_data"],
+        mime_type=request_image["mime_type"],
+    )
+    diagnostics = {
+        "image_bytes_original": request_image["original_bytes"],
+        "image_bytes_compressed": request_image["request_bytes"],
+        "image_prepare_ms": request_image["duration_ms"],
+        "media_resolution_resolved": media_resolution_for_model(
+            str(settings.get("model") or ""),
+            str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
+        ),
+    }
+    return image_part, diagnostics
 
 
 def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
@@ -1045,10 +1063,7 @@ def generate(
         api_key=os.environ.get("GEMINI_API_KEY"),
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
-    image_part = types.Part.from_bytes(
-        data=screenshot_path.read_bytes(),
-        mime_type="image/png",
-    )
+    image_part, image_diagnostics = prepare_screenshot_part(types, screenshot_path, settings)
     config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     response = client.models.generate_content(
@@ -1062,6 +1077,7 @@ def generate(
         raw_text=raw_text,
         usage=getattr(response, "usage_metadata", None),
         duration_ms=duration_ms,
+        image_diagnostics=image_diagnostics,
     )
 
 
@@ -1077,10 +1093,7 @@ def generate_streaming(
         api_key=os.environ.get("GEMINI_API_KEY"),
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
-    image_part = types.Part.from_bytes(
-        data=screenshot_path.read_bytes(),
-        mime_type="image/png",
-    )
+    image_part, image_diagnostics = prepare_screenshot_part(types, screenshot_path, settings)
     config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     raw_text = ""
@@ -1118,6 +1131,7 @@ def generate_streaming(
         raw_text=raw_text.strip(),
         usage=usage,
         duration_ms=duration_ms,
+        image_diagnostics=image_diagnostics,
     )
     if first_token_perf is not None:
         ttft_ms = int(round((first_token_perf - started) * 1000))
@@ -1232,6 +1246,10 @@ def main(argv: list[str] | None = None) -> int:
                 "warnings": [],
                 "request_id": request_payload.get("request_id"),
                 "model": settings["model"],
+                "media_resolution_resolved": media_resolution_for_model(
+                    settings["model"],
+                    settings["media_resolution"],
+                ),
             }
             if args.stream_events:
                 emit_stream_event("partial_tldr", {"tldr": response["tldr"]})
@@ -1265,9 +1283,21 @@ def main(argv: list[str] | None = None) -> int:
                     "duration_ms": response.get("duration_ms"),
                     "model": response.get("model"),
                     "warnings": response.get("warnings"),
+                    "image_bytes_original": response.get("image_bytes_original"),
+                    "image_bytes_compressed": response.get("image_bytes_compressed"),
+                    "image_prepare_ms": response.get("image_prepare_ms"),
+                    "media_resolution_resolved": response.get("media_resolution_resolved"),
                 },
             }
         )
+        for key in (
+            "image_bytes_original",
+            "image_bytes_compressed",
+            "image_prepare_ms",
+            "media_resolution_resolved",
+        ):
+            if key in response:
+                run_log[key] = response[key]
         save_json(run_dir / "run.json", run_log)
         stdout = {
             "status": response["status"],

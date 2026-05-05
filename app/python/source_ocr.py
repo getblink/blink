@@ -506,7 +506,12 @@ def paragraph_text_only(paragraphs: list[dict[str, Any]]) -> str:
     return "\n\n".join(paragraph["text"] for paragraph in paragraphs if paragraph["text"])
 
 
-def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
+def build_native_ocr_source_packet(
+    *,
+    source_path: Path,
+    apply_band_filter: bool = True,
+    apply_chrome_filter: bool = True,
+) -> dict[str, Any]:
     started_perf = time.perf_counter()
     ocr_payload = recognize_text(
         source_path,
@@ -519,6 +524,9 @@ def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
         return {
             "status": "error",
             "source_packet_kind": NATIVE_SOURCE_PACKET_KIND,
+            "packet_variant": SOURCE_OCR_PARAMETERS["packet_variant"]
+            if apply_band_filter and apply_chrome_filter
+            else "raw_lines_no_band_or_chrome_filter",
             "packet_text": "",
             "packet_chars": 0,
             "build_ms": duration_ms(started_perf),
@@ -528,6 +536,8 @@ def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
                 "request_build_ms": duration_ms(started_perf),
                 "ocr_status": ocr_payload.get("status"),
                 "parameters": dict(SOURCE_OCR_PARAMETERS),
+                "apply_band_filter": apply_band_filter,
+                "apply_chrome_filter": apply_chrome_filter,
                 "errors": [error],
             },
         }
@@ -539,13 +549,24 @@ def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
         ocr_payload,
         min_confidence=float(SOURCE_OCR_PARAMETERS["min_confidence"]),
     )
-    band = dominant_band(raw_blocks, image_width=image_width) if image_width > 0 else None
-    filtered_blocks = filter_to_band(raw_blocks, band)
-    raw_lines = group_blocks_into_lines(filtered_blocks)
-    chrome_filtered_lines, dropped_lines = filter_chrome_lines(
-        raw_lines,
-        image_height=image_height,
+    band = (
+        dominant_band(raw_blocks, image_width=image_width)
+        if apply_band_filter and image_width > 0
+        else None
     )
+    if apply_band_filter:
+        filtered_blocks = filter_to_band(raw_blocks, band)
+    else:
+        filtered_blocks = [block for block in raw_blocks if block["kept_for_processing"]]
+    raw_lines = group_blocks_into_lines(filtered_blocks)
+    if apply_chrome_filter:
+        chrome_filtered_lines, dropped_lines = filter_chrome_lines(
+            raw_lines,
+            image_height=image_height,
+        )
+    else:
+        chrome_filtered_lines = [dict(line) for line in raw_lines]
+        dropped_lines = []
     lines, split_lines = split_prompt_body_lines(chrome_filtered_lines)
     paragraphs = group_lines_into_paragraphs(lines)
     packet_text = paragraph_text_only(paragraphs).strip()
@@ -559,6 +580,9 @@ def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
     return {
         "status": status,
         "source_packet_kind": NATIVE_SOURCE_PACKET_KIND,
+        "packet_variant": SOURCE_OCR_PARAMETERS["packet_variant"]
+        if apply_band_filter and apply_chrome_filter
+        else "raw_lines_no_band_or_chrome_filter",
         "packet_text": packet_text,
         "packet_chars": len(packet_text),
         "build_ms": duration_ms(started_perf),
@@ -581,6 +605,8 @@ def build_native_ocr_source_packet(*, source_path: Path) -> dict[str, Any]:
             "dropped_lines": [_line_summary(line) for line in dropped_lines],
             "split_lines": split_lines,
             "parameters": dict(SOURCE_OCR_PARAMETERS),
+            "apply_band_filter": apply_band_filter,
+            "apply_chrome_filter": apply_chrome_filter,
             "errors": errors,
         },
     }

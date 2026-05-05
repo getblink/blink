@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -13,6 +15,29 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import tldr_once
+from image_prep import prepare_request_image
+
+
+def write_test_png(path: Path, *, width: int = 96, height: int = 96) -> None:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            rows.extend(((x * 3) % 256, (y * 5) % 256, ((x + y) * 7) % 256))
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(rows), level=0))
+        + chunk(b"IEND", b"")
+    )
 
 
 class TldrOnceTests(unittest.TestCase):
@@ -89,6 +114,12 @@ class TldrOnceTests(unittest.TestCase):
         self.assertNotIn("thinking_budget", captured_thinking)
         self.assertEqual(captured_config["max_output_tokens"], 2048)
 
+        captured_config.clear()
+        flash_preview_settings = dict(base_settings, model="gemini-3-flash-preview")
+        with mock.patch.object(tldr_once, "response_schema", return_value={"schema": "ok"}):
+            tldr_once.build_generate_config(FakeTypes, "PROMPT", flash_preview_settings)
+        self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_MEDIUM")
+
     def test_max_output_tokens_for_model(self) -> None:
         self.assertEqual(tldr_once.max_output_tokens_for_model("gemini-3.1-pro-preview"), 2048)
         self.assertEqual(tldr_once.max_output_tokens_for_model("gemini-3-flash-preview"), 2048)
@@ -104,6 +135,62 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIsNone(tldr_once.thinking_level_for_model("gemma-4-26b-a4b-it"))
         self.assertIsNone(tldr_once.thinking_level_for_model("gemini-2.5-flash"))
         self.assertIsNone(tldr_once.thinking_level_for_model(""))
+
+    def test_media_resolution_guard_forces_medium_on_flash_preview(self) -> None:
+        self.assertEqual(
+            tldr_once.media_resolution_for_model(
+                "gemini-3-flash-preview",
+                "MEDIA_RESOLUTION_LOW",
+            ),
+            "MEDIA_RESOLUTION_MEDIUM",
+        )
+
+    def test_media_resolution_guard_passthrough_for_lite(self) -> None:
+        self.assertEqual(
+            tldr_once.media_resolution_for_model(
+                "gemini-3.1-flash-lite-preview",
+                "MEDIA_RESOLUTION_LOW",
+            ),
+            "MEDIA_RESOLUTION_LOW",
+        )
+
+    def test_image_prep_falls_back_to_png_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screenshot.png"
+            write_test_png(screenshot)
+
+            prepared = prepare_request_image(
+                screenshot,
+                {"preprocess_request_images": False},
+                dest_dir=root,
+            )
+
+            self.assertEqual(prepared["bytes_data"], screenshot.read_bytes())
+            self.assertEqual(prepared["mime_type"], "image/png")
+            self.assertEqual(prepared["original_bytes"], prepared["request_bytes"])
+            self.assertEqual(prepared["log"]["status"], "original")
+
+    def test_image_prep_emits_jpeg_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screenshot.png"
+            write_test_png(screenshot, width=1600, height=1200)
+
+            prepared = prepare_request_image(
+                screenshot,
+                {
+                    "preprocess_request_images": True,
+                    "request_image_format": "jpeg",
+                    "request_image_max_dimension": 1600,
+                    "request_image_jpeg_quality": 70,
+                },
+                dest_dir=root,
+            )
+
+        self.assertEqual(prepared["mime_type"], "image/jpeg")
+        self.assertLess(prepared["request_bytes"], prepared["original_bytes"])
+        self.assertEqual(prepared["log"]["status"], "processed")
 
     def test_extract_partial_suggestions(self) -> None:
         self.assertEqual(tldr_once.extract_partial_suggestions(""), [])
@@ -253,6 +340,70 @@ class TldrOnceTests(unittest.TestCase):
             self.assertEqual(model_context["generation_path"], "skip_gemini")
             self.assertEqual(model_context["model_input_scope"], "actual_local_gemini_input")
 
+    def test_run_json_records_image_diagnostics(self) -> None:
+        old_key = os.environ.get("GEMINI_API_KEY")
+        try:
+            os.environ["GEMINI_API_KEY"] = "test-key"
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                screenshot = root / "screenshot.png"
+                screenshot.write_bytes(b"fake-png")
+                runtime = root / "runtime.json"
+                runtime.write_text(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "auto_paste": True,
+                            "model": "gemini-3.1-flash-lite-preview",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                out_dir = root / "runs"
+                stdout = StringIO()
+                fake_response = {
+                    "status": "ok",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestions": ["One", "Two", "Three"],
+                    "raw": "{}",
+                    "usage": None,
+                    "duration_ms": 12,
+                    "parse_error": None,
+                    "warnings": [],
+                    "request_id": None,
+                    "model": "gemini-3.1-flash-lite-preview",
+                    "image_bytes_original": 1000,
+                    "image_bytes_compressed": 420,
+                    "image_prepare_ms": 7,
+                    "media_resolution_resolved": "MEDIA_RESOLUTION_LOW",
+                }
+                with mock.patch.object(tldr_once, "generate", return_value=fake_response):
+                    with redirect_stdout(stdout):
+                        code = tldr_once.main(
+                            [
+                                "--screenshot",
+                                str(screenshot),
+                                "--runtime",
+                                str(runtime),
+                                "--out-dir",
+                                str(out_dir),
+                            ]
+                        )
+
+                self.assertEqual(code, 0)
+                bundle = next(out_dir.iterdir())
+                run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
+                self.assertEqual(run["image_bytes_original"], 1000)
+                self.assertEqual(run["image_bytes_compressed"], 420)
+                self.assertEqual(run["image_prepare_ms"], 7)
+                self.assertEqual(run["media_resolution_resolved"], "MEDIA_RESOLUTION_LOW")
+                self.assertEqual(run["response"]["media_resolution_resolved"], "MEDIA_RESOLUTION_LOW")
+        finally:
+            if old_key is None:
+                os.environ.pop("GEMINI_API_KEY", None)
+            else:
+                os.environ["GEMINI_API_KEY"] = old_key
+
     def test_stream_events_skip_gemini_emits_ndjson_final(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -341,11 +492,11 @@ class TldrOnceTests(unittest.TestCase):
             context["recent_surface_history"][0]["custom_reply_text"],
             "yep, i can send that over after lunch",
         )
-        self.assertEqual(context["surface_match_debug"]["match_mode"], "title_match")
+        self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
         self.assertEqual(context["matched_history_count"], 1)
         self.assertEqual(context["voice_sample_count"], 1)
 
-    def test_build_stateful_context_relaxes_empty_title_same_role_for_conductor(self) -> None:
+    def test_build_stateful_context_matches_same_app_when_focused_element_differs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -383,8 +534,8 @@ class TldrOnceTests(unittest.TestCase):
 
         self.assertIsNotNone(context)
         assert context is not None
-        self.assertEqual(context["surface_match_debug"]["match_mode"], "relaxed_same_app_role")
-        self.assertEqual(len(context["recent_surface_history"]), 2)
+        self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
+        self.assertEqual(len(context["recent_surface_history"]), 3)
         self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["reply 2", "reply 1", "reply 0"])
 
     def test_build_stateful_context_keeps_scanning_for_voice_after_history_limit(self) -> None:
@@ -394,6 +545,7 @@ class TldrOnceTests(unittest.TestCase):
             rows = [
                 ("20260503-120400-000", "2026-05-03T12:04:05+00:00", None, "Newest run.", ["a", "b", "c"]),
                 ("20260503-120300-000", "2026-05-03T12:03:05+00:00", None, "Second newest run.", ["d", "e", "f"]),
+                ("20260503-120250-000", "2026-05-03T12:02:55+00:00", None, "Third newest run.", ["g", "h", "i"]),
                 (
                     "20260503-120200-000",
                     "2026-05-03T12:02:05+00:00",
@@ -433,11 +585,14 @@ class TldrOnceTests(unittest.TestCase):
 
         self.assertIsNotNone(context)
         assert context is not None
-        self.assertEqual([item["tldr"] for item in context["recent_surface_history"]], ["Newest run.", "Second newest run."])
+        self.assertEqual(
+            [item["tldr"] for item in context["recent_surface_history"]],
+            ["Newest run.", "Second newest run.", "Third newest run."],
+        )
         self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["older custom reply"])
         self.assertEqual(context["preference_examples"][0]["user_typed"], "older custom reply")
         self.assertEqual(context["preference_examples"][0]["rejected_suggestions"], ["Sounds good.", "I agree.", "Let's proceed."])
-        self.assertEqual(context["matched_history_count"], 2)
+        self.assertEqual(context["matched_history_count"], 3)
         self.assertEqual(context["voice_sample_count"], 1)
         self.assertEqual(context["preference_example_count"], 1)
 
@@ -488,7 +643,7 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIn("do not copy that prior model-authored wording", prompt)
         self.assertNotIn("This looks good. Let's test this new prompt structure.", prompt)
 
-    def test_build_stateful_context_excludes_old_relaxed_empty_title_runs(self) -> None:
+    def test_build_stateful_context_excludes_old_runs_outside_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -528,7 +683,7 @@ class TldrOnceTests(unittest.TestCase):
         self.assertEqual(context["recent_surface_history"], [])
         self.assertEqual(context["voice_samples"], [])
         self.assertEqual(context["surface_match_debug"]["match_mode"], "no_match")
-        self.assertEqual(context["surface_match_debug"]["skipped_reasons"]["relaxed_same_app_role_too_old"], 1)
+        self.assertEqual(context["surface_match_debug"]["skipped_reasons"]["bundle_match_too_old"], 1)
 
     def test_build_stateful_context_does_not_use_chosen_suggestions_as_voice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -560,8 +715,119 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIsNotNone(context)
         assert context is not None
         self.assertEqual(context["voice_samples"], [])
+        self.assertEqual(len(context["recent_surface_history"]), 1)
+        self.assertEqual(context["recent_surface_history"][0]["chosen_action"], "copied")
+        self.assertEqual(context["recent_surface_history"][0]["chosen_text"], "Model-authored text")
+        self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
+
+    def test_build_stateful_context_uses_window_id_when_both_runs_have_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            other = runs / "20260503-120000-000"
+            other.mkdir(parents=True)
+            (other / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.example.chat", "window_id": 999},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (other / "run.json").write_text(
+                json.dumps(
+                    {
+                        "finished_at": "2026-05-03T12:00:05+00:00",
+                        "custom_reply_text": "from a different window",
+                        "response": {"tldr": "Other window."},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(context["voice_samples"], [])
         self.assertEqual(context["recent_surface_history"], [])
-        self.assertEqual(context["surface_match_debug"]["skipped_reasons"]["empty_title_missing_role"], 1)
+        self.assertEqual(
+            context["surface_match_debug"]["skipped_reasons"]["window_id_mismatch"],
+            1,
+        )
+
+    def test_build_stateful_context_window_id_match_promotes_match_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            same = runs / "20260503-120000-000"
+            same.mkdir(parents=True)
+            (same / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (same / "run.json").write_text(
+                json.dumps(
+                    {
+                        "finished_at": "2026-05-03T12:00:05+00:00",
+                        "custom_reply_text": "same window reply",
+                        "response": {"tldr": "Same window."},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(context["surface_match_debug"]["match_mode"], "window_match")
+        self.assertEqual(context["matched_history_count"], 1)
+
+    def test_build_stateful_context_falls_back_to_bundle_match_when_window_id_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            old = runs / "20260503-120000-000"
+            old.mkdir(parents=True)
+            # Previous run has no window_id (legacy / pre-upgrade run).
+            (old / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.chat"}}),
+                encoding="utf-8",
+            )
+            (old / "run.json").write_text(
+                json.dumps(
+                    {
+                        "finished_at": "2026-05-03T12:00:05+00:00",
+                        "custom_reply_text": "legacy run reply",
+                        "response": {"tldr": "Legacy run."},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
+        self.assertEqual(context["matched_history_count"], 1)
 
     def test_build_stateful_context_excludes_global_custom_replies_from_other_surfaces(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -630,6 +896,7 @@ class TldrOnceTests(unittest.TestCase):
     def test_main_enriches_proxy_request_with_stateful_context(self) -> None:
         old_proxy_url = os.environ.get("BLINK_PROXY_URL")
         old_proxy_token = os.environ.get("BLINK_PROXY_TOKEN")
+        old_disable = os.environ.get("TLDR_DISABLE_PROXY")
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -682,6 +949,7 @@ class TldrOnceTests(unittest.TestCase):
                 )
                 os.environ["BLINK_PROXY_URL"] = "https://proxy.example"
                 os.environ["BLINK_PROXY_TOKEN"] = "token"
+                os.environ.pop("TLDR_DISABLE_PROXY", None)
 
                 def fake_proxy(
                     request_payload: dict[str, object],
@@ -704,7 +972,11 @@ class TldrOnceTests(unittest.TestCase):
                     }
 
                 stdout = StringIO()
-                with mock.patch.object(tldr_once, "generate_via_proxy", side_effect=fake_proxy), redirect_stdout(stdout):
+                with (
+                    mock.patch.object(tldr_once, "proxy_settings_from_env", return_value={"url": "https://proxy.example", "token": "token"}),
+                    mock.patch.object(tldr_once, "generate_via_proxy", side_effect=fake_proxy),
+                    redirect_stdout(stdout),
+                ):
                     code = tldr_once.main(
                         [
                             "--screenshot",
@@ -743,6 +1015,10 @@ class TldrOnceTests(unittest.TestCase):
                 os.environ.pop("BLINK_PROXY_TOKEN", None)
             else:
                 os.environ["BLINK_PROXY_TOKEN"] = old_proxy_token
+            if old_disable is None:
+                os.environ.pop("TLDR_DISABLE_PROXY", None)
+            else:
+                os.environ["TLDR_DISABLE_PROXY"] = old_disable
 
 
 if __name__ == "__main__":

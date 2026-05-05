@@ -113,6 +113,10 @@ one-line summary plus three candidate replies, and shows a small overlay where
 `1` / `2` / `3` expand a suggestion first; pressing the same number again copies
 it to the clipboard.
 
+For TLDR compression/OCR sweeps, capture fixtures with
+`./tldr --save-fixture scratchpad/tldr_reply/fixtures/<slug>`, then run
+`python scratchpad/tldr_reply/eval_sweep.py --fixtures 'scratchpad/tldr_reply/fixtures/*' --configs 'scratchpad/eval_configs/tldr_*.json' --out scratchpad/sweeps/tldr_{auto-timestamp}`.
+
 `make_trial.py` is still available, but it is now a secondary/manual path rather than the primary workflow.
 
 To build and dogfood the shipped TLDR app:

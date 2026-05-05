@@ -1,0 +1,9 @@
+{
+  "name": "tldr_jpeg_q60_d1280_ocr_fp",
+  "preprocess_request_images": true,
+  "request_image_format": "jpeg",
+  "request_image_max_dimension": 1280,
+  "request_image_jpeg_quality": 60,
+  "tldr_include_ocr_packet": true,
+  "model": "gemini-3-flash-preview"
+}
