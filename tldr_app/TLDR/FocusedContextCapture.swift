@@ -86,6 +86,68 @@ enum FocusedContextCapture {
         )
     }
 
+    /// Best-effort query of the system-focused element's caret position in
+    /// AppKit screen coordinates (origin bottom-left, +Y up). Returns nil
+    /// when accessibility is not granted, no element is focused, or the
+    /// element doesn't expose `AXBoundsForRange` (some browsers and custom
+    /// text views).
+    static func caretScreenPoint() -> CGPoint? {
+        guard AXIsProcessTrusted() else { return nil }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedRef
+        ) == .success, let rawFocused = focusedRef else { return nil }
+        let focused = rawFocused as! AXUIElement
+
+        guard var range = selectedRangeAttr(focused) else { return nil }
+        // After a paste, the selected range is usually a zero-length caret
+        // at the insertion point. Some apps report a non-zero length when
+        // the user had a selection that got replaced — anchor the bounds
+        // query at the END of the range so confetti emerges where the
+        // caret actually is.
+        let caretLocation = range.location + range.length
+        var caretRange = CFRange(location: caretLocation, length: 0)
+
+        let primaryHeight = NSScreen.screens.first?.frame.height
+        guard let primaryHeight else { return nil }
+
+        if let rect = boundsForRange(focused, range: &caretRange) {
+            return CGPoint(x: rect.midX, y: primaryHeight - rect.midY)
+        }
+        // Fallback: the trailing edge of the original range, which some apps
+        // honor even when the zero-length probe fails.
+        if range.length > 0,
+           let rect = boundsForRange(focused, range: &range) {
+            return CGPoint(x: rect.maxX, y: primaryHeight - rect.midY)
+        }
+        return nil
+    }
+
+    private static func boundsForRange(
+        _ element: AXUIElement,
+        range: inout CFRange
+    ) -> CGRect? {
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+        var ref: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &ref
+        ) == .success, let ref else { return nil }
+        guard CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        let axValue = ref as! AXValue
+        guard AXValueGetType(axValue) == .cgRect else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(axValue, .cgRect, &rect) else { return nil }
+        guard rect.width >= 0, rect.height > 0 else { return nil }
+        return rect
+    }
+
     static func meaningfulText(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
