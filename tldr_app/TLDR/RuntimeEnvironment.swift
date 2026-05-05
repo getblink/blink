@@ -62,6 +62,13 @@ enum RuntimeEnvironment {
         isTruthy(env["TLDR_DISABLE_PROXY"])
     }
 
+    /// Force the legacy NSVisualEffectView fallback in the overlay even when
+    /// running on macOS 26+ where NSGlassEffectView is available. Used to
+    /// dogfood the non-liquid-glass UI path on a liquid-glass machine.
+    static func forceLegacyGlass() -> Bool {
+        isTruthy(mergedEnvironment()["TLDR_FORCE_LEGACY_GLASS"])
+    }
+
     private static func isTruthy(_ value: String?) -> Bool {
         switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":
