@@ -45,7 +45,7 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         ))
         stack.addArrangedSubview(self.permissionRow(
             title: "Input Monitoring",
-            description: "Listen for Ctrl+Shift+T and numbered choices.",
+            description: "Listen for the summary hotkey and numbered choices.",
             check: { PermissionsWindowController.inputMonitoringGranted() },
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
         ))

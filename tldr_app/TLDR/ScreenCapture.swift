@@ -20,6 +20,7 @@ enum ScreenCapture {
         let capturedAt: Date
         let windowFramePoints: CGRect
         let windowID: CGWindowID
+        let shareableContent: SCShareableContent
     }
 
     enum CaptureError: LocalizedError {
@@ -50,47 +51,54 @@ enum ScreenCapture {
     ///
     /// Called from hotkey handlers — the user's source/target app is still
     /// frontmost because TLDR runs as `.accessory` and the hotkey tap doesn't
-    /// steal focus.
+    /// steal focus. For multi-frame sessions, callers should pass
+    /// `preferredPID` after frame 0 so subsequent frames stay pinned to the
+    /// original source app even if the collecting overlay momentarily
+    /// activates TLDR.
     static func captureFrontmostWindow(
-        preferredGlobalRect: CGRect? = nil
+        preferredGlobalRect: CGRect? = nil,
+        shareableContent cachedContent: SCShareableContent? = nil,
+        preferredPID: pid_t? = nil
     ) async throws -> Capture {
         let startedAt = Date()
 
         // Preflight is informational only — we do NOT guard on it (see class
         // doc). If permission is denied, the SCK call below surfaces the real
         // error and macOS shows the Screen Recording prompt at capture time.
-        guard let frontmost = await MainActor.run(body: {
-            NSWorkspace.shared.frontmostApplication
-        }) else {
-            throw CaptureError.noFrontmostApp
+        let pid: pid_t
+        let ownerName: String?
+        if let preferredPID, let app = NSRunningApplication(processIdentifier: preferredPID) {
+            pid = preferredPID
+            ownerName = app.localizedName
+        } else {
+            guard let frontmost = await MainActor.run(body: {
+                NSWorkspace.shared.frontmostApplication
+            }) else {
+                throw CaptureError.noFrontmostApp
+            }
+            pid = frontmost.processIdentifier
+            ownerName = frontmost.localizedName
         }
-        let pid = frontmost.processIdentifier
-        let ownerName = frontmost.localizedName
 
         let content: SCShareableContent
         do {
-            // `onScreenWindowsOnly: false` so fullscreen-Space windows of the
-            // frontmost app still surface as candidates. From TLDR's menu-bar
-            // Space, ScreenCaptureKit reports those windows with
-            // `isOnScreen == false`, so the previous strict filter dropped
-            // every candidate and we'd throw `.noCapturableWindow`.
-            content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: false
+            content = try await shareableContent(
+                preferred: cachedContent,
+                pid: pid,
+                preferredGlobalRect: preferredGlobalRect
             )
         } catch {
-            // SCK throws a TCC error if the user denied Screen Recording.
-            let nsError = error as NSError
-            if nsError.domain == "com.apple.ScreenCaptureKit" || nsError.code == -3801 {
+            // Only the real TCC denial code is a permission error. Other SCK
+            // errors (e.g. ineligible window, transient stream config issues)
+            // are bubbled as `.underlying` so they aren't mislabeled as a
+            // permission problem.
+            if isPermissionDenialError(error) {
                 throw CaptureError.permissionDenied
             }
             throw CaptureError.underlying(error)
         }
 
-        let candidates = content.windows.filter { window in
-            window.owningApplication?.processID == pid
-                && window.frame.width > 0
-                && window.frame.height > 0
-        }
+        let candidates = candidateWindows(in: content, pid: pid)
         guard let window = chooseWindow(
             from: candidates,
             preferredGlobalRect: preferredGlobalRect
@@ -114,8 +122,7 @@ enum ScreenCapture {
                 contentFilter: filter, configuration: config
             )
         } catch {
-            let nsError = error as NSError
-            if nsError.domain == "com.apple.ScreenCaptureKit" || nsError.code == -3801 {
+            if isPermissionDenialError(error) {
                 throw CaptureError.permissionDenied
             }
             throw CaptureError.underlying(error)
@@ -131,21 +138,26 @@ enum ScreenCapture {
             pngData: pngData,
             capturedAt: startedAt,
             windowFramePoints: window.frame,
-            windowID: window.windowID
+            windowID: window.windowID,
+            shareableContent: content
         )
     }
 
     /// Sync bridge for call sites that aren't async-native. Blocks the caller's
     /// thread until capture completes. Do not call from the main thread.
     static func captureFrontmostWindowSync(
-        preferredGlobalRect: CGRect? = nil
+        preferredGlobalRect: CGRect? = nil,
+        shareableContent: SCShareableContent? = nil,
+        preferredPID: pid_t? = nil
     ) throws -> Capture {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Capture, Error>!
         Task.detached {
             do {
                 result = .success(try await captureFrontmostWindow(
-                    preferredGlobalRect: preferredGlobalRect
+                    preferredGlobalRect: preferredGlobalRect,
+                    shareableContent: shareableContent,
+                    preferredPID: preferredPID
                 ))
             }
             catch { result = .failure(error) }
@@ -153,6 +165,43 @@ enum ScreenCapture {
         }
         semaphore.wait()
         return try result.get()
+    }
+
+    // `kSCStreamErrorUserDeclined` — the genuine TCC denial. Everything else
+    // in the SCK domain is left as `.underlying` so transient errors (e.g.
+    // ineligible window) aren't mislabeled as a permission problem.
+    private static let kSCStreamErrorUserDeclined = -3801
+
+    private static func isPermissionDenialError(_ error: Error) -> Bool {
+        (error as NSError).code == kSCStreamErrorUserDeclined
+    }
+
+    private static func shareableContent(
+        preferred: SCShareableContent?,
+        pid: pid_t,
+        preferredGlobalRect: CGRect?
+    ) async throws -> SCShareableContent {
+        if let preferred,
+           chooseWindow(
+            from: candidateWindows(in: preferred, pid: pid),
+            preferredGlobalRect: preferredGlobalRect
+           ) != nil {
+            return preferred
+        }
+        // `onScreenWindowsOnly: false` so fullscreen-Space windows of the
+        // frontmost app still surface as candidates. From TLDR's menu-bar Space,
+        // ScreenCaptureKit reports those windows with `isOnScreen == false`.
+        return try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: false
+        )
+    }
+
+    private static func candidateWindows(in content: SCShareableContent, pid: pid_t) -> [SCWindow] {
+        content.windows.filter { window in
+            window.owningApplication?.processID == pid
+                && window.frame.width > 0
+                && window.frame.height > 0
+        }
     }
 
     private static func chooseWindow(

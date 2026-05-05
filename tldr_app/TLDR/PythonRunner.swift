@@ -62,6 +62,7 @@ enum PythonRunner {
     static func runOnceSync(
         config: Config,
         screenshotPNG: URL,
+        screenshotPNGs: [URL]? = nil,
         runtimeJSON: URL,
         settingsJSON: URL?,
         prompt: URL?,
@@ -79,12 +80,15 @@ enum PythonRunner {
 
         let process = Process()
         process.executableURL = python
+        let screenshots = screenshotPNGs ?? [screenshotPNG]
         var args = [
             script.path,
-            "--screenshot", screenshotPNG.path,
             "--runtime", runtimeJSON.path,
             "--out-dir", outputParent.path,
         ]
+        for screenshot in screenshots {
+            args += ["--screenshot", screenshot.path]
+        }
         if let settingsJSON {
             args += ["--settings", settingsJSON.path]
         }
@@ -142,7 +146,8 @@ enum PythonRunner {
 
     static func runOnceStreaming(
         config: Config,
-        screenshotPNG: URL,
+        screenshotPNG: URL? = nil,
+        screenshotPNGs: [URL]? = nil,
         runtimeJSON: URL,
         settingsJSON: URL?,
         prompt: URL?,
@@ -162,13 +167,16 @@ enum PythonRunner {
 
         let process = Process()
         process.executableURL = python
+        let screenshots = screenshotPNGs ?? screenshotPNG.map { [$0] } ?? []
         var args = [
             script.path,
-            "--screenshot", screenshotPNG.path,
             "--runtime", runtimeJSON.path,
             "--out-dir", outputParent.path,
             "--stream-events",
         ]
+        for screenshot in screenshots {
+            args += ["--screenshot", screenshot.path]
+        }
         if let settingsJSON {
             args += ["--settings", settingsJSON.path]
         }

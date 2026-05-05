@@ -22,7 +22,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionsWindow: PermissionsWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: TLDREventClient?
-    private var soundEffects: SoundEffects?
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
 
@@ -31,12 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
 
         let config = Config.load()
+        let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
         let eventClient = TLDREventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
         let soundEffects = SoundEffects(runtimeStore: runtimeStore)
-        self.soundEffects = soundEffects
 
         PendingRunStore.sweepAbandonedRuns(
             eventClient: eventClient,
@@ -48,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config,
             runtimeStore: runtimeStore,
             eventClient: eventClient,
+            summaryHotkey: summaryHotkey,
             soundEffects: soundEffects
         )
         coordinator.onFailureNotice = { [weak self] title, message in
@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menubar = MenubarController(
             coordinator: coordinator,
             runtimeStore: runtimeStore,
+            hotkeyDisplay: summaryHotkey.displayString,
             onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
         )
         menubar.install()
@@ -70,9 +71,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hotkeys = HotkeyManager(
+            summaryHotkey: summaryHotkey,
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
+            isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
             onSummarize: { [weak coordinator] in coordinator?.summarizeFrontmostWindow() },
+            onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
+            onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
             onInsert: { [weak coordinator] in
                 if Thread.isMainThread {
