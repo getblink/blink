@@ -4,9 +4,9 @@ import Combine
 @MainActor
 final class MenubarController: NSObject {
     static let modelOptions: [String] = [
+        "gemini-3-flash-preview",
         "gemini-3.1-flash-lite-preview",
         "gemini-3.1-pro-preview",
-        "gemini-3-flash-preview",
         "gemma-4-26b-a4b-it",
     ]
 

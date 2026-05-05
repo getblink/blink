@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "model": "gemini-3.1-flash-lite-preview",
+    "model": "gemini-3-flash-preview",
     "temperature": 0.2,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",

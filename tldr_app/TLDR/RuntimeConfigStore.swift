@@ -35,7 +35,7 @@ struct RuntimeConfigFile: Codable {
         version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
         autoPaste = try container.decodeIfPresent(Bool.self, forKey: .autoPaste) ?? true
         model = try container.decodeIfPresent(String.self, forKey: .model)
-            ?? "gemini-3.1-flash-lite-preview"
+            ?? "gemini-3-flash-preview"
         allowEventLogging = try container.decodeIfPresent(Bool.self, forKey: .allowEventLogging) ?? true
         allowContentRetention = try container.decodeIfPresent(Bool.self, forKey: .allowContentRetention)
             ?? false
@@ -86,7 +86,7 @@ final class RuntimeConfigStore: ObservableObject {
         let config = RuntimeConfigFile(
             version: 1,
             autoPaste: true,
-            model: "gemini-3.1-flash-lite-preview",
+            model: "gemini-3-flash-preview",
             allowEventLogging: true,
             allowContentRetention: false
         )
