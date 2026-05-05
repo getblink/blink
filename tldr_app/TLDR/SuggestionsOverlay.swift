@@ -91,6 +91,21 @@ final class CustomReplyField: NSTextField {
     }
 }
 
+private final class SuggestionCardClickTarget: NSObject {
+    let index: Int
+    let onClick: (Int) -> Void
+
+    init(index: Int, onClick: @escaping (Int) -> Void) {
+        self.index = index
+        self.onClick = onClick
+    }
+
+    @objc func clicked(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        onClick(index)
+    }
+}
+
 final class SuggestionsOverlay: NSObject {
     private enum Layout {
         static let panelWidth: CGFloat = 560
@@ -157,6 +172,12 @@ final class SuggestionsOverlay: NSObject {
     private var customInputCard: NSView?
     private var customInputBaseFrame: NSRect = .zero
     private var customInputField: CustomReplyField?
+    private var customInputHintLabel: NSTextField?
+    private var customInputTint: NSView?
+    private var suggestionClickTargets: [SuggestionCardClickTarget] = []
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var lastOutsideClickAt: TimeInterval = 0
     private var currentHeightDelta: CGFloat = 0
     private var previousFrontmost: NSRunningApplication?
     private(set) var expandedSuggestionIndex: Int?
@@ -349,7 +370,7 @@ final class SuggestionsOverlay: NSObject {
             }
         }
 
-        let custom: (outer: NSView, content: NSView, field: CustomReplyField)?
+        let custom: (outer: NSView, content: NSView, field: CustomReplyField, enterHint: NSTextField, tint: NSView)?
         let customFrame: NSRect
         if showsCustomInput {
             if !visibleSuggestions.isEmpty {
@@ -382,6 +403,8 @@ final class SuggestionsOverlay: NSObject {
         self.customInputCard = custom?.outer
         self.customInputBaseFrame = customFrame
         self.customInputField = custom?.field
+        self.customInputHintLabel = custom?.enterHint
+        self.customInputTint = custom?.tint
         panel.customReplyField = custom?.field
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
@@ -411,6 +434,14 @@ final class SuggestionsOverlay: NSObject {
         // explicitly so the panel itself owns the responder chain until the
         // user presses 4 or clicks the field.
         panel.makeFirstResponder(nil)
+        // Belt-and-suspenders: AppKit's auto-promote-then-resign of the
+        // CustomReplyField on `makeKeyAndOrderFront` can leave the hint
+        // visible and the field/number lifted (`resignFirstResponder`
+        // doesn't reliably fire `onFocusChanged?(false)` when the field
+        // editor was the actual responder). Snap to the unfocused state
+        // so the panel always opens with #4 centered and hint hidden.
+        applyCustomInputFocusState(focused: false, animated: false)
+        installMouseMonitors()
     }
 
     func updateSummary(_ text: String) {
@@ -469,10 +500,13 @@ final class SuggestionsOverlay: NSObject {
             card.outer.removeFromSuperview()
         }
         suggestionCards = []
+        suggestionClickTargets = []
         customInputField?.onFocusChanged?(false)
         customInputCard?.removeFromSuperview()
         customInputCard = nil
         customInputField = nil
+        customInputHintLabel = nil
+        customInputTint = nil
         panel.customReplyField = nil
         expandedSuggestionIndex = nil
 
@@ -571,6 +605,8 @@ final class SuggestionsOverlay: NSObject {
         self.customInputCard = customCard.outer
         self.customInputBaseFrame = customFrame
         self.customInputField = customCard.field
+        self.customInputHintLabel = customCard.enterHint
+        self.customInputTint = customCard.tint
         panel.customReplyField = customCard.field
         self.basePanelHeight = newPanelHeight
         self.currentHeightDelta = 0
@@ -584,8 +620,22 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func leaveCustomInput() {
-        guard let panel, panel.firstResponder === customInputField else { return }
-        panel.makeFirstResponder(nil)
+        // While the field is being edited, AppKit's actual first responder is
+        // the shared field editor (an NSTextView), not the field itself, so
+        // `panel.firstResponder === customInputField` is always false mid-edit.
+        // Use `isEditing` (which inspects `currentEditor()`) so this method
+        // actually drops focus.
+        guard let panel else { return }
+        let wasEditing = customInputField?.isEditing == true
+        if wasEditing {
+            panel.makeFirstResponder(nil)
+        }
+        // Belt-and-suspenders, same pattern as `show()`: AppKit's
+        // `resignFirstResponder` doesn't reliably fire on the NSTextField when
+        // the field editor was the actual responder, so the field's
+        // `onFocusChanged?(false)` may never run — leaving the blue tint and
+        // hint stuck visible. Drive the visual cleanup directly.
+        applyCustomInputFocusState(focused: false, animated: true)
     }
 
     func performCustomInputShortcut(_ shortcut: TextEditingShortcut) -> Bool {
@@ -799,6 +849,8 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func close() {
+        removeMouseMonitors()
+        customInputHintLabel?.alphaValue = 0
         panel?.close()
         panel = nil
         contentView = nil
@@ -806,10 +858,13 @@ final class SuggestionsOverlay: NSObject {
         summaryLabel = nil
         summaryTextY = 0
         suggestionCards = []
+        suggestionClickTargets = []
         customInputField?.onFocusChanged?(false)
         customInputCard = nil
         customInputBaseFrame = .zero
         customInputField = nil
+        customInputHintLabel = nil
+        customInputTint = nil
         expandedSuggestionIndex = nil
         currentHeightDelta = 0
 
@@ -911,6 +966,15 @@ final class SuggestionsOverlay: NSObject {
         enterHint: NSTextField
     ) {
         let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
+        let clickTarget = SuggestionCardClickTarget(index: index - 1) { [weak self] index in
+            self?.onChoiceKey?(index)
+        }
+        suggestionClickTargets.append(clickTarget)
+        let click = NSClickGestureRecognizer(target: clickTarget, action: #selector(SuggestionCardClickTarget.clicked(_:)))
+        click.numberOfClicksRequired = 1
+        click.buttonMask = 0x1
+        click.delaysPrimaryMouseButtonEvents = false
+        pane.outer.addGestureRecognizer(click)
 
         let tint = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: frame.height))
         tint.wantsLayer = true
@@ -978,9 +1042,32 @@ final class SuggestionsOverlay: NSObject {
     ) -> (
         outer: NSView,
         content: NSView,
-        field: CustomReplyField
+        field: CustomReplyField,
+        enterHint: NSTextField,
+        tint: NSView
     ) {
         let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
+
+        // Make the entire card focus the field on click — without this only
+        // the narrow text-field hit area focuses #4. Routes through
+        // `onChoiceKey?(3)` so the choice-state machine fires the same path
+        // as a `4` key press (collapse expanded card, focus field, status).
+        let click = NSClickGestureRecognizer(target: self, action: #selector(customInputCardClicked(_:)))
+        click.numberOfClicksRequired = 1
+        click.buttonMask = 0x1
+        click.delaysPrimaryMouseButtonEvents = false
+        pane.outer.addGestureRecognizer(click)
+
+        // Match the suggestion-card "selected" affordance: a translucent
+        // blue pill that fades in when the field is focused.
+        let tint = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: frame.height))
+        tint.wantsLayer = true
+        tint.layer?.cornerRadius = frame.height / 2
+        tint.layer?.masksToBounds = true
+        tint.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.22).cgColor
+        tint.autoresizingMask = [.width, .height]
+        tint.alphaValue = 0
+        pane.content.addSubview(tint)
 
         let number = label(
             frame: NSRect(
@@ -1004,7 +1091,15 @@ final class SuggestionsOverlay: NSObject {
             width: frame.width - Layout.suggestionTextX - Layout.cardPaddingX,
             height: textHeight
         ))
-        field.placeholderString = "Type your own reply..."
+        // Default `placeholderTextColor` is too dim against the dark popover
+        // frost — bump to `secondaryLabelColor` so the prompt stays visible.
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Type your own reply...",
+            attributes: [
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: font,
+            ]
+        )
         field.font = font
         field.textColor = .labelColor
         field.isEditable = true
@@ -1017,6 +1112,14 @@ final class SuggestionsOverlay: NSObject {
         field.target = self
         field.action = #selector(customInputReturnPressed(_:))
         field.onFocusChanged = { [weak self] active in
+            // Collapse any expanded suggestion when #4 takes focus — covers
+            // the path where the user clicks the field directly (which
+            // bypasses `focusCustomInput()` and would otherwise leave the
+            // previously expanded card 1/2/3 expanded and tinted).
+            if active {
+                self?.collapseSuggestions()
+            }
+            self?.setCustomInputHintVisible(active)
             self?.onCustomInputFocusChanged?(active)
         }
         field.onLocalKeyDown = { [weak self] event in
@@ -1024,7 +1127,110 @@ final class SuggestionsOverlay: NSObject {
         }
         pane.content.addSubview(field)
 
-        return (pane.outer, pane.content, field)
+        let enterHint = label(
+            frame: NSRect(
+                x: frame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
+                y: Layout.enterHintBottomInset,
+                width: Layout.enterHintWidth,
+                height: Layout.enterHintHeight
+            ),
+            text: "\u{23CE} Enter to insert",
+            font: NSFont.systemFont(ofSize: Layout.hintFontSize),
+            color: .secondaryLabelColor,
+            singleLine: true
+        )
+        enterHint.alignment = .right
+        enterHint.alphaValue = 0
+        enterHint.autoresizingMask = [.minXMargin]
+        pane.content.addSubview(enterHint)
+
+        return (pane.outer, pane.content, field, enterHint, tint)
+    }
+
+    private func setCustomInputHintVisible(_ visible: Bool) {
+        applyCustomInputFocusState(focused: visible, animated: true)
+    }
+
+    private func applyCustomInputFocusState(focused: Bool, animated: Bool) {
+        guard let hint = customInputHintLabel,
+              let field = customInputField,
+              let tint = customInputTint else { return }
+        // Field stays full-width regardless of focus state. The hint sits at
+        // the bottom edge (y ∈ [4, 22]) while the field text sits near
+        // vertical center (~y ∈ [22, 40]) within the 62pt card, so they
+        // occupy different vertical bands — text can extend horizontally
+        // past the hint glyph without visually colliding.
+        let cardWidth = customInputBaseFrame.width
+        let fullFieldWidth = cardWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        var fieldFrame = field.frame
+        fieldFrame.size.width = fullFieldWidth
+        let targetAlpha: CGFloat = focused ? 1 : 0
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Layout.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                hint.animator().alphaValue = targetAlpha
+                tint.animator().alphaValue = targetAlpha
+                field.animator().frame = fieldFrame
+            }
+        } else {
+            // Cancel any in-flight animation from the AppKit auto-promote
+            // dance and snap to the explicit target.
+            hint.layer?.removeAllAnimations()
+            tint.layer?.removeAllAnimations()
+            field.layer?.removeAllAnimations()
+            hint.alphaValue = targetAlpha
+            tint.alphaValue = targetAlpha
+            field.frame = fieldFrame
+        }
+    }
+
+    private func installMouseMonitors() {
+        removeMouseMonitors()
+        lastOutsideClickAt = 0
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            DispatchQueue.main.async {
+                self?.handleMouseDownForDismiss(event)
+            }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            self?.handleMouseDownForDismiss(event)
+            return event
+        }
+    }
+
+    private func removeMouseMonitors() {
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        globalMouseMonitor = nil
+        localMouseMonitor = nil
+        lastOutsideClickAt = 0
+    }
+
+    private func handleMouseDownForDismiss(_ event: NSEvent) {
+        guard let panel else { return }
+        let location = NSEvent.mouseLocation
+        guard !panel.frame.contains(location) else {
+            lastOutsideClickAt = 0
+            return
+        }
+
+        let now = event.timestamp
+        if lastOutsideClickAt > 0, now - lastOutsideClickAt <= NSEvent.doubleClickInterval {
+            lastOutsideClickAt = 0
+            onDismissKey?()
+            return
+        }
+        lastOutsideClickAt = now
+    }
+
+    @objc private func customInputCardClicked(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        onChoiceKey?(3)
     }
 
     @objc private func customInputReturnPressed(_ sender: CustomReplyField) {

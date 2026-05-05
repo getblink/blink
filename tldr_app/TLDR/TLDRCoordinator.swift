@@ -353,6 +353,13 @@ final class TLDRCoordinator {
     @MainActor
     func chooseSuggestion(index: Int) {
         guard currentBundleDir != nil else { return }
+        // Picking a suggestion card via click while #4 is focused must drop
+        // the field's first responder so the caret and selection tint clear.
+        // The gesture recognizer that drives this code path doesn't transfer
+        // first responder on its own.
+        if index != 3 && choiceState.customInputActive {
+            leaveCustomInput()
+        }
         switch choiceState.pressNumber(index: index) {
         case .ignored:
             return
