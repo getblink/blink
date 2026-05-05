@@ -69,8 +69,13 @@ enum ScreenCapture {
 
         let content: SCShareableContent
         do {
+            // `onScreenWindowsOnly: false` so fullscreen-Space windows of the
+            // frontmost app still surface as candidates. From TLDR's menu-bar
+            // Space, ScreenCaptureKit reports those windows with
+            // `isOnScreen == false`, so the previous strict filter dropped
+            // every candidate and we'd throw `.noCapturableWindow`.
             content = try await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: true
+                false, onScreenWindowsOnly: false
             )
         } catch {
             // SCK throws a TCC error if the user denied Screen Recording.
@@ -83,7 +88,6 @@ enum ScreenCapture {
 
         let candidates = content.windows.filter { window in
             window.owningApplication?.processID == pid
-                && window.isOnScreen
                 && window.frame.width > 0
                 && window.frame.height > 0
         }
@@ -154,6 +158,19 @@ enum ScreenCapture {
     ) -> SCWindow? {
         guard !candidates.isEmpty else { return nil }
         guard let preferredGlobalRect, !preferredGlobalRect.isNull, !preferredGlobalRect.isEmpty else {
+            // No hint from Accessibility — prefer standard-layer windows that
+            // SCK still considers on-screen so we don't grab a minimized or
+            // utility palette window. If none qualify (e.g. the frontmost app
+            // is fullscreen on its own Space and TLDR sees `isOnScreen ==
+            // false` from the menu-bar Space), fall back to the first
+            // standard-layer window, then to whatever exists.
+            let standardLayer = candidates.filter { $0.windowLayer == 0 }
+            if let visibleStandard = standardLayer.first(where: { $0.isOnScreen }) {
+                return visibleStandard
+            }
+            if let firstStandard = standardLayer.first {
+                return firstStandard
+            }
             return candidates.first
         }
 

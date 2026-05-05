@@ -260,6 +260,13 @@ final class SuggestionsOverlay: NSObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        if Self.useLegacyGlass {
+            // Force dark appearance so `.labelColor` stays white and the
+            // `.popover` material renders its dark frosted variant. Without
+            // this, a light system appearance + dark backdrop blend produces
+            // dark text on dark frost (the card-#4 black-on-black bug).
+            panel.appearance = NSAppearance(named: .darkAqua)
+        }
         panel.onLocalKeyDown = { [weak self] event in
             self?.handleLocalKeyDown(event) ?? false
         }
@@ -814,8 +821,10 @@ final class SuggestionsOverlay: NSObject {
         previousFrontmost = nil
     }
 
+    private static let useLegacyGlass: Bool = RuntimeEnvironment.forceLegacyGlass()
+
     private func makeGlassPane(frame: NSRect, cornerRadius: CGFloat) -> GlassPane {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), !Self.useLegacyGlass {
             let glass = NSGlassEffectView(frame: frame)
             glass.cornerRadius = cornerRadius
             glass.style = .regular
@@ -826,15 +835,34 @@ final class SuggestionsOverlay: NSObject {
             return GlassPane(outer: glass, content: inner)
         }
 
+        // `.popover` is the adaptive (light/dark) frosted material that comes
+        // closest to NSGlassEffectView and stays legible over arbitrary app
+        // backgrounds; `.hudWindow` is intentionally a dark HUD chrome and
+        // rendered as black boxes when stacked card-on-card.
         let visual = NSVisualEffectView(frame: frame)
-        visual.material = .hudWindow
+        visual.material = .popover
         visual.blendingMode = .behindWindow
         visual.state = .active
-        visual.wantsLayer = true
-        visual.layer?.cornerRadius = cornerRadius
-        visual.layer?.masksToBounds = true
+        // `maskImage` clips the underlying material backing — `layer.cornerRadius`
+        // alone leaves the frost backing's outer rect square even though the
+        // hosting layer composites rounded.
+        visual.maskImage = Self.roundedMaskImage(cornerRadius: cornerRadius)
         suppressOutline(visual)
         return GlassPane(outer: visual, content: visual)
+    }
+
+    private static func roundedMaskImage(cornerRadius: CGFloat) -> NSImage {
+        let radius = max(cornerRadius, 0.5)
+        let edge = max(radius * 2 + 1, 2)
+        let size = NSSize(width: edge, height: edge)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 
     private func suppressOutline(_ view: NSView) {
@@ -860,6 +888,10 @@ final class SuggestionsOverlay: NSObject {
     private func setCornerRadius(_ view: NSView, _ radius: CGFloat) {
         if #available(macOS 26.0, *), let glass = view as? NSGlassEffectView {
             glass.cornerRadius = radius
+            return
+        }
+        if let visual = view as? NSVisualEffectView {
+            visual.maskImage = Self.roundedMaskImage(cornerRadius: radius)
             return
         }
         view.layer?.cornerRadius = radius
