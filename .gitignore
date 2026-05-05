@@ -13,6 +13,7 @@ scratchpad/source/*
 scratchpad/target/*
 !scratchpad/target/.gitkeep
 scratchpad/fixtures
+scratchpad/tldr_reply/fixtures/*/
 scratchpad/sweeps/
 scratchpad/last_output.txt
 scratchpad/last_run.json

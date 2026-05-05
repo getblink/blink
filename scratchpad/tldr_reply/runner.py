@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import shutil
 import subprocess
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -62,13 +63,51 @@ def load_settings() -> dict[str, Any]:
     return settings
 
 
+def _display_scale_from_capture(capture: dict[str, Any]) -> Any:
+    for key in ("display_scale", "backing_scale_factor", "scale"):
+        if capture.get(key) is not None:
+            return capture.get(key)
+    bbox = capture.get("bbox")
+    if isinstance(bbox, dict):
+        for key in ("display_scale", "backing_scale_factor", "scale"):
+            if bbox.get(key) is not None:
+                return bbox.get(key)
+    return None
+
+
+def save_tldr_fixture(
+    *,
+    fixture_dir: Path,
+    screenshot_path: Path,
+    capture: dict[str, Any],
+    hotkey_at: str,
+) -> dict[str, Any]:
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    slug = fixture_dir.name
+    fixture_screenshot_path = fixture_dir / "screenshot.png"
+    shutil.copy2(screenshot_path, fixture_screenshot_path)
+    manifest = {
+        "slug": slug,
+        "label": slug.replace("-", " ").replace("_", " "),
+        "captured_at": now_iso(),
+        "notes": "",
+        "screenshot": "screenshot.png",
+        "display_scale": _display_scale_from_capture(capture),
+        "capture": capture,
+        "hotkey_at": hotkey_at,
+    }
+    save_json(fixture_dir / "tldr_fixture.json", manifest)
+    return manifest
+
+
 class TldrReplyApp:
-    def __init__(self) -> None:
+    def __init__(self, *, save_fixture_dir: Path | None = None) -> None:
         self.settings = load_settings()
         self.prompt_text = PROMPT_PATH.read_text(encoding="utf-8")
-        self.proxy_settings = proxy_settings_from_env()
+        self.save_fixture_dir = save_fixture_dir
+        self.proxy_settings = None if save_fixture_dir is not None else proxy_settings_from_env()
         self.client = None
-        if self.proxy_settings is None:
+        if self.proxy_settings is None and self.save_fixture_dir is None:
             self.client = create_client(os.environ.get("GEMINI_API_KEY"), self.settings)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tldr-reply")
         self.listener = HotkeyListener()
@@ -110,7 +149,13 @@ class TldrReplyApp:
         )
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         self.listener.start()
-        print(f"[tldr] Listening for {HOTKEY}. Press ctrl+c here to quit.")
+        if self.save_fixture_dir is None:
+            print(f"[tldr] Listening for {HOTKEY}. Press ctrl+c here to quit.")
+        else:
+            print(
+                f"[tldr] Listening for {HOTKEY}. Next capture saves fixture to "
+                f"{self.save_fixture_dir} without sending."
+            )
         app.run()
 
     def stop(self) -> None:
@@ -297,6 +342,24 @@ class TldrReplyApp:
         print("[tldr] Dismissed without changing clipboard.")
 
     def _run_once(self, hotkey_at: str) -> None:
+        if self.save_fixture_dir is not None:
+            fixture_dir = self.save_fixture_dir
+            temp_screenshot_path = fixture_dir / ".capture.tmp.png"
+            capture = capture_active_window(temp_screenshot_path)
+            if capture["status"] != "ok":
+                print(f"[tldr] Capture {capture['status']}; no fixture saved.")
+                return
+            save_tldr_fixture(
+                fixture_dir=fixture_dir,
+                screenshot_path=temp_screenshot_path,
+                capture=capture,
+                hotkey_at=hotkey_at,
+            )
+            temp_screenshot_path.unlink(missing_ok=True)
+            print(f"[tldr] Fixture saved to {fixture_dir}; no request sent.")
+            self._notify("TLDR fixture saved. No request sent.")
+            return
+
         run_dir = RUNS_DIR / _run_dir_name()
         run_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = run_dir / "screenshot.png"

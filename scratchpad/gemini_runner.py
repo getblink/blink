@@ -53,7 +53,12 @@ def guess_mime_type(path: Path) -> str:
     return "image/png"
 
 
-def prepare_request_image(image_path: Path, settings: dict[str, Any]) -> dict[str, Any]:
+def prepare_request_image(
+    image_path: Path,
+    settings: dict[str, Any],
+    *,
+    dest_dir: Path | None = None,
+) -> dict[str, Any]:
     original_bytes = image_path.stat().st_size
     preprocess_enabled = bool(settings.get("preprocess_request_images", True))
     started_perf = time.perf_counter()
@@ -86,7 +91,9 @@ def prepare_request_image(image_path: Path, settings: dict[str, Any]) -> dict[st
     max_dimension = int(settings.get("request_image_max_dimension", 1600))
     jpeg_quality = int(settings.get("request_image_jpeg_quality", 80))
     extension = ".jpg" if request_format in {"jpeg", "jpg"} else f".{request_format}"
-    request_path = image_path.with_name(f"{image_path.stem}.request{extension}")
+    request_parent = dest_dir if dest_dir is not None else image_path.parent
+    request_parent.mkdir(parents=True, exist_ok=True)
+    request_path = request_parent / f"{image_path.stem}.request{extension}"
     command = ["/usr/bin/sips"]
     if request_format:
         command += ["-s", "format", request_format]

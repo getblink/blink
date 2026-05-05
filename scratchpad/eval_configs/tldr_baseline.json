@@ -1,0 +1,5 @@
+{
+  "name": "tldr_baseline",
+  "preprocess_request_images": false,
+  "tldr_include_ocr_packet": false
+}

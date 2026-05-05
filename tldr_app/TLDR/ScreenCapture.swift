@@ -19,6 +19,7 @@ enum ScreenCapture {
         let pngData: Data
         let capturedAt: Date
         let windowFramePoints: CGRect
+        let windowID: CGWindowID
     }
 
     enum CaptureError: LocalizedError {
@@ -122,7 +123,8 @@ enum ScreenCapture {
         return Capture(
             pngData: pngData,
             capturedAt: startedAt,
-            windowFramePoints: window.frame
+            windowFramePoints: window.frame,
+            windowID: window.windowID
         )
     }
 

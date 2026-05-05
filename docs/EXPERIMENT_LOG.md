@@ -26,6 +26,83 @@ See also:
 
 ---
 
+## 2026-05-04 — TLDR screenshot compression + OCR sweep harness
+
+- **Hypothesis:** Client-side JPEG/downscale can reduce TLDR screenshot upload time, and a parallel native Vision OCR packet can preserve small-text grounding well enough to justify aggressive compression.
+- **Setup:** Added a TLDR-specific fixture format under `scratchpad/tldr_reply/fixtures/<slug>/`, a `./tldr --save-fixture <dir>` capture path that writes `screenshot.png` plus `tldr_fixture.json` without sending or leaving a `tldr_runs` stub, and `scratchpad/tldr_reply/eval_sweep.py` to run fixture x config sweeps. The sweep reuses `prepare_request_image(...)` for compression with request artifacts isolated to each sweep cell, reuses the native OCR packet path from `app/python/source_ocr.py`, runs OCR and image prep concurrently, sends Gemini the TLDR screenshot contents plus optional structured OCR context, and writes `summary.md`, `compare.html`, and per-cell artifacts with failure tracebacks, prompt-token deltas, and explicit latency caveats.
+- **Input type(s):** Frontmost-window TLDR screenshots captured manually.
+- **Outcome:** Harness implemented; needs a 6-10 fixture corpus and real sweep run before any shipped `tldr_app/` integration.
+- **Evidence / examples:** `scratchpad/tldr_reply/eval_sweep.py`, `scratchpad/tldr_reply/runner.py`, `scratchpad/eval_configs/tldr_*.json`, `scratchpad/tldr_reply/README.md`.
+- **Decision:** Keep this sweep-first. Do not add compression/OCR to `tldr_app/` until a config beats baseline on `total_ms` without losing manual TLDR/suggestion quality.
+- **Next step:** Capture representative chat, email, docs, article, dashboard, and small-text fixtures; run the TLDR sweep; manually grade `compare.html`; then decide whether Phase B is warranted.
+
+### Follow-up: cross-model sweep + hallucination root cause
+
+- **Hypothesis (refined):** A real production hallucination on `gemini-3-flash-preview` ("Gemini 1.5 Pro" instead of "Gemini 3 Flash") was caused by small text being illegible at `MEDIA_RESOLUTION_LOW`; aggressive compression plus a Vision OCR packet should save latency and tokens *and* eliminate the hallucination.
+- **Setup:**
+  - Imported 90 production runs from `~/Library/Application Support/TLDR/runs/` via `scratchpad/tldr_reply/import_runs.py` into `scratchpad/tldr_reply/fixtures/from_runs/`. 86 of 90 are Conductor screenshots — corpus-bias caveat noted.
+  - Broader sweep: 10 representative fixtures × 7 configs on `gemini-3.1-flash-lite-preview` (default), n=1.
+  - Hallucination-focused high-N: 1 fixture (`20260504-024528-026`) × 7 configs × 20 trials × 4 models (`gemini-3.1-flash-lite-preview`, `gemini-2.5-flash`, `gemini-3-flash-preview`, `gemini-3-pro-preview`). Pro hit a 25 RPM quota; only 6 of 20 trials per cell completed before failures, so Pro data is partial.
+  - OCR-only probe (no image): 2 fixtures × 5 trials on `gemini-3-flash-preview`.
+  - Direct token-count probe: 1 image × 3 media_resolution settings on `gemini-3-flash-preview`.
+- **Outcome (per question):**
+  - **Token floor: confirmed.** `prompt_token_count` is flat across image bytes at fixed `media_resolution`. Compression saves wire bytes, not LLM tokens. Image-token cost on `gemini-3-flash-preview`: LOW = 255, MEDIUM = 528, HIGH = 1085. Earlier "~64 tokens at LOW" estimate was wrong.
+  - **Compression latency win: real on Lite.** Broader sweep median `total_ms`: baseline (PNG, native, LOW) 2741ms → `q70_d1600` (JPEG, LOW) 2224ms = **517ms savings**, no quality regression vs `prod` column on n=10 fixtures.
+  - **OCR is a net loss almost everywhere.** OCR adds ~350-450ms `ocr_ms`, only saves ~150ms `network_ms`. On the broader sweep, OCR variants land 250-370ms slower than `q70_d1600`. On the hallucination fixture, OCR-grounded configs hallucinate harder (see below).
+  - **Hallucination is model-specific to `gemini-3-flash-preview`.** On the same fixture, the four models' hallucination rates at JPEG q70 d1600 LOW (n=20 each): flash-preview **18/20**, flash-lite 0/20, 2.5 Flash 0/20, Pro 0/6. Lite (the actually-shipped default) and 2.5 Flash never fabricate the version on any tested config.
+  - **JPEG-at-LOW is catastrophic specifically for flash-preview.** Same fixture: PNG at LOW 0/20, JPEG q70 d1600 at LOW **18/20**, JPEG q70 d1600 at MEDIUM 0/20. Mechanism: client-side JPEG + downscale degrades the small "Gemini 3" qualifier; flash-preview's confident priors fill the gap with "Gemini 1.5". MEDIUM gives enough pixel area to read "3" reliably and the failure mode disappears.
+  - **OCR doesn't rescue flash-preview.** OCR + image at LOW: 20/20 hallucinated regardless of whether the prefix was the original ("current screen evidence wins") or rewritten to invert priority ("trust OCR over image"). Even OCR-only (no image, packet text contains the literal "Gemini 3 Flash") hallucinates 13/20 — the OCR text contains "Pro" 6× without version qualifier and the model defaults to its prior. The image being present makes it worse, not better.
+  - **Production hallucination not reproducible today.** Best replication was 2/20 (10%) using the production-era system prompt + post-fix thinking config. Exact production replay (PNG, LOW, no `thinking_level` override, max_output_tokens=512, gemini-3-flash-preview, current prompt): **0/20**. Most likely cause is silent preview-model drift between the production capture (2026-05-04 02:45 PDT) and replay (~7 hours later), with secondary contributions from the missing `thinking_level="low"` override (commit `4f3d7e4` landed at 02:54 PDT, 9 minutes after the failure) and a different system prompt at the time.
+  - **2.5 Flash is ~2× slower than Lite or flash-preview.** High-N median `total_ms` on baseline_LOW: Lite 3310ms, flash-preview 4020ms, 2.5 Flash 7164ms. Same prompt, same fixture, same settings. Not a viable daily driver candidate purely on latency.
+  - **Pro is unsuitable as default.** Median 11s+ on the cells that completed before the rate limit; rate-limit-bound at 25 RPM on the free tier we're using.
+- **Recommendations across model × compression × resolution:**
+
+  | Model | Compression | media_resolution | OCR | Verdict |
+  |---|---|---|---|---|
+  | `gemini-3.1-flash-lite-preview` (current default) | JPEG q70 d1600 | LOW | none | **Recommended.** ~517ms faster than baseline, identical prompt tokens, 0/20 hallucinations. |
+  | `gemini-3.1-flash-lite-preview` | none (raw PNG) | LOW | none | Baseline. Acceptable but ~500ms slower than the recommendation. |
+  | `gemini-3.1-flash-lite-preview` | any | MEDIUM | none | Not justified; +120ms latency, +273 prompt tokens, no quality benefit observed. |
+  | `gemini-3.1-flash-lite-preview` | any | any | included | Net loss on latency. Disqualified. |
+  | `gemini-3-flash-preview` | none (raw PNG) | LOW | none | Acceptable but slow (~4s baseline). Risk of preview-model drift triggering version hallucinations. |
+  | `gemini-3-flash-preview` | JPEG | LOW | none | **Forbidden.** 18/20 hallucination rate. |
+  | `gemini-3-flash-preview` | JPEG | MEDIUM | none | **Required if using flash-preview.** 0/20 hallucinations, ~2.3s total_ms. +273 prompt tokens vs LOW. |
+  | `gemini-3-flash-preview` | any | any | included | Disqualified (20/20 hallucinations at LOW, 6/20 at MEDIUM). |
+  | `gemini-2.5-flash` | any | any | none | Clean (0/20 hallucinations) but ~2× slower than Lite. Not worth shipping unless quality reasons demand it. |
+  | `gemini-3-pro-preview` | any | any | any | Too slow (~11s) and rate-limited on free tier. Suitable only as a manual-pick "hard cases" model. |
+- **Evidence / examples:**
+  - Sweep harness: `scratchpad/tldr_reply/eval_sweep.py`, `scratchpad/tldr_reply/import_runs.py`
+  - Probe scripts: `scratchpad/tldr_reply/halluc_high_n.py`, `scratchpad/tldr_reply/ask_model_version.py`, `scratchpad/tldr_reply/ocr_only_probe.py`
+  - Broader sweep output: `scratchpad/sweeps/tldr_20260504-143358/`
+  - High-N per-model output: `scratchpad/sweeps/tldr_halluc_high_n/{gemini-3-flash-preview, gemini-3_1-flash-lite-preview, gemini-2_5-flash, gemini-3-pro-preview}/results.json`
+  - Production hallucination fixtures: `scratchpad/tldr_reply/fixtures/from_runs/{20260504-024528-026, 20260504-024931-862}/expected.json`
+- **Decision:**
+  - For Phase B on the currently-shipped Lite default: ship `JPEG q70 d1600` at `MEDIA_RESOLUTION_LOW`, no OCR. Latency-only win.
+  - Drop OCR-grounding from the experiment plan. The "OCR rescues small-text identification" hypothesis is empirically wrong on the corpus tested.
+  - If the model picker ever defaults to `gemini-3-flash-preview`: force `MEDIA_RESOLUTION_MEDIUM` and disallow client-side JPEG-at-LOW.
+- **Caveats:**
+  - Corpus is 96% Conductor screenshots from a single user's dogfood pattern. The Lite "no quality regression" finding has not been validated on a diverse corpus.
+  - Hallucination experiment was on a single fixture (the only one in the corpus that named a Gemini version). Generalizability to other small-entity-name failure modes (app names, account names, dollar amounts, dates) is untested.
+  - Pro data is partial (n=6 for cells A and B, n=20 for C, n=0 for D-G). Pro's hallucination rate could not be characterized.
+  - The original production hallucination on flash-preview is no longer cleanly reproducible. Most likely cause is silent preview-model drift; the experiment cannot prove a fix because the failure no longer fires consistently.
+- **Next step:**
+  - Land the Phase B compression diff in `tldr_app/python/tldr_once.py` with the `q70_d1600 + LOW` settings as the new default. Mark the existing per-model overrides untouched.
+  - When that ships, capture a new fixture batch over a few days of dogfood and re-run the broader sweep at n=5 to confirm the Lite quality finding holds beyond n=1.
+  - Skip Phase A.5's OCR-only experimental config in production permanently. Keep the harness for future probe work but do not promote it.
+
+### Follow-up: Phase B shipped to `tldr_app/`
+
+- **Change:** Local Gemini path in `tldr_app/python/tldr_once.py` now compresses screenshots to JPEG q70 max-dim 1600 by default, with a per-model resolution guard that forces `MEDIA_RESOLUTION_MEDIUM` when `model == "gemini-3-flash-preview"`. Diagnostics (`image_bytes_original`, `image_bytes_compressed`, `image_prepare_ms`, `media_resolution_resolved`) flow into `response.json` and `run.json`. `prepare_request_image` is copied into `tldr_app/python/image_prep.py` (header points at `scratchpad/gemini_runner.py:56`) per the fork policy. No OCR, no prompt, no envelope, no server changes.
+- **Dogfood verification (n=1 each):**
+  - `gemini-3-flash-preview`: original 423,988 → compressed 206,546 bytes (**48.7%**), prep 46ms, `media_resolution_resolved=MEDIA_RESOLUTION_MEDIUM` (guard fired correctly), `duration_ms=2265`.
+  - `gemini-3.1-flash-lite-preview`: original 384,985 → compressed 176,978 bytes (**46.0%**), prep 43ms, `media_resolution_resolved=MEDIA_RESOLUTION_LOW` (passthrough), `duration_ms=2207`.
+- **Tests:** `python3 -m unittest discover tldr_app/python/tests` → 28 OK; covers PNG-fallback, JPEG-emit, MEDIUM-forced-on-flash-preview, LOW-passthrough-on-Lite, and run.json diagnostic plumbing.
+- **Known scope gaps (not blockers, called out explicitly):**
+  - **Proxy path is unaffected.** When `BLINK_PROXY_URL` + `BLINK_PROXY_TOKEN` are set, `_encode_multipart_request` uploads the raw PNG and the server (`server/gemini.py`) does no compression. Users on the production proxy install get no latency win from this change. A follow-up would either compress before proxy upload or apply the same logic server-side.
+  - **Flash-preview guard is exact-string match** (`model == "gemini-3-flash-preview"`). If Google rev-suffixes the preview model, the catastrophic-failure-prevention rule silently stops applying. Preview-model drift is already on the risk list.
+- **Evidence / examples:** `tldr_app/python/tldr_once.py` (`DEFAULT_SETTINGS`, `media_resolution_for_model`, `prepare_screenshot_part`), `tldr_app/python/image_prep.py`, `tldr_app/python/tests/test_tldr_once.py`. Dogfood runs at `~/Library/Application Support/TLDR/runs/20260504-185828-687/run.json` and `.../20260504-190503-147/run.json`.
+- **Decision:** Phase B closed. Latency and guardrail behavior verified end-to-end on the local Gemini path.
+- **Next step:** Address the proxy-path gap if production users (proxy install) are the target audience for the latency win. Otherwise, watch dogfood for any quality regressions on the under-represented surfaces flagged in the corpus-bias caveat.
+
 ## 2026-04-30 — TLDR.app native expand-first overlay
 
 - **Hypothesis:** The Swift-shipped TLDR surface will feel safer and clearer if it matches the scratchpad prototype: number keys expand first, repeated number copies, Return inserts only after an explicit expansion, and Esc dismisses.

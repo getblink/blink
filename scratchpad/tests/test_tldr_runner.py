@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,7 +14,7 @@ REPO_ROOT = SCRATCHPAD_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scratchpad.tldr_reply.runner import TldrReplyApp  # noqa: E402
+from scratchpad.tldr_reply.runner import TldrReplyApp, save_tldr_fixture  # noqa: E402
 
 
 def _make_app(panel: object | None, suggestions: list[str]) -> TldrReplyApp:
@@ -104,6 +105,67 @@ class EnterHotkeyTests(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertEqual(len(app._dispatched), 0)
+
+
+class FixtureCaptureTests(unittest.TestCase):
+    def test_save_tldr_fixture_writes_manifest_and_screenshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            screenshot = root / "capture.png"
+            screenshot.write_bytes(b"png-bytes")
+            fixture_dir = root / "fixtures" / "slack-thread"
+
+            manifest = save_tldr_fixture(
+                fixture_dir=fixture_dir,
+                screenshot_path=screenshot,
+                capture={"status": "ok", "duration_ms": 12},
+                hotkey_at="2026-05-04T12:00:00.000+00:00",
+            )
+
+            self.assertEqual((fixture_dir / "screenshot.png").read_bytes(), b"png-bytes")
+            self.assertEqual(manifest["slug"], "slack-thread")
+            self.assertEqual(manifest["screenshot"], "screenshot.png")
+            self.assertIsNone(manifest["display_scale"])
+            self.assertEqual(manifest["capture"]["status"], "ok")
+            self.assertTrue((fixture_dir / "tldr_fixture.json").exists())
+
+    def test_save_tldr_fixture_surfaces_display_scale_from_capture_bbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            screenshot = root / "capture.png"
+            screenshot.write_bytes(b"png-bytes")
+
+            manifest = save_tldr_fixture(
+                fixture_dir=root / "fixtures" / "mail-thread",
+                screenshot_path=screenshot,
+                capture={"status": "ok", "bbox": {"display_scale": 2}},
+                hotkey_at="2026-05-04T12:00:00.000+00:00",
+            )
+
+            self.assertEqual(manifest["display_scale"], 2)
+
+    @mock.patch("scratchpad.tldr_reply.runner.capture_active_window")
+    def test_save_fixture_mode_does_not_create_stub_run_dir(
+        self,
+        mock_capture,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def fake_capture(path: Path) -> dict:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"png-bytes")
+                return {"status": "ok", "duration_ms": 4}
+
+            mock_capture.side_effect = fake_capture
+            app = object.__new__(TldrReplyApp)
+            app.save_fixture_dir = root / "fixtures" / "chat"
+            app._notify = mock.Mock()  # type: ignore[method-assign]
+
+            app._run_once("2026-05-04T12:00:00.000+00:00")
+
+            self.assertFalse((root / "runs").exists())
+            self.assertTrue((root / "fixtures" / "chat" / "screenshot.png").exists())
 
 
 if __name__ == "__main__":

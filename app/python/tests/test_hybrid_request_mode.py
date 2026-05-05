@@ -78,6 +78,42 @@ class NativeSourcePacketTests(unittest.TestCase):
             "solo founder with prior agent tooling experience",
         ])
 
+    @patch("source_ocr.recognize_text")
+    def test_build_native_ocr_source_packet_can_skip_band_and_chrome_filters(
+        self,
+        mock_recognize,
+    ) -> None:
+        mock_recognize.return_value = {
+            "status": "ok",
+            "image_size_pixels": {"width": 1000, "height": 800},
+            "blocks": [
+                {
+                    "text": "main thread",
+                    "bbox_pixels": {"x": 120, "y": 140, "width": 160, "height": 28},
+                    "confidence": 0.99,
+                },
+                {
+                    "text": "sidebar reminder",
+                    "bbox_pixels": {"x": 830, "y": 145, "width": 120, "height": 24},
+                    "confidence": 0.96,
+                },
+            ],
+        }
+
+        result = build_native_ocr_source_packet(
+            source_path=Path("/tmp/source.png"),
+            apply_band_filter=False,
+            apply_chrome_filter=False,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["packet_variant"], "raw_lines_no_band_or_chrome_filter")
+        self.assertIn("main thread", result["packet_text"])
+        self.assertIn("sidebar reminder", result["packet_text"])
+        self.assertIsNone(result["build_log"]["dominant_band"])
+        self.assertFalse(result["build_log"]["apply_band_filter"])
+        self.assertFalse(result["build_log"]["apply_chrome_filter"])
+
 
 class SourceTextPacketTests(unittest.TestCase):
     def test_local_source_text_packet_preserves_multiline_formatting(self) -> None:

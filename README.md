@@ -37,7 +37,8 @@ It listens for `ctrl+shift+t`, captures one selected window, asks Gemini for a
 one-line summary plus three reply candidates, and shows them in a small overlay.
 Artifacts land under `scratchpad/tldr_runs/`; if `BLINK_PROXY_URL` and
 `BLINK_PROXY_TOKEN` are set, the request routes through the new standalone TLDR
-server instead of direct Gemini. See
+server instead of direct Gemini. Use `./tldr --save-fixture <dir>` plus
+`scratchpad/tldr_reply/eval_sweep.py` for compression/OCR fixture sweeps. See
 [`scratchpad/tldr_reply/`](scratchpad/tldr_reply/README.md).
 
 ## TLDR.app (`tldr_app/`)

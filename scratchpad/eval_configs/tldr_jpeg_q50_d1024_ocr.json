@@ -1,0 +1,8 @@
+{
+  "name": "tldr_jpeg_q50_d1024_ocr",
+  "preprocess_request_images": true,
+  "request_image_format": "jpeg",
+  "request_image_max_dimension": 1024,
+  "request_image_jpeg_quality": 50,
+  "tldr_include_ocr_packet": true
+}
