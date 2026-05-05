@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.runtimeStore = runtimeStore
         let eventClient = TLDREventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
+        let soundEffects = SoundEffects(runtimeStore: runtimeStore)
 
         PendingRunStore.sweepAbandonedRuns(
             eventClient: eventClient,
@@ -46,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             config: config,
             runtimeStore: runtimeStore,
             eventClient: eventClient,
-            summaryHotkey: summaryHotkey
+            summaryHotkey: summaryHotkey,
+            soundEffects: soundEffects
         )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)

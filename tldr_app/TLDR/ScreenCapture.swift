@@ -131,6 +131,9 @@ enum ScreenCapture {
         guard let pngData = cgImageToPNG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
+        await MainActor.run {
+            CaptureConfirmationOverlay.flash(frame: window.frame)
+        }
         return Capture(
             pngData: pngData,
             capturedAt: startedAt,
@@ -274,5 +277,98 @@ enum ScreenCapture {
     private static func cgImageToPNG(_ image: CGImage) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+@MainActor
+private enum CaptureConfirmationOverlay {
+    private static let bleed: CGFloat = 28
+    private static let pulseDuration: TimeInterval = 0.30
+    private static let fadeDuration: TimeInterval = 0.18
+
+    static func flash(frame: CGRect) {
+        guard frame.width > 8, frame.height > 8 else { return }
+        guard let primaryScreen = NSScreen.screens.first else { return }
+        let appKitFrame = NSRect(
+            x: frame.origin.x,
+            y: primaryScreen.frame.height - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+        // Grow the panel beyond the captured window's frame so the layer
+        // shadow used for the accent glow has room to render outside the
+        // stroke. The inner view is inset by `bleed` and matches the original
+        // window frame exactly.
+        let panelFrame = appKitFrame.insetBy(dx: -bleed, dy: -bleed)
+        let panel = NSPanel(
+            contentRect: panelFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+
+        let container = NSView(frame: NSRect(origin: .zero, size: panelFrame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
+
+        let view = NSView(frame: NSRect(x: bleed, y: bleed, width: appKitFrame.width, height: appKitFrame.height))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
+        view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        view.layer?.borderWidth = 2
+        view.layer?.cornerRadius = 6
+        view.layer?.cornerCurve = .continuous
+        view.layer?.shadowColor = NSColor.controlAccentColor.cgColor
+        view.layer?.shadowOpacity = 0.65
+        view.layer?.shadowRadius = 18
+        view.layer?.shadowOffset = .zero
+        view.layer?.masksToBounds = false
+        container.addSubview(view)
+        panel.orderFrontRegardless()
+
+        let border = CABasicAnimation(keyPath: "borderWidth")
+        border.fromValue = 2
+        border.toValue = 6
+        border.duration = pulseDuration
+        border.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        border.fillMode = .forwards
+        border.isRemovedOnCompletion = false
+        view.layer?.add(border, forKey: "captureBorder")
+        view.layer?.borderWidth = 6
+
+        let glow = CABasicAnimation(keyPath: "shadowRadius")
+        glow.fromValue = 6
+        glow.toValue = 22
+        glow.duration = pulseDuration
+        glow.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        glow.fillMode = .forwards
+        glow.isRemovedOnCompletion = false
+        view.layer?.add(glow, forKey: "captureGlow")
+        view.layer?.shadowRadius = 22
+
+        let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+        scale.values = [1.0, 0.985, 1.0]
+        scale.keyTimes = [0, 0.55, 1]
+        scale.duration = pulseDuration
+        scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        view.layer?.add(scale, forKey: "captureScale")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pulseDuration) {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = fadeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                container.animator().alphaValue = 0
+            } completionHandler: {
+                panel.close()
+            }
+        }
     }
 }

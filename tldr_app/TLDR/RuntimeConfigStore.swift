@@ -7,6 +7,7 @@ struct RuntimeConfigFile: Codable {
     var model: String
     var allowEventLogging: Bool
     var allowContentRetention: Bool
+    var soundsEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -14,6 +15,7 @@ struct RuntimeConfigFile: Codable {
         case model
         case allowEventLogging = "allow_event_logging"
         case allowContentRetention = "allow_content_retention"
+        case soundsEnabled = "sounds_enabled"
     }
 
     init(
@@ -21,13 +23,15 @@ struct RuntimeConfigFile: Codable {
         autoPaste: Bool,
         model: String,
         allowEventLogging: Bool,
-        allowContentRetention: Bool
+        allowContentRetention: Bool,
+        soundsEnabled: Bool
     ) {
         self.version = version
         self.autoPaste = autoPaste
         self.model = model
         self.allowEventLogging = allowEventLogging
         self.allowContentRetention = allowContentRetention
+        self.soundsEnabled = soundsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +43,7 @@ struct RuntimeConfigFile: Codable {
         allowEventLogging = try container.decodeIfPresent(Bool.self, forKey: .allowEventLogging) ?? true
         allowContentRetention = try container.decodeIfPresent(Bool.self, forKey: .allowContentRetention)
             ?? false
+        soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
     }
 }
 
@@ -56,6 +61,9 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var allowContentRetention: Bool {
         didSet { save() }
     }
+    @Published var soundsEnabled: Bool {
+        didSet { save() }
+    }
 
     private var isSaving = false
 
@@ -65,6 +73,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.model = config.model
         self.allowEventLogging = config.allowEventLogging
         self.allowContentRetention = config.allowContentRetention
+        self.soundsEnabled = config.soundsEnabled
     }
 
     var snapshot: RuntimeConfigFile {
@@ -73,7 +82,8 @@ final class RuntimeConfigStore: ObservableObject {
             autoPaste: autoPaste,
             model: model,
             allowEventLogging: allowEventLogging,
-            allowContentRetention: allowContentRetention
+            allowContentRetention: allowContentRetention,
+            soundsEnabled: soundsEnabled
         )
     }
 
@@ -88,7 +98,8 @@ final class RuntimeConfigStore: ObservableObject {
             autoPaste: true,
             model: "gemini-3-flash-preview",
             allowEventLogging: true,
-            allowContentRetention: false
+            allowContentRetention: false,
+            soundsEnabled: true
         )
         write(config)
         return config
