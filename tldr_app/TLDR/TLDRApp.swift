@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import IOKit.hid
+import Sparkle
 
 @main
 final class TLDRAppMain {
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: TLDREventClient?
     private var hotkeyRetryTimer: Timer?
+    private var updaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = CGRequestScreenCaptureAccess()
@@ -54,6 +56,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
         )
         menubar.install()
+        if Self.hasUsableSparkleConfig {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+            menubar.setUpdater(updaterController)
+        }
 
         hotkeys = HotkeyManager(
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
@@ -138,5 +148,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private static var hasUsableSparkleConfig: Bool {
+        guard
+            let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+            let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        else {
+            return false
+        }
+        return feedURL.hasPrefix("https://")
+            && !feedURL.contains("example.com")
+            && !publicKey.isEmpty
+            && !publicKey.contains("REPLACE_WITH")
     }
 }

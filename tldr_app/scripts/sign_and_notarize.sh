@@ -35,16 +35,35 @@ fi
 echo "[tldr] stripping quarantine from $APP_PATH"
 xattr -cr "$APP_PATH"
 
+FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
 PYTHON_DIR="$APP_PATH/Contents/Resources/python"
 if [[ ! -d "$PYTHON_DIR" ]]; then
     echo "[tldr] error: bundled python runtime not found: $PYTHON_DIR" >&2
     exit 1
 fi
 
-echo "[tldr] signing nested Mach-O files in bundled python runtime"
+SIGN_SCAN_ROOTS=()
+if [[ -d "$FRAMEWORKS_DIR" ]]; then
+    SIGN_SCAN_ROOTS+=("$FRAMEWORKS_DIR")
+fi
+SIGN_SCAN_ROOTS+=("$PYTHON_DIR")
+
+echo "[tldr] signing nested Mach-O files"
 while IFS= read -r file_path; do
     codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$file_path"
-done < <(find "$PYTHON_DIR" -type f -exec sh -c 'file -b "$1" | grep -qE "Mach-O" && echo "$1"' _ {} \;)
+done < <(find "${SIGN_SCAN_ROOTS[@]}" -type f -exec sh -c 'file -b "$1" | grep -qE "Mach-O" && echo "$1"' _ {} \;)
+
+if [[ -d "$FRAMEWORKS_DIR" ]]; then
+    echo "[tldr] signing nested Sparkle bundles"
+    while IFS= read -r bundle_path; do
+        codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$bundle_path"
+    done < <(find "$FRAMEWORKS_DIR" \( -name '*.xpc' -o -name '*.app' \) -type d -prune | sort)
+
+    if [[ -d "$FRAMEWORKS_DIR/Sparkle.framework" ]]; then
+        codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" \
+            "$FRAMEWORKS_DIR/Sparkle.framework"
+    fi
+fi
 
 echo "[tldr] signing app bundle"
 codesign --force --options runtime --timestamp \
