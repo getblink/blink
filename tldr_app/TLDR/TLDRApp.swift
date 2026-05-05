@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
 
         let config = Config.load()
+        let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
         let eventClient = TLDREventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
@@ -44,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator = TLDRCoordinator(
             config: config,
             runtimeStore: runtimeStore,
-            eventClient: eventClient
+            eventClient: eventClient,
+            summaryHotkey: summaryHotkey
         )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)
@@ -53,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menubar = MenubarController(
             coordinator: coordinator,
             runtimeStore: runtimeStore,
+            hotkeyDisplay: summaryHotkey.displayString,
             onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
         )
         menubar.install()
@@ -66,9 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hotkeys = HotkeyManager(
+            summaryHotkey: summaryHotkey,
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
+            isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
             onSummarize: { [weak coordinator] in coordinator?.summarizeFrontmostWindow() },
+            onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
+            onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
             onInsert: { [weak coordinator] in
                 if Thread.isMainThread {

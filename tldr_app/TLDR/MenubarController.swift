@@ -14,6 +14,7 @@ final class MenubarController: NSObject {
     private let coordinator: TLDRCoordinator
     private let runtimeStore: RuntimeConfigStore
     private let onShowPermissions: () -> Void
+    private let hotkeyDisplay: String
     private var statusItem: NSStatusItem!
     private var statusLabel: NSMenuItem!
     private var modelMenu: NSMenu?
@@ -24,10 +25,12 @@ final class MenubarController: NSObject {
     init(
         coordinator: TLDRCoordinator,
         runtimeStore: RuntimeConfigStore,
+        hotkeyDisplay: String,
         onShowPermissions: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.runtimeStore = runtimeStore
+        self.hotkeyDisplay = hotkeyDisplay
         self.onShowPermissions = onShowPermissions
     }
 
@@ -59,12 +62,12 @@ final class MenubarController: NSObject {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        statusLabel = NSMenuItem(title: "Idle - press Ctrl+Shift+T", action: nil, keyEquivalent: "")
+        statusLabel = NSMenuItem(title: "Idle - press \(hotkeyDisplay)", action: nil, keyEquivalent: "")
         statusLabel.isEnabled = false
         menu.addItem(statusLabel)
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Summarize frontmost window (Ctrl+Shift+T)", action: #selector(triggerSummarize), keyEquivalent: "")
+        menu.addItem(withTitle: "Summarize frontmost window (\(hotkeyDisplay))", action: #selector(triggerSummarize), keyEquivalent: "")
             .target = self
 
         menu.addItem(withTitle: "Open runs folder", action: #selector(openRunsFolder), keyEquivalent: "")

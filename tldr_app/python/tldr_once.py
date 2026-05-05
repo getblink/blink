@@ -104,6 +104,7 @@ SERVER_CONTENT_TEXT = (
 )
 
 STATEFUL_CONTEXT_VERSION = 1
+MAX_SCREENSHOT_FRAMES = 8
 VOICE_SAMPLE_LIMIT = 5
 SURFACE_HISTORY_LIMIT = 3
 PREFERENCE_EXAMPLE_LIMIT = 3
@@ -113,7 +114,9 @@ SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 STATEFUL_CONTEXT_WINDOW_SECONDS = 15 * 60
 
-DEFAULT_PROMPT = """You are looking at a single screenshot of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
+DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
+
+If multiple screenshots are provided, they show the same window scrolled top to bottom in capture order. Treat them as one continuous page. Adjacent frames will overlap; deduplicate visually rather than summarizing each frame separately.
 
 Produce two things:
 
@@ -725,6 +728,45 @@ def prepare_screenshot_part(
     return image_part, diagnostics
 
 
+def prepare_screenshot_parts(
+    types_module,
+    screenshot_paths: list[Path],
+    settings: dict[str, Any],
+) -> tuple[list[Any], dict[str, Any]]:
+    parts: list[Any] = []
+    frames: list[dict[str, Any]] = []
+    original_total = 0
+    compressed_total = 0
+    prepare_total = 0
+    media_resolution = media_resolution_for_model(
+        str(settings.get("model") or ""),
+        str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
+    )
+    for index, screenshot_path in enumerate(screenshot_paths):
+        part, diagnostics = prepare_screenshot_part(types_module, screenshot_path, settings)
+        parts.append(part)
+        original_total += int(diagnostics.get("image_bytes_original") or 0)
+        compressed_total += int(diagnostics.get("image_bytes_compressed") or 0)
+        prepare_total += int(diagnostics.get("image_prepare_ms") or 0)
+        frames.append(
+            {
+                "index": index,
+                "path": str(screenshot_path),
+                **diagnostics,
+            }
+        )
+    return parts, {
+        "frames": frames,
+        "frame_count": len(screenshot_paths),
+        "image_bytes_original": original_total,
+        "image_bytes_compressed": compressed_total,
+        "image_prepare_ms": prepare_total,
+        "image_bytes_original_total": original_total,
+        "image_bytes_compressed_total": compressed_total,
+        "media_resolution_resolved": media_resolution,
+    }
+
+
 def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
     event = {"event": kind, **payload}
     print(json.dumps(event, ensure_ascii=True), flush=True)
@@ -956,7 +998,7 @@ def _proxy_error_message(raw_body: str, fallback: str) -> str:
 
 def _encode_multipart_request(
     request_payload: dict[str, Any],
-    image_path: Path | None,
+    image_paths: list[Path],
 ) -> tuple[bytes, str]:
     boundary = f"tldr-{uuid4().hex}"
     request_json = json.dumps(request_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
@@ -967,13 +1009,14 @@ def _encode_multipart_request(
         request_json,
         b"\r\n",
     ]
-    if image_path is not None:
+    for index, image_path in enumerate(image_paths):
+        field_name = "screenshot" if index == 0 else f"screenshot_{index}"
         parts.extend(
             [
                 f"--{boundary}\r\n".encode("utf-8"),
                 (
-                    'Content-Disposition: form-data; name="screenshot"; '
-                    f'filename="{image_path.name}"\r\n'
+                    f'Content-Disposition: form-data; name="{field_name}"; '
+                    f'filename="screenshot_{index}{image_path.suffix or ".png"}"\r\n'
                 ).encode("utf-8"),
                 b"Content-Type: image/png\r\n\r\n",
                 image_path.read_bytes(),
@@ -988,9 +1031,9 @@ def generate_via_proxy(
     request_payload: dict[str, Any],
     settings: dict[str, Any],
     proxy_settings: dict[str, str],
-    image_path: Path | None,
+    image_paths: list[Path],
 ) -> dict[str, Any]:
-    body, boundary = _encode_multipart_request(request_payload, image_path)
+    body, boundary = _encode_multipart_request(request_payload, image_paths)
     timeout_seconds = float(settings["timeout_seconds"])
     req = request.Request(
         f"{proxy_settings['url']}/v1/tldr",
@@ -1052,7 +1095,7 @@ def generate_via_proxy(
 
 
 def generate(
-    screenshot_path: Path,
+    screenshot_paths: list[Path],
     prompt_text: str,
     settings: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1063,12 +1106,12 @@ def generate(
         api_key=os.environ.get("GEMINI_API_KEY"),
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
-    image_part, image_diagnostics = prepare_screenshot_part(types, screenshot_path, settings)
+    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
     config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
-        contents=[image_part, MODEL_CONTENT_TEXT],
+        contents=image_parts + [MODEL_CONTENT_TEXT],
         config=config,
     )
     duration_ms = int(round((time.perf_counter() - started) * 1000))
@@ -1082,7 +1125,7 @@ def generate(
 
 
 def generate_streaming(
-    screenshot_path: Path,
+    screenshot_paths: list[Path],
     prompt_text: str,
     settings: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1093,7 +1136,7 @@ def generate_streaming(
         api_key=os.environ.get("GEMINI_API_KEY"),
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
-    image_part, image_diagnostics = prepare_screenshot_part(types, screenshot_path, settings)
+    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
     config = build_generate_config(types, prompt_text, settings)
     started = time.perf_counter()
     raw_text = ""
@@ -1103,7 +1146,7 @@ def generate_streaming(
     first_token_perf: float | None = None
     for chunk in client.models.generate_content_stream(
         model=settings["model"],
-        contents=[image_part, MODEL_CONTENT_TEXT],
+        contents=image_parts + [MODEL_CONTENT_TEXT],
         config=config,
     ):
         text = getattr(chunk, "text", None) or ""
@@ -1142,7 +1185,7 @@ def generate_streaming(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one TLDR screenshot request.")
-    parser.add_argument("--screenshot", type=Path, required=True)
+    parser.add_argument("--screenshot", type=Path, required=True, action="append")
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--settings", type=Path)
@@ -1186,8 +1229,27 @@ def main(argv: list[str] | None = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
     stderr_log = run_dir / "stderr.log"
     stderr_log.write_text("", encoding="utf-8")
+    screenshot_paths: list[Path] = list(args.screenshot)
+    if not screenshot_paths:
+        raise ValueError("At least one --screenshot is required.")
+    if len(screenshot_paths) > MAX_SCREENSHOT_FRAMES:
+        raise ValueError(f"At most {MAX_SCREENSHOT_FRAMES} screenshots are supported.")
     screenshot_out = run_dir / "screenshot.png"
-    shutil.copy2(args.screenshot, screenshot_out)
+    screenshot_outputs: list[Path] = []
+    frame_logs: list[dict[str, Any]] = []
+    for index, screenshot_path in enumerate(screenshot_paths):
+        frame_out = run_dir / f"screenshot_{index}.png"
+        shutil.copy2(screenshot_path, frame_out)
+        screenshot_outputs.append(frame_out)
+        frame_logs.append(
+            {
+                "index": index,
+                "filename": frame_out.name,
+                "bytes": frame_out.stat().st_size,
+            }
+        )
+    shutil.copy2(screenshot_outputs[0], screenshot_out)
+    save_json(run_dir / "frames.json", frame_logs)
     save_json(run_dir / "request.json", request_payload)
     write_model_input(
         run_dir / "model_input.txt",
@@ -1223,7 +1285,12 @@ def main(argv: list[str] | None = None) -> int:
             "preference_example_count": len(stateful_context.get("preference_examples", [])) if stateful_context else 0,
             "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
         },
+        "frame_count": len(screenshot_outputs),
         "screenshot": {"path": "screenshot.png", "bytes": screenshot_out.stat().st_size},
+        "screenshots": [
+            {"path": item.name, "bytes": item.stat().st_size}
+            for item in screenshot_outputs
+        ],
     }
     save_json(run_dir / "host_profile.json", host_profile)
 
@@ -1259,18 +1326,29 @@ def main(argv: list[str] | None = None) -> int:
                     request_payload=request_payload,
                     settings=settings,
                     proxy_settings=proxy_settings,
-                    image_path=screenshot_out,
+                    image_paths=screenshot_outputs,
                 )
             else:
                 if not os.environ.get("GEMINI_API_KEY"):
                     raise RuntimeError("Set GEMINI_API_KEY in ~/.tldr/.env or the launch environment.")
                 if args.stream_events and generation_path == "local_gemini":
-                    response = generate_streaming(screenshot_out, model_prompt_text, settings)
+                    response = generate_streaming(screenshot_outputs, model_prompt_text, settings)
                 else:
-                    response = generate(screenshot_out, model_prompt_text, settings)
+                    response = generate(screenshot_outputs, model_prompt_text, settings)
                 response["request_id"] = request_payload.get("request_id")
                 response["warnings"] = []
                 response["model"] = settings["model"]
+        if isinstance(response.get("frames"), list):
+            diagnostics_by_index = {
+                item.get("index"): item
+                for item in response["frames"]
+                if isinstance(item, dict)
+            }
+            for frame_log in frame_logs:
+                diagnostics = diagnostics_by_index.get(frame_log["index"])
+                if isinstance(diagnostics, dict):
+                    frame_log["image_diagnostics"] = diagnostics
+            save_json(run_dir / "frames.json", frame_logs)
         save_json(run_dir / "response.json", response)
         run_log.update(
             {

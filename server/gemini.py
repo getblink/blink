@@ -143,7 +143,7 @@ def request_context_text(envelope: dict[str, Any]) -> str | None:
         "input_mode": envelope.get("input_mode"),
         "capture_mode": envelope.get("capture_mode"),
     }
-    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context", "stateful_context"):
+    for key in ("frontmost_app", "image_diagnostics", "frames", "ocr_packet", "focused_context", "stateful_context"):
         value = envelope.get(key)
         if value not in (None, {}, [], ""):
             structured[key] = value
@@ -156,9 +156,10 @@ def generate_tldr_and_suggestions(
     client: Any,
     settings: dict[str, Any],
     prompt_text: str,
-    image_bytes: bytes | None,
-    mime_type: str = "image/png",
+    images: list[tuple[bytes, str]] | None = None,
     context_text: str | None = None,
+    image_bytes: bytes | None = None,
+    mime_type: str = "image/png",
 ) -> dict[str, Any]:
     from google.genai import types
 
@@ -174,11 +175,13 @@ def generate_tldr_and_suggestions(
             "facts from history.\n"
             + context_text
         )
-    if image_bytes is not None:
+    if images is None:
+        images = [(image_bytes, mime_type)] if image_bytes is not None else []
+    for data, image_mime_type in images:
         contents.append(
             types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=mime_type,
+                data=data,
+                mime_type=image_mime_type,
             )
         )
     if not contents:

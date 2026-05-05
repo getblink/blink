@@ -47,6 +47,137 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIn("steer the agent", tldr_once.DEFAULT_PROMPT)
         self.assertIn("requests or directions to the agent", tldr_once.DEFAULT_PROMPT)
         self.assertIn("Avoid \"I agree...\"", tldr_once.DEFAULT_PROMPT)
+        self.assertIn("multiple screenshots", tldr_once.DEFAULT_PROMPT)
+
+    def test_args_screenshot_repeatable(self) -> None:
+        args = tldr_once.parse_args(
+            [
+                "--screenshot",
+                "one.png",
+                "--screenshot",
+                "two.png",
+                "--runtime",
+                "runtime.json",
+                "--out-dir",
+                "runs",
+            ]
+        )
+        self.assertEqual(args.screenshot, [Path("one.png"), Path("two.png")])
+
+    def test_encode_multipart_request_multiple_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.png"
+            second = root / "second.png"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+
+            body, _ = tldr_once._encode_multipart_request(
+                {"request_id": "req"},
+                [first, second],
+            )
+
+        self.assertEqual(body.count(b'Content-Disposition: form-data; name="screenshot'), 2)
+        self.assertIn(b'name="screenshot"', body)
+        self.assertIn(b'name="screenshot_1"', body)
+        self.assertIn(b"one", body)
+        self.assertIn(b"two", body)
+
+    def test_args_screenshot_cap(self) -> None:
+        with self.assertRaisesRegex(ValueError, "At most 8 screenshots"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                screenshots = []
+                for index in range(9):
+                    screenshot = root / f"screen-{index}.png"
+                    screenshot.write_bytes(b"fake-png")
+                    screenshots.extend(["--screenshot", str(screenshot)])
+                runtime = root / "runtime.json"
+                runtime.write_text('{"version":1}', encoding="utf-8")
+                tldr_once.main(
+                    screenshots
+                    + [
+                        "--runtime",
+                        str(runtime),
+                        "--out-dir",
+                        str(root / "runs"),
+                        "--skip-gemini",
+                    ]
+                )
+
+    def test_generate_appends_image_parts_in_order(self) -> None:
+        captured: dict[str, Any] = {}
+
+        class FakePart:
+            def __init__(self, data: bytes, mime_type: str) -> None:
+                self.data = data
+                self.mime_type = mime_type
+
+            @classmethod
+            def from_bytes(cls, *, data: bytes, mime_type: str) -> "FakePart":
+                return cls(data, mime_type)
+
+        class FakeTypes:
+            class HttpOptions:
+                def __init__(self, **_: Any) -> None:
+                    pass
+
+            Part = FakePart
+
+        class FakeResponse:
+            text = '{"tldr":"Frame two matters.","suggestions":["One","Two","Three"]}'
+            usage_metadata = {"total_token_count": 1}
+
+        class FakeModels:
+            def generate_content(self, **kwargs: Any) -> FakeResponse:
+                captured.update(kwargs)
+                return FakeResponse()
+
+        class FakeClient:
+            models = FakeModels()
+
+        class FakeGenAI:
+            Client = mock.Mock(return_value=FakeClient())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.png"
+            second = root / "second.png"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            with mock.patch.dict(
+                sys.modules,
+                {
+                    "google": mock.Mock(genai=FakeGenAI),
+                    "google.genai": mock.Mock(types=FakeTypes),
+                },
+            ), mock.patch.object(
+                tldr_once,
+                "prepare_screenshot_part",
+                side_effect=[
+                    (FakePart(b"one", "image/png"), {"image_bytes_original": 1, "image_bytes_compressed": 1, "image_prepare_ms": 0}),
+                    (FakePart(b"two", "image/png"), {"image_bytes_original": 1, "image_bytes_compressed": 1, "image_prepare_ms": 0}),
+                ],
+            ), mock.patch.object(
+                tldr_once,
+                "build_generate_config",
+                return_value={"config": True},
+            ):
+                tldr_once.generate(
+                    [first, second],
+                    "PROMPT",
+                    {
+                        "model": "gemini-3.1-flash-lite-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                )
+
+        contents = captured["contents"]
+        self.assertEqual([part.data for part in contents[:2]], [b"one", b"two"])
+        self.assertEqual(contents[2], tldr_once.MODEL_CONTENT_TEXT)
 
     def test_parse_json_response_accepts_plain_json(self) -> None:
         parsed, error = tldr_once.parse_json_response(
@@ -955,9 +1086,10 @@ class TldrOnceTests(unittest.TestCase):
                     request_payload: dict[str, object],
                     settings: dict[str, object],
                     proxy_settings: dict[str, str],
-                    image_path: Path | None,
+                    image_paths: list[Path],
                 ) -> dict[str, object]:
                     self.assertIn("stateful_context", request_payload)
+                    self.assertEqual(len(image_paths), 1)
                     return {
                         "status": "ok",
                         "tldr": "Done.",

@@ -1,10 +1,44 @@
 import AppKit
+import CryptoKit
 import Foundation
+import ScreenCaptureKit
 
 final class TLDRCoordinator {
+    private struct CapturedFrame {
+        let index: Int
+        let pngURL: URL
+        let capturedAt: Date
+        let captureMS: Int
+        let windowID: CGWindowID
+        let screenshotMeta: [String: Any]
+        let imageDiagnostics: [String: Any]
+        let sha256: String
+        let thumbnail: NSImage?
+    }
+
+    private struct CaptureSession {
+        let requestID: String
+        let startedAt: Date
+        let startedPerf: DispatchTime
+        let runtime: RuntimeConfigFile
+        let clientMetadata: [String: Any]
+        var frontmostApp: [String: Any]
+        let staging: URL
+        var frames: [CapturedFrame]
+        var shareableContent: SCShareableContent?
+        var debounceTimer: DispatchSourceTimer?
+        var collectingTimer: DispatchSourceTimer?
+    }
+
+    private struct CapturedFrameResult {
+        let frame: CapturedFrame
+        let shareableContent: SCShareableContent
+    }
+
     private let config: Config
     private let runtimeStore: RuntimeConfigStore
     private let eventClient: TLDREventClient
+    private let summaryHotkey: Hotkey
     private let queue = DispatchQueue(label: "tldr.coordinator", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
     private var currentSuggestions: [String] = []
@@ -13,14 +47,26 @@ final class TLDRCoordinator {
     private var currentStreamingRun: PythonRunner.StreamingRun?
     private var choiceState = SuggestionChoiceState(suggestionCount: 0)
     private var running = false
+    private var session: CaptureSession?
+    private let collectingStateLock = NSLock()
+    private var collectingState = false
+    private let singlePressDebounceMS = 600
+    private let collectingTimeoutSeconds = 8
+    private let maxCapturedFrames = 8
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
 
-    init(config: Config, runtimeStore: RuntimeConfigStore, eventClient: TLDREventClient) {
+    init(
+        config: Config,
+        runtimeStore: RuntimeConfigStore,
+        eventClient: TLDREventClient,
+        summaryHotkey: Hotkey
+    ) {
         self.config = config
         self.runtimeStore = runtimeStore
         self.eventClient = eventClient
+        self.summaryHotkey = summaryHotkey
     }
 
     var isOverlayActive: Bool {
@@ -29,6 +75,12 @@ final class TLDRCoordinator {
 
     var isCustomInputActive: Bool {
         choiceState.customInputActive
+    }
+
+    var isCollectingActive: Bool {
+        collectingStateLock.lock()
+        defer { collectingStateLock.unlock() }
+        return collectingState
     }
 
     static func clientMetadata() -> [String: Any] {
@@ -53,38 +105,86 @@ final class TLDRCoordinator {
                 status("already working")
                 return
             }
-            running = true
-            defer { running = false }
-
-            let runtime = DispatchQueue.main.sync { runtimeStore.snapshot }
-            let clientMetadata = Self.clientMetadata()
-            let frontmostApp = frontmostAppMetadata()
-            let requestID = UUID().uuidString.lowercased()
-            let startedAt = Date()
-            let startedPerf = monotonicNow()
-            var lastPhase = "capture_started"
-
-            let pendingPayload: [String: Any] = [
-                "request_id": requestID,
-                "started_at": JSONFiles.isoString(startedAt),
-                "updated_at": JSONFiles.isoString(startedAt),
-                "last_phase": lastPhase,
-                "client": clientMetadata,
-                "capture_mode": "frontmost_window",
-                "input_mode": "screenshot",
-                "frontmost_app": frontmostApp,
-            ]
-
-            do {
-                try PendingRunStore.create(requestID: requestID, payload: pendingPayload)
-            } catch {
-                status("failed to prepare run metadata")
-                DispatchQueue.main.async {
-                    self.onFailureNotice?("TLDR Failed", "Couldn't create the pending-run record: \(error.localizedDescription)")
-                }
-                return
+            if session == nil {
+                startCaptureSession()
+            } else {
+                appendFrameToSession()
             }
+        }
+    }
 
+    func submitCollectingSession() {
+        queue.async { [self] in
+            submitSession()
+        }
+    }
+
+    func cancelCollectingSession() {
+        queue.async { [self] in
+            cancelActiveSession(statusText: "cancelled")
+        }
+    }
+
+    private func setCollectingActive(_ active: Bool) {
+        collectingStateLock.lock()
+        collectingState = active
+        collectingStateLock.unlock()
+    }
+
+    private func cancelActiveSession(statusText: String) {
+        guard let active = session else { return }
+        active.debounceTimer?.cancel()
+        active.collectingTimer?.cancel()
+        session = nil
+        setCollectingActive(false)
+        try? FileManager.default.removeItem(at: active.staging)
+        PendingRunStore.finish(requestID: active.requestID)
+        emitEvent(
+            requestID: active.requestID,
+            type: "capture_cancelled",
+            allowLogging: active.runtime.allowEventLogging,
+            clientMetadata: active.clientMetadata,
+            details: ["frame_count": active.frames.count]
+        )
+        status(statusText)
+        DispatchQueue.main.async {
+            self.overlay.close()
+        }
+    }
+
+    private func startCaptureSession() {
+        running = true
+        defer { running = false }
+
+        let runtime = DispatchQueue.main.sync { runtimeStore.snapshot }
+        let clientMetadata = Self.clientMetadata()
+        let frontmostApp = frontmostAppMetadata()
+        let requestID = UUID().uuidString.lowercased()
+        let startedAt = Date()
+        let staging: URL
+        do {
+            staging = try makeStagingDir()
+        } catch {
+            reportFailure(
+                title: "TLDR Failed",
+                statusText: "failed: \(shortErrorSummary(error))",
+                detail: detailedErrorMessage(error)
+            )
+            return
+        }
+        let pendingPayload: [String: Any] = [
+            "request_id": requestID,
+            "started_at": JSONFiles.isoString(startedAt),
+            "updated_at": JSONFiles.isoString(startedAt),
+            "last_phase": "capture_started",
+            "client": clientMetadata,
+            "capture_mode": "frontmost_window",
+            "input_mode": "screenshot",
+            "frontmost_app": frontmostApp,
+            "frames": [],
+        ]
+        do {
+            try PendingRunStore.create(requestID: requestID, payload: pendingPayload)
             emitEvent(
                 requestID: requestID,
                 type: "capture_started",
@@ -93,260 +193,527 @@ final class TLDRCoordinator {
                 details: ["frontmost_app": frontmostApp]
             )
             status("capturing window...")
+            let captureResult = try captureFrame(index: 0, staging: staging)
+            let frame = captureResult.frame
+            var appWithWindow = frontmostApp
+            appWithWindow["window_id"] = Int(frame.windowID)
+            session = CaptureSession(
+                requestID: requestID,
+                startedAt: startedAt,
+                startedPerf: monotonicNow(),
+                runtime: runtime,
+                clientMetadata: clientMetadata,
+                frontmostApp: appWithWindow,
+                staging: staging,
+                frames: [frame],
+                shareableContent: captureResult.shareableContent,
+                debounceTimer: nil,
+                collectingTimer: nil
+            )
+            recordFrameCaptured(frame, mode: "frontmost_window")
+            armDebounceTimer(requestID: requestID)
+            status("captured frame 1")
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            PendingRunStore.finish(requestID: requestID)
+            emitEvent(
+                requestID: requestID,
+                type: failureEventType(for: error, lastPhase: "capture_started"),
+                allowLogging: runtime.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: ["error": shortErrorSummary(error)]
+            )
+            reportFailure(
+                title: "TLDR Failed",
+                statusText: "failed: \(shortErrorSummary(error))",
+                detail: detailedErrorMessage(error)
+            )
+        }
+    }
 
-            do {
-                let captureStartedPerf = monotonicNow()
-                let capture = try ScreenCapture.captureFrontmostWindowSync()
-                let captureMS = durationMS(since: captureStartedPerf)
-                let focusedSnapshot = FocusedContextCapture.captureSnapshot(
-                    allowContentRetention: runtime.allowContentRetention
-                )
-                let focusedContext = focusedSnapshot.uploadPayload
-                guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
-                    throw NSError(domain: "TLDRCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
-                }
-                let screenshotMeta = capturePayload.screenshot
-                let diagnostics = capturePayload.diagnostics
-
-                var frontmostAppWithWindow = frontmostApp
-                frontmostAppWithWindow["window_id"] = Int(capture.windowID)
-
-                let staging = try makeStagingDir()
-                let screenshotURL = staging.appendingPathComponent("screenshot.png")
-                let runtimeURL = staging.appendingPathComponent("runtime.json")
-                let hostProfileURL = staging.appendingPathComponent("host_profile.json")
-                let requestURL = staging.appendingPathComponent("request.json")
-                try capture.pngData.write(to: screenshotURL, options: .atomic)
-                try writeJSON(runtime, to: runtimeURL)
-
-                let requestEnvelope = makeRequestEnvelope(
-                    requestID: requestID,
-                    runtime: runtime,
-                    clientMetadata: clientMetadata,
-                    frontmostApp: frontmostAppWithWindow,
-                    screenshotMeta: screenshotMeta,
-                    diagnostics: diagnostics,
-                    focusedContext: focusedContext
-                )
-                try JSONFiles.writeObject(requestEnvelope, to: requestURL)
-
-                let hostProfile: [String: Any] = [
-                    "request_id": requestID,
-                    "started_at": JSONFiles.isoString(startedAt),
-                    "capture_ms": captureMS,
-                    "window_frame_points": [
-                        "x": capture.windowFramePoints.origin.x,
-                        "y": capture.windowFramePoints.origin.y,
-                        "width": capture.windowFramePoints.width,
-                        "height": capture.windowFramePoints.height,
-                    ],
-                    "frontmost_app": frontmostApp,
-                    "client": clientMetadata,
-                    "image_diagnostics": diagnostics,
-                ]
-                try JSONFiles.writeObject(hostProfile, to: hostProfileURL)
-
-                lastPhase = "capture_succeeded"
-                PendingRunStore.update(requestID: requestID) { payload in
-                    payload["last_phase"] = lastPhase
-                    payload["screenshot"] = screenshotMeta
-                    payload["image_diagnostics"] = diagnostics
-                    payload["focused_context"] = focusedContext
-                }
-                emitEvent(
-                    requestID: requestID,
-                    type: "capture_succeeded",
-                    allowLogging: runtime.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: [
-                        "capture_ms": captureMS,
-                        "screenshot": screenshotMeta,
-                        "image_diagnostics": diagnostics,
-                    ]
-                )
-                if (diagnostics["blank_likely"] as? Bool) == true {
-                    emitEvent(
-                        requestID: requestID,
-                        type: "capture_blank_detected",
-                        allowLogging: runtime.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["image_diagnostics": diagnostics]
-                    )
-                }
-
-                lastPhase = "request_upload_started"
-                PendingRunStore.update(requestID: requestID) { payload in
-                    payload["last_phase"] = lastPhase
-                }
-                emitEvent(
-                    requestID: requestID,
-                    type: "request_upload_started",
-                    allowLogging: runtime.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: ["input_mode": "screenshot"]
-                )
-
-                status("calling TLDR backend...")
-                DispatchQueue.main.async {
-                    self.currentRequestID = requestID
-                    self.currentSuggestions = []
-                    self.currentBundleDir = nil
-                    self.choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
-                    self.overlay.onCustomInputFocusChanged = nil
-                    self.overlay.onCustomInsert = nil
-                    self.overlay.onCustomInsertKey = nil
-                    self.overlay.onLeaveCustomInputKey = nil
-                    self.overlay.onTextEditingKey = nil
-                    self.overlay.onChoiceKey = { _ in }
-                    self.overlay.onInsertKey = { true }
-                    self.overlay.onDismissKey = { [weak self] in
-                        self?.dismissOverlay()
-                    }
-                    self.overlay.showLoading(tldr: "Reading this screen...")
-                }
-                let pythonStartedPerf = monotonicNow()
-                let result = try PythonRunner.runOnceStreaming(
-                    config: config,
-                    screenshotPNG: screenshotURL,
-                    runtimeJSON: runtimeURL,
-                    settingsJSON: Paths.settingsPath,
-                    prompt: Paths.promptPath,
-                    requestJSON: requestURL,
-                    outputParent: Paths.runsDir,
-                    hostProfileJSON: hostProfileURL,
-                    onRunStarted: { run in
-                        DispatchQueue.main.async {
-                            self.currentStreamingRun = run
-                        }
-                    },
-                    onEvent: { event in
-                        DispatchQueue.main.async {
-                            guard self.currentRequestID == requestID else { return }
-                            switch event {
-                            case .phase(let message):
-                                self.overlay.updateSummary(message)
-                            case .partialTLDR(let text):
-                                self.overlay.updateSummary(text)
-                            case .partialSuggestions(let list):
-                                self.overlay.updateSuggestions(Array(list.prefix(3)))
-                            }
-                        }
-                    }
-                )
-                DispatchQueue.main.async {
-                    if self.currentRequestID == requestID {
-                        self.currentStreamingRun = nil
-                    }
-                }
-                guard isCurrentRequest(requestID) else { return }
-                let pythonMS = durationMS(since: pythonStartedPerf)
-                let totalMS = durationMS(since: startedPerf)
-
-                let bundleDir = URL(fileURLWithPath: result.bundleDir)
-                try updateRunHostProfile(
-                    bundleDir: bundleDir,
-                    requestID: requestID,
-                    captureMS: captureMS,
-                    pythonMS: pythonMS,
-                    totalMS: totalMS,
-                    result: result
-                )
-
-                lastPhase = "overlay_shown"
-                PendingRunStore.update(requestID: requestID) { payload in
-                    payload["last_phase"] = lastPhase
-                    payload["bundle_dir"] = result.bundleDir
-                }
-                emitEvent(
-                    requestID: requestID,
-                    type: "server_response_received",
-                    allowLogging: runtime.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: [
-                        "duration_ms": result.durationMS as Any,
-                        "warnings": result.warnings,
-                        "model": result.model as Any,
-                    ]
-                )
-
-                status("ready - press 1/2/3 to expand")
-                DispatchQueue.main.async {
-                    guard self.currentRequestID == requestID else { return }
-                    self.currentSuggestions = Array(result.suggestions.prefix(3)).map { suggestion in
-                        SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
-                            from: suggestion,
-                            draft: focusedSnapshot.meaningfulDraftText
-                        )
-                    }
-                    self.currentBundleDir = bundleDir
-                    self.currentRequestID = requestID
-                    self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
-                    self.overlay.onCustomInputFocusChanged = { [weak self] active in
-                        self?.choiceState.setCustomInputActive(active)
-                    }
-                    self.overlay.onCustomInsert = { [weak self] text in
-                        self?.insertCustomReply(text: text)
-                    }
-                    self.overlay.onChoiceKey = { [weak self] index in
-                        self?.chooseSuggestion(index: index)
-                    }
-                    self.overlay.onInsertKey = { [weak self] in
-                        self?.insertExpandedSuggestion() ?? false
-                    }
-                    self.overlay.onCustomInsertKey = { [weak self] in
-                        _ = self?.insertCustomReplyFromInput()
-                        return true
-                    }
-                    self.overlay.onLeaveCustomInputKey = { [weak self] in
-                        self?.leaveCustomInput()
-                    }
-                    self.overlay.onTextEditingKey = { [weak self] shortcut in
-                        self?.performCustomInputShortcut(shortcut) ?? false
-                    }
-                    self.overlay.onDismissKey = { [weak self] in
-                        self?.dismissOverlay()
-                    }
-                    self.overlay.show(
-                        tldr: result.tldr,
-                        suggestions: self.currentSuggestions
-                    )
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "overlay_shown",
-                        allowLogging: runtime.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["suggestion_count": self.currentSuggestions.count]
-                    )
-                }
-            } catch {
-                let wasDismissed = DispatchQueue.main.sync {
-                    self.currentRequestID != requestID
-                }
-                if wasDismissed {
-                    return
-                }
-                PendingRunStore.update(requestID: requestID) { payload in
-                    payload["last_phase"] = lastPhase
-                    payload["error"] = self.shortErrorSummary(error)
-                }
-                let eventType = failureEventType(for: error, lastPhase: lastPhase)
-                emitEvent(
-                    requestID: requestID,
-                    type: eventType,
-                    allowLogging: runtime.allowEventLogging,
-                    clientMetadata: clientMetadata,
-                    details: [
-                        "last_phase": lastPhase,
-                        "error": shortErrorSummary(error),
-                    ]
-                )
-                PendingRunStore.finish(requestID: requestID)
-                reportFailure(
-                    title: "TLDR Failed",
-                    statusText: "failed: \(shortErrorSummary(error))",
-                    detail: detailedErrorMessage(error)
+    private func appendFrameToSession() {
+        guard var active = session else { return }
+        if active.frames.count >= maxCapturedFrames {
+            status("max frames reached")
+            session = active
+            armCollectingTimer(requestID: active.requestID)
+            let thumbnails = active.frames.compactMap(\.thumbnail)
+            DispatchQueue.main.async {
+                self.overlay.showCollecting(
+                    frameCount: active.frames.count,
+                    maxFrames: self.maxCapturedFrames,
+                    hotkeyDisplay: self.summaryHotkey.displayString,
+                    thumbnails: thumbnails,
+                    message: "Max frames reached"
                 )
             }
+            return
+        }
+        running = true
+        defer { running = false }
+        active.debounceTimer?.cancel()
+        active.debounceTimer = nil
+        do {
+            status("capturing frame \(active.frames.count + 1)...")
+            // Pin to the source app captured at frame 0. Without this, if
+            // the overlay ever momentarily activates TLDR, `NSWorkspace`
+            // reports TLDR as frontmost and capture would target our own
+            // panel — which surfaces as a misleading "permission denied"
+            // through SCK.
+            let pinnedPID: pid_t? = (active.frontmostApp["pid"] as? Int).map(pid_t.init)
+            let captureResult = try captureFrame(
+                index: active.frames.count,
+                staging: active.staging,
+                shareableContent: active.shareableContent,
+                preferredPID: pinnedPID
+            )
+            let frame = captureResult.frame
+            active.shareableContent = captureResult.shareableContent
+            guard frame.windowID == active.frames[0].windowID else {
+                status("different window ignored")
+                emitEvent(
+                    requestID: active.requestID,
+                    type: "capture_frame_dropped",
+                    allowLogging: active.runtime.allowEventLogging,
+                    clientMetadata: active.clientMetadata,
+                    details: [
+                        "reason": "window_id_mismatch",
+                        "expected_window_id": Int(active.frames[0].windowID),
+                        "actual_window_id": Int(frame.windowID),
+                    ]
+                )
+                try? FileManager.default.removeItem(at: frame.pngURL)
+                session = active
+                let thumbnails = active.frames.compactMap(\.thumbnail)
+                DispatchQueue.main.async {
+                    self.overlay.showCollecting(
+                        frameCount: active.frames.count,
+                        maxFrames: self.maxCapturedFrames,
+                        hotkeyDisplay: self.summaryHotkey.displayString,
+                        thumbnails: thumbnails,
+                        message: "Different window ignored"
+                    )
+                }
+                armCollectingTimer(requestID: active.requestID)
+                return
+            }
+            let isDuplicate: Bool
+            if let previous = active.frames.last, previous.sha256 == frame.sha256 {
+                do {
+                    try replaceFrameFile(at: previous.pngURL, with: frame.pngURL)
+                } catch {
+                    try? FileManager.default.removeItem(at: frame.pngURL)
+                    throw error
+                }
+                active.frames[active.frames.count - 1] = CapturedFrame(
+                    index: previous.index,
+                    pngURL: previous.pngURL,
+                    capturedAt: frame.capturedAt,
+                    captureMS: frame.captureMS,
+                    windowID: frame.windowID,
+                    screenshotMeta: frame.screenshotMeta,
+                    imageDiagnostics: frame.imageDiagnostics,
+                    sha256: frame.sha256,
+                    thumbnail: frame.thumbnail
+                )
+                status("no new content — scroll first")
+                isDuplicate = true
+            } else {
+                active.frames.append(frame)
+                status("collecting \(active.frames.count) frames")
+                isDuplicate = false
+            }
+            session = active
+            if let current = session {
+                updatePendingFrames(current)
+            }
+            let thumbnails = active.frames.compactMap(\.thumbnail)
+            DispatchQueue.main.async {
+                self.overlay.showCollecting(
+                    frameCount: active.frames.count,
+                    maxFrames: self.maxCapturedFrames,
+                    hotkeyDisplay: self.summaryHotkey.displayString,
+                    thumbnails: thumbnails,
+                    message: isDuplicate ? "Same content. Scroll first" : nil,
+                    flashLastThumbnail: isDuplicate
+                )
+            }
+            armCollectingTimer(requestID: active.requestID)
+        } catch {
+            session = active
+            cancelActiveSession(statusText: "capture failed")
+            reportFailure(title: "TLDR Failed", statusText: "failed: \(shortErrorSummary(error))", detail: detailedErrorMessage(error))
+        }
+    }
+
+    private func submitSession() {
+        guard let active = session else { return }
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        active.debounceTimer?.cancel()
+        active.collectingTimer?.cancel()
+        session = nil
+        setCollectingActive(false)
+        submitCapturedSession(active)
+    }
+
+    private func captureFrame(
+        index: Int,
+        staging: URL,
+        shareableContent: SCShareableContent? = nil,
+        preferredPID: pid_t? = nil
+    ) throws -> CapturedFrameResult {
+        let captureStartedPerf = monotonicNow()
+        let capture = try ScreenCapture.captureFrontmostWindowSync(
+            shareableContent: shareableContent,
+            preferredPID: preferredPID
+        )
+        let captureMS = durationMS(since: captureStartedPerf)
+        guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
+            throw NSError(domain: "TLDRCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
+        }
+        let frameURL = staging.appendingPathComponent("screenshot_\(index).png")
+        try capture.pngData.write(to: frameURL, options: .atomic)
+        return CapturedFrameResult(
+            frame: CapturedFrame(
+                index: index,
+                pngURL: frameURL,
+                capturedAt: capture.capturedAt,
+                captureMS: captureMS,
+                windowID: capture.windowID,
+                screenshotMeta: capturePayload.screenshot,
+                imageDiagnostics: capturePayload.diagnostics,
+                sha256: sha256Hex(capture.pngData),
+                thumbnail: Self.makeThumbnail(from: capture.pngData)
+            ),
+            shareableContent: capture.shareableContent
+        )
+    }
+
+    private func armDebounceTimer(requestID: String) {
+        guard var active = session, active.requestID == requestID else { return }
+        active.debounceTimer?.cancel()
+        active.collectingTimer?.cancel()
+        setCollectingActive(false)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(singlePressDebounceMS))
+        timer.setEventHandler { [weak self] in
+            self?.submitSession()
+        }
+        active.debounceTimer = timer
+        session = active
+        timer.resume()
+    }
+
+    private func armCollectingTimer(requestID: String) {
+        guard var active = session, active.requestID == requestID else { return }
+        active.collectingTimer?.cancel()
+        setCollectingActive(true)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(collectingTimeoutSeconds))
+        timer.setEventHandler { [weak self] in
+            self?.submitSession()
+        }
+        active.collectingTimer = timer
+        session = active
+        timer.resume()
+    }
+
+    private func submitCapturedSession(_ active: CaptureSession) {
+        guard let firstFrame = active.frames.first else { return }
+        let requestID = active.requestID
+        let runtime = active.runtime
+        let clientMetadata = active.clientMetadata
+        let captureMode = active.frames.count > 1 ? "frontmost_window_scroll" : "frontmost_window"
+        var lastPhase = "capture_succeeded"
+        do {
+            let focusedSnapshot = FocusedContextCapture.captureSnapshot(
+                allowContentRetention: runtime.allowContentRetention
+            )
+            let focusedContext = focusedSnapshot.uploadPayload
+            let runtimeURL = active.staging.appendingPathComponent("runtime.json")
+            let hostProfileURL = active.staging.appendingPathComponent("host_profile.json")
+            let requestURL = active.staging.appendingPathComponent("request.json")
+            try writeJSON(runtime, to: runtimeURL)
+            try? FileManager.default.removeItem(at: active.staging.appendingPathComponent("screenshot.png"))
+            try FileManager.default.copyItem(
+                at: firstFrame.pngURL,
+                to: active.staging.appendingPathComponent("screenshot.png")
+            )
+
+            let requestEnvelope = makeRequestEnvelope(
+                requestID: requestID,
+                runtime: runtime,
+                clientMetadata: clientMetadata,
+                frontmostApp: active.frontmostApp,
+                screenshotMeta: firstFrame.screenshotMeta,
+                diagnostics: firstFrame.imageDiagnostics,
+                focusedContext: focusedContext,
+                captureMode: captureMode,
+                frames: active.frames
+            )
+            try JSONFiles.writeObject(requestEnvelope, to: requestURL)
+
+            let captureMS = active.frames.reduce(0) { $0 + $1.captureMS }
+            let hostProfile: [String: Any] = [
+                "request_id": requestID,
+                "started_at": JSONFiles.isoString(active.startedAt),
+                "capture_ms": captureMS,
+                "frame_count": active.frames.count,
+                "frontmost_app": active.frontmostApp,
+                "client": clientMetadata,
+                "image_diagnostics": firstFrame.imageDiagnostics,
+                "frames": framePayloads(active.frames),
+            ]
+            try JSONFiles.writeObject(hostProfile, to: hostProfileURL)
+
+            updatePendingFrames(active, focusedContext: focusedContext, phase: lastPhase)
+            emitEvent(
+                requestID: requestID,
+                type: "capture_succeeded",
+                allowLogging: runtime.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: [
+                    "capture_ms": captureMS,
+                    "frame_count": active.frames.count,
+                    "screenshot": firstFrame.screenshotMeta,
+                    "image_diagnostics": firstFrame.imageDiagnostics,
+                ]
+            )
+            for frame in active.frames where (frame.imageDiagnostics["blank_likely"] as? Bool) == true {
+                emitEvent(
+                    requestID: requestID,
+                    type: "capture_blank_detected",
+                    allowLogging: runtime.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: ["frame_index": frame.index, "image_diagnostics": frame.imageDiagnostics]
+                )
+            }
+
+            lastPhase = "request_upload_started"
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = lastPhase
+            }
+            emitEvent(
+                requestID: requestID,
+                type: "request_upload_started",
+                allowLogging: runtime.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: ["input_mode": "screenshot", "frame_count": active.frames.count]
+            )
+
+            status("calling TLDR backend...")
+            DispatchQueue.main.async {
+                self.currentRequestID = requestID
+                self.currentSuggestions = []
+                self.currentBundleDir = nil
+                self.choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+                self.overlay.onCustomInputFocusChanged = nil
+                self.overlay.onCustomInsert = nil
+                self.overlay.onCustomInsertKey = nil
+                self.overlay.onLeaveCustomInputKey = nil
+                self.overlay.onTextEditingKey = nil
+                self.overlay.onChoiceKey = { _ in }
+                self.overlay.onInsertKey = { true }
+                self.overlay.onDismissKey = { [weak self] in
+                    self?.dismissOverlay()
+                }
+                self.overlay.showLoading(tldr: active.frames.count > 1 ? "Reading \(active.frames.count) frames..." : "Reading this screen...")
+            }
+            let pythonStartedPerf = monotonicNow()
+            let result = try PythonRunner.runOnceStreaming(
+                config: config,
+                screenshotPNGs: active.frames.map(\.pngURL),
+                runtimeJSON: runtimeURL,
+                settingsJSON: Paths.settingsPath,
+                prompt: Paths.promptPath,
+                requestJSON: requestURL,
+                outputParent: Paths.runsDir,
+                hostProfileJSON: hostProfileURL,
+                onRunStarted: { run in
+                    DispatchQueue.main.async {
+                        self.currentStreamingRun = run
+                    }
+                },
+                onEvent: { event in
+                    DispatchQueue.main.async {
+                        guard self.currentRequestID == requestID else { return }
+                        switch event {
+                        case .phase(let message):
+                            self.overlay.updateSummary(message)
+                        case .partialTLDR(let text):
+                            self.overlay.updateSummary(text)
+                        case .partialSuggestions(let list):
+                            self.overlay.updateSuggestions(Array(list.prefix(3)))
+                        }
+                    }
+                }
+            )
+            DispatchQueue.main.async {
+                if self.currentRequestID == requestID {
+                    self.currentStreamingRun = nil
+                }
+            }
+            guard isCurrentRequest(requestID) else { return }
+            let pythonMS = durationMS(since: pythonStartedPerf)
+            let totalMS = durationMS(since: active.startedPerf)
+
+            let bundleDir = URL(fileURLWithPath: result.bundleDir)
+            try updateRunHostProfile(
+                bundleDir: bundleDir,
+                requestID: requestID,
+                captureMS: captureMS,
+                pythonMS: pythonMS,
+                totalMS: totalMS,
+                result: result
+            )
+
+            lastPhase = "overlay_shown"
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = lastPhase
+                payload["bundle_dir"] = result.bundleDir
+            }
+            emitEvent(
+                requestID: requestID,
+                type: "server_response_received",
+                allowLogging: runtime.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: [
+                    "duration_ms": result.durationMS as Any,
+                    "warnings": result.warnings,
+                    "model": result.model as Any,
+                    "frame_count": active.frames.count,
+                ]
+            )
+
+            status("ready - press 1/2/3 to expand")
+            DispatchQueue.main.async {
+                guard self.currentRequestID == requestID else { return }
+                self.currentSuggestions = Array(result.suggestions.prefix(3)).map { suggestion in
+                    SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                        from: suggestion,
+                        draft: focusedSnapshot.meaningfulDraftText
+                    )
+                }
+                self.currentBundleDir = bundleDir
+                self.currentRequestID = requestID
+                self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
+                self.overlay.onCustomInputFocusChanged = { [weak self] active in
+                    self?.choiceState.setCustomInputActive(active)
+                }
+                self.overlay.onCustomInsert = { [weak self] text in
+                    self?.insertCustomReply(text: text)
+                }
+                self.overlay.onChoiceKey = { [weak self] index in
+                    self?.chooseSuggestion(index: index)
+                }
+                self.overlay.onInsertKey = { [weak self] in
+                    self?.insertExpandedSuggestion() ?? false
+                }
+                self.overlay.onCustomInsertKey = { [weak self] in
+                    _ = self?.insertCustomReplyFromInput()
+                    return true
+                }
+                self.overlay.onLeaveCustomInputKey = { [weak self] in
+                    self?.leaveCustomInput()
+                }
+                self.overlay.onTextEditingKey = { [weak self] shortcut in
+                    self?.performCustomInputShortcut(shortcut) ?? false
+                }
+                self.overlay.onDismissKey = { [weak self] in
+                    self?.dismissOverlay()
+                }
+                self.overlay.show(
+                    tldr: result.tldr,
+                    suggestions: self.currentSuggestions
+                )
+                self.emitEvent(
+                    requestID: requestID,
+                    type: "overlay_shown",
+                    allowLogging: runtime.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: ["suggestion_count": self.currentSuggestions.count]
+                )
+            }
+        } catch {
+            let wasDismissed = DispatchQueue.main.sync {
+                self.currentRequestID != requestID && self.currentRequestID != nil
+            }
+            if wasDismissed {
+                return
+            }
+            PendingRunStore.update(requestID: requestID) { payload in
+                payload["last_phase"] = lastPhase
+                payload["error"] = self.shortErrorSummary(error)
+            }
+            emitEvent(
+                requestID: requestID,
+                type: failureEventType(for: error, lastPhase: lastPhase),
+                allowLogging: runtime.allowEventLogging,
+                clientMetadata: clientMetadata,
+                details: [
+                    "last_phase": lastPhase,
+                    "error": shortErrorSummary(error),
+                ]
+            )
+            PendingRunStore.finish(requestID: requestID)
+            reportFailure(
+                title: "TLDR Failed",
+                statusText: "failed: \(shortErrorSummary(error))",
+                detail: detailedErrorMessage(error)
+            )
+        }
+    }
+
+    private func recordFrameCaptured(_ frame: CapturedFrame, mode: String) {
+        guard let active = session else { return }
+        updatePendingFrames(active, phase: "capture_succeeded")
+        emitEvent(
+            requestID: active.requestID,
+            type: "capture_frame_added",
+            allowLogging: active.runtime.allowEventLogging,
+            clientMetadata: active.clientMetadata,
+            details: [
+                "capture_mode": mode,
+                "frame_index": frame.index,
+                "frame_count": active.frames.count,
+                "capture_ms": frame.captureMS,
+                "screenshot": frame.screenshotMeta,
+                "image_diagnostics": frame.imageDiagnostics,
+            ]
+        )
+    }
+
+    private func updatePendingFrames(
+        _ active: CaptureSession,
+        focusedContext: [String: Any]? = nil,
+        phase: String? = nil
+    ) {
+        PendingRunStore.update(requestID: active.requestID) { payload in
+            if let phase {
+                payload["last_phase"] = phase
+            }
+            payload["capture_mode"] = active.frames.count > 1 ? "frontmost_window_scroll" : "frontmost_window"
+            payload["frontmost_app"] = active.frontmostApp
+            payload["screenshot"] = active.frames.first?.screenshotMeta
+            payload["image_diagnostics"] = active.frames.first?.imageDiagnostics
+            payload["frames"] = self.framePayloads(active.frames)
+            if let focusedContext {
+                payload["focused_context"] = focusedContext
+            }
+        }
+    }
+
+    private func framePayloads(_ frames: [CapturedFrame]) -> [[String: Any]] {
+        frames.map { frame in
+            [
+                "index": frame.index,
+                "screenshot": frame.screenshotMeta,
+                "image_diagnostics": frame.imageDiagnostics,
+                "captured_at": JSONFiles.isoString(frame.capturedAt),
+                "sha256": frame.sha256,
+            ]
         }
     }
 
@@ -643,6 +1010,10 @@ final class TLDRCoordinator {
 
     @MainActor
     func dismissOverlay() {
+        if isCollectingActive {
+            cancelCollectingSession()
+            return
+        }
         guard overlay.isVisible else { return }
         let requestID = currentRequestID
         currentStreamingRun?.terminate()
@@ -678,6 +1049,28 @@ final class TLDRCoordinator {
         return url
     }
 
+    private static func makeThumbnail(from pngData: Data, maxHeight: CGFloat = 80) -> NSImage? {
+        guard let source = NSImage(data: pngData) else { return nil }
+        let size = source.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1, maxHeight / size.height)
+        let target = NSSize(width: size.width * scale, height: size.height * scale)
+        let thumb = NSImage(size: target)
+        thumb.lockFocus()
+        source.draw(in: NSRect(origin: .zero, size: target))
+        thumb.unlockFocus()
+        return thumb
+    }
+
+    private func replaceFrameFile(at destination: URL, with source: URL) throws {
+        _ = try FileManager.default.replaceItemAt(
+            destination,
+            withItemAt: source,
+            backupItemName: nil,
+            options: []
+        )
+    }
+
     private func makeRequestEnvelope(
         requestID: String,
         runtime: RuntimeConfigFile,
@@ -685,7 +1078,9 @@ final class TLDRCoordinator {
         frontmostApp: [String: Any],
         screenshotMeta: [String: Any],
         diagnostics: [String: Any],
-        focusedContext: [String: Any]
+        focusedContext: [String: Any],
+        captureMode: String = "frontmost_window",
+        frames: [CapturedFrame] = []
     ) -> [String: Any] {
         var preferences = requestPreferences(runtime: runtime)
         preferences["model"] = runtime.model
@@ -693,11 +1088,12 @@ final class TLDRCoordinator {
             "schema_version": 1,
             "request_id": requestID,
             "client": clientMetadata,
-            "capture_mode": "frontmost_window",
+            "capture_mode": captureMode,
             "preferences": preferences,
             "frontmost_app": frontmostApp,
             "input_mode": "screenshot",
             "screenshot": screenshotMeta,
+            "frames": framePayloads(frames),
             "image_diagnostics": diagnostics,
             "ocr_packet": NSNull(),
             "focused_context": focusedContext,
@@ -855,5 +1251,9 @@ final class TLDRCoordinator {
 
     private func monotonicNow() -> DispatchTime {
         DispatchTime.now()
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }

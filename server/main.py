@@ -31,6 +31,7 @@ except ImportError:
 load_workspace_env()
 
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
+MAX_SCREENSHOT_FRAMES = 8
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
 
@@ -239,6 +240,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "frontmost_app": _dict_or_none(payload.get("frontmost_app")) or {},
         "input_mode": input_mode,
         "screenshot": _dict_or_none(payload.get("screenshot")),
+        "frames": _list_or_empty(payload.get("frames")),
         "image_diagnostics": _dict_or_none(payload.get("image_diagnostics")),
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
@@ -282,6 +284,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "frontmost_app": {},
         "input_mode": "screenshot",
         "screenshot": None,
+        "frames": [],
         "image_diagnostics": None,
         "ocr_packet": None,
         "focused_context": None,
@@ -314,7 +317,18 @@ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[st
     return settings
 
 
-def _request_cache_key(envelope: dict[str, Any], image_bytes: bytes | None) -> str:
+def _ordered_image_hash(image_bytes_list: list[bytes]) -> str | None:
+    if not image_bytes_list:
+        return None
+    if len(image_bytes_list) == 1:
+        return sha256(image_bytes_list[0]).hexdigest()
+    ordered = sha256()
+    for image_bytes in image_bytes_list:
+        ordered.update(sha256(image_bytes).hexdigest().encode("ascii"))
+    return ordered.hexdigest()
+
+
+def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) -> str:
     material = {
         "capture_mode": envelope.get("capture_mode"),
         "input_mode": envelope.get("input_mode"),
@@ -324,8 +338,9 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes: bytes | None) -> s
         "focused_context": envelope.get("focused_context"),
         "stateful_context": envelope.get("stateful_context"),
     }
-    if image_bytes is not None:
-        material["screenshot_sha256"] = sha256(image_bytes).hexdigest()
+    image_hash = _ordered_image_hash(image_bytes_list)
+    if image_hash is not None:
+        material["screenshot_sha256"] = image_hash
     return sha256(
         json.dumps(material, ensure_ascii=True, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -366,6 +381,7 @@ def _record_request(
                 "input_mode": envelope.get("input_mode"),
                 "frontmost_app": envelope.get("frontmost_app") or {},
                 "screenshot": envelope.get("screenshot") or {},
+                "frames": envelope.get("frames") or [],
                 "image_diagnostics": envelope.get("image_diagnostics") or {},
                 "ocr_packet": envelope.get("ocr_packet") or {},
                 "focused_context": envelope.get("focused_context") or {},
@@ -398,15 +414,21 @@ def healthz() -> dict[str, Any]:
 async def _run_tldr_request(
     *,
     envelope: dict[str, Any],
-    screenshot: Optional[UploadFile],
+    screenshots: list[UploadFile],
     token_id: str,
 ) -> dict[str, Any]:
     warnings = list(envelope.get("warnings") or [])
-    image_bytes: bytes | None = None
-    mime_type = "image/png"
-    if screenshot is not None:
+    images: list[tuple[bytes, str]] = []
+    image_bytes_list: list[bytes] = []
+    if len(screenshots) > MAX_SCREENSHOT_FRAMES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="too many screenshots; maximum is 8",
+        )
+    total_image_bytes = 0
+    for screenshot in screenshots:
         image_bytes = await screenshot.read()
-        mime_type = screenshot.content_type or mime_type
+        total_image_bytes += len(image_bytes)
         if len(image_bytes) > MAX_SCREENSHOT_BYTES:
             _log_request(
                 token_id=token_id,
@@ -418,13 +440,20 @@ async def _run_tldr_request(
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail="screenshot exceeds 10MB limit",
             )
+        if total_image_bytes > MAX_SCREENSHOT_FRAMES * MAX_SCREENSHOT_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="screenshots exceed aggregate size limit",
+            )
+        image_bytes_list.append(image_bytes)
+        images.append((image_bytes, screenshot.content_type or "image/png"))
 
-    if image_bytes is None and envelope.get("input_mode") == "screenshot":
+    if not images and envelope.get("input_mode") == "screenshot":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="screenshot mode requires a screenshot upload",
         )
-    if image_bytes is None and not gemini.request_context_text(envelope):
+    if not images and not gemini.request_context_text(envelope):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="request must include a screenshot or structured context",
@@ -433,9 +462,9 @@ async def _run_tldr_request(
     model_envelope = envelope
     storage_envelope = _privacy_safe_envelope(envelope)
     settings = _selected_settings(envelope, warnings)
-    input_hash = _request_cache_key(storage_envelope, image_bytes)
+    input_hash = _request_cache_key(storage_envelope, image_bytes_list)
     cache = _response_cache()
-    cache_key = _request_cache_key(model_envelope, image_bytes) if _cache_allowed(envelope) else None
+    cache_key = _request_cache_key(model_envelope, image_bytes_list) if _cache_allowed(envelope) else None
     if cache.enabled and cache_key is not None:
         cached = cache.get(cache_key)
         if cached is not None:
@@ -472,8 +501,7 @@ async def _run_tldr_request(
             client=client,
             settings=settings,
             prompt_text=_prompt_text(),
-            image_bytes=image_bytes,
-            mime_type=mime_type,
+            images=images,
             context_text=gemini.request_context_text(model_envelope),
         )
     except Exception as exc:
@@ -575,7 +603,7 @@ async def tldr(
 ) -> dict[str, Any]:
     payload = await _run_tldr_request(
         envelope=_make_legacy_request_envelope(),
-        screenshot=screenshot,
+        screenshots=[screenshot],
         token_id=token_id,
     )
     return {
@@ -586,12 +614,30 @@ async def tldr(
     }
 
 
+def _frame_index(field_name: str) -> int | None:
+    if field_name == "screenshot":
+        return 0
+    raw = field_name.removeprefix("screenshot_")
+    if raw == field_name or not raw.isdecimal():
+        return None
+    index = int(raw)
+    if index < 0 or index >= MAX_SCREENSHOT_FRAMES:
+        return None
+    return index
+
+
 @app.post("/v1/tldr")
 async def tldr_v1(
-    request: str = Form(...),
-    screenshot: Optional[UploadFile] = File(default=None),
+    http_request: Request,
     token_id: str = Depends(require_bearer_token),
 ) -> dict[str, Any]:
+    form = await http_request.form()
+    request = form.get("request")
+    if not isinstance(request, str):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="request is required",
+        )
     try:
         payload = json.loads(request)
     except json.JSONDecodeError as exc:
@@ -600,9 +646,32 @@ async def tldr_v1(
             detail="request must contain valid JSON",
         ) from exc
     envelope = _normalize_request_envelope(payload)
+    screenshots_by_index: dict[int, UploadFile] = {}
+    for key, value in form.multi_items():
+        if key == "screenshot" or key.startswith("screenshot_"):
+            frame_index = _frame_index(key)
+            if frame_index is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"invalid screenshot frame field: {key}",
+                )
+            if frame_index in screenshots_by_index:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"duplicate screenshot frame index: {frame_index}",
+                )
+            if isinstance(value, str):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"screenshot frame field must be a file: {key}",
+                )
+            screenshots_by_index[frame_index] = value
     return await _run_tldr_request(
         envelope=envelope,
-        screenshot=screenshot,
+        screenshots=[
+            screenshots_by_index[index]
+            for index in sorted(screenshots_by_index)
+        ],
         token_id=token_id,
     )
 

@@ -120,6 +120,8 @@ final class SuggestionsOverlay: NSObject {
         static let summaryBottomInset: CGFloat = 18
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
+        static let thumbStripHeight: CGFloat = 56
+        static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
         static let cardPaddingX: CGFloat = 24
         static let suggestionCollapsedHeight: CGFloat = 62
@@ -213,11 +215,34 @@ final class SuggestionsOverlay: NSObject {
         )
     }
 
+    func showCollecting(
+        frameCount: Int,
+        maxFrames: Int,
+        hotkeyDisplay: String,
+        thumbnails: [NSImage] = [],
+        message: String? = nil,
+        flashLastThumbnail: Bool = false
+    ) {
+        let lead = message ?? "Collecting"
+        show(
+            tldr: "\(lead). \(frameCount) of \(maxFrames) frames.",
+            suggestions: [],
+            showsCustomInput: false,
+            hintText: "\(hotkeyDisplay) to add, Return to submit, Esc to cancel",
+            thumbnails: thumbnails,
+            flashLastThumbnail: flashLastThumbnail,
+            activates: false
+        )
+    }
+
     private func show(
         tldr: String,
         suggestions: [String],
         showsCustomInput: Bool,
-        hintText: String?
+        hintText: String?,
+        thumbnails: [NSImage] = [],
+        flashLastThumbnail: Bool = false,
+        activates: Bool = true
     ) {
         close()
 
@@ -227,7 +252,9 @@ final class SuggestionsOverlay: NSObject {
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let contentWidth = Layout.panelWidth
         let summaryLabelWidth = contentWidth - 48
-        let summaryTextY = Layout.summaryBottomInset + (hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap)
+        let hintBlockHeight = hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap
+        let thumbBlockHeight = thumbnails.isEmpty ? 0 : Layout.thumbStripHeight + Layout.summaryHintGap
+        let summaryTextY = Layout.summaryBottomInset + hintBlockHeight + thumbBlockHeight
         let summaryHeight = max(
             Layout.summaryMinHeight,
             measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
@@ -320,6 +347,40 @@ final class SuggestionsOverlay: NSObject {
             summary.content.addSubview(hint)
         }
 
+        if !thumbnails.isEmpty {
+            let stripY = Layout.summaryBottomInset + hintBlockHeight
+            let stripWidth = contentWidth - 48
+            let count = thumbnails.count
+            let totalGap = Layout.thumbStripGap * CGFloat(max(0, count - 1))
+            let slotWidth = max(0, (stripWidth - totalGap) / CGFloat(count))
+            for (offset, image) in thumbnails.enumerated() {
+                let x: CGFloat = 24 + CGFloat(offset) * (slotWidth + Layout.thumbStripGap)
+                let frame = NSRect(x: x, y: stripY, width: slotWidth, height: Layout.thumbStripHeight)
+                let imageView = NSImageView(frame: frame)
+                imageView.image = image
+                imageView.imageScaling = .scaleProportionallyDown
+                imageView.imageAlignment = .alignCenter
+                imageView.wantsLayer = true
+                imageView.layer?.cornerRadius = 6
+                imageView.layer?.masksToBounds = true
+                imageView.layer?.borderWidth = 1
+                let isFlashTarget = flashLastThumbnail && offset == count - 1
+                let baseBorder = NSColor.white.withAlphaComponent(0.18).cgColor
+                let flashBorder = NSColor.systemYellow.withAlphaComponent(0.9).cgColor
+                imageView.layer?.borderColor = isFlashTarget ? flashBorder : baseBorder
+                imageView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
+                summary.content.addSubview(imageView)
+                if isFlashTarget {
+                    imageView.alphaValue = 0.35
+                    NSAnimationContext.runAnimationGroup { context in
+                        context.duration = 0.32
+                        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                        imageView.animator().alphaValue = 1.0
+                    }
+                }
+            }
+        }
+
         let summaryLabel = label(
             frame: NSRect(
                 x: 24,
@@ -409,38 +470,60 @@ final class SuggestionsOverlay: NSObject {
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
 
-        // Remember the app the user was working in so we can restore focus
-        // when the overlay closes — the panel needs to activate to render
-        // NSGlassEffectView without an AppKit outline AND to receive
-        // keystrokes via AppKit when the custom-input field is focused.
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let ownPID = NSRunningApplication.current.processIdentifier
-        if let frontmost, frontmost.processIdentifier != ownPID {
-            previousFrontmost = frontmost
+        if activates {
+            // Remember the app the user was working in so we can restore
+            // focus when the overlay closes — the panel needs to activate to
+            // render NSGlassEffectView without an AppKit outline AND to
+            // receive keystrokes via AppKit when the custom-input field is
+            // focused.
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let ownPID = NSRunningApplication.current.processIdentifier
+            if let frontmost, frontmost.processIdentifier != ownPID {
+                previousFrontmost = frontmost
+            } else {
+                previousFrontmost = nil
+            }
+            // `NSApp.activate()` (no-arg) is the polite macOS 14+ form and
+            // silently no-ops for LSUIElement apps when another app is in
+            // the foreground. We need an unconditional activation here so
+            // the panel becomes key on first show — otherwise the user has
+            // to click before the keyboard works.
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+            // When the panel becomes key, AppKit auto-selects the first
+            // editable view as first responder — that's our
+            // `CustomReplyField`, which would flip `customInputActive` to
+            // true and route 1/2/3 into the text field instead of
+            // triggering suggestion expansion. Clear focus explicitly so
+            // the panel itself owns the responder chain until the user
+            // presses 4 or clicks the field.
+            panel.makeFirstResponder(nil)
+            // Belt-and-suspenders: AppKit's auto-promote-then-resign of the
+            // CustomReplyField on `makeKeyAndOrderFront` can leave the hint
+            // visible and the field/number lifted (`resignFirstResponder`
+            // doesn't reliably fire `onFocusChanged?(false)` when the
+            // field editor was the actual responder). Snap to the
+            // unfocused state so the panel always opens with #4 centered
+            // and hint hidden.
+            applyCustomInputFocusState(focused: false, animated: false)
+            // Force-sync the coordinator's `customInputActive` flag back
+            // to false. AppKit's auto-promotion fires
+            // `becomeFirstResponder` (flipping the flag to true via
+            // `onFocusChanged`), but the symmetric `resignFirstResponder`
+            // is unreliable when the field editor — not the field — was
+            // the actual responder. Without this, the global hotkey tap
+            // sees `customInputActive == true` and routes the very first
+            // Esc to `.leaveCustomInput` instead of `.dismiss`, requiring
+            // a second Esc to actually close the overlay.
+            customInputField?.onFocusChanged?(false)
         } else {
+            // Collecting state: stay non-activating so the source app
+            // remains frontmost and subsequent capture presses still see
+            // the right window. No interactive widgets are mounted in this
+            // state, so we don't need key status.
             previousFrontmost = nil
+            panel.orderFrontRegardless()
         }
-        // `NSApp.activate()` (no-arg) is the polite macOS 14+ form and
-        // silently no-ops for LSUIElement apps when another app is in the
-        // foreground. We need an unconditional activation here so the panel
-        // becomes key on first show — otherwise the user has to click before
-        // the keyboard works.
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        // When the panel becomes key, AppKit auto-selects the first editable
-        // view as first responder — that's our `CustomReplyField`, which
-        // would flip `customInputActive` to true and route 1/2/3 into the
-        // text field instead of triggering suggestion expansion. Clear focus
-        // explicitly so the panel itself owns the responder chain until the
-        // user presses 4 or clicks the field.
-        panel.makeFirstResponder(nil)
-        // Belt-and-suspenders: AppKit's auto-promote-then-resign of the
-        // CustomReplyField on `makeKeyAndOrderFront` can leave the hint
-        // visible and the field/number lifted (`resignFirstResponder`
-        // doesn't reliably fire `onFocusChanged?(false)` when the field
-        // editor was the actual responder). Snap to the unfocused state
-        // so the panel always opens with #4 centered and hint hidden.
-        applyCustomInputFocusState(focused: false, animated: false)
         installMouseMonitors()
     }
 

@@ -3,5 +3,6 @@
   "temperature": 0.2,
   "max_output_tokens": 512,
   "media_resolution": "MEDIA_RESOLUTION_LOW",
-  "timeout_seconds": 120
+  "timeout_seconds": 120,
+  "hotkey": "ctrl+opt+space"
 }

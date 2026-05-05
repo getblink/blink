@@ -18,6 +18,7 @@
 		36D0A75D68BA547BD1879262 /* RuntimeEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC7282EE495D90BA46111BC9 /* RuntimeEnvironment.swift */; };
 		38A13AB4C57274B02BEBA3DC /* TLDREventClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 805815274652A8AE7EA61194 /* TLDREventClient.swift */; };
 		3AD5F66AA5739C405BCB9CBF /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33734F5BBE20AC6361260668 /* HotkeyManager.swift */; };
+		3CBB07D4EED7BFDC062EF9EF /* Hotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = E21ECFCF333D799B4F14027C /* Hotkey.swift */; };
 		512590F7C000F9400F498318 /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDEE29EB3EE474AC3ED7550 /* SuggestionChoiceStateTests.swift */; };
 		51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */; };
 		51F46FA6BC30A495ECC7994D /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152858893A7EE251AC722A08 /* Inserter.swift */; };
@@ -38,6 +39,7 @@
 		E5E39A2434931ECC82E8BA46 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4357519C159532DCFE2C5F /* SuggestionChoiceState.swift */; };
 		E957E85E84F83FBED1C79609 /* JSONFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */; };
 		F0BEB7DD55D459EE3644EA45 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD77C90100587BDA7E79E10 /* PythonRunner.swift */; };
+		F65BEFEC7B96C25117515BC5 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7727E861BC77633DF47E71 /* HotkeyTests.swift */; };
 		F8803B44FA557188A1D6EB84 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */; };
 /* End PBXBuildFile section */
 
@@ -73,6 +75,7 @@
 		AC8DAE5726E664C41CEBDF54 /* TLDR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TLDR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCaptureTests.swift; sourceTree = "<group>"; };
 		B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionsOverlay.swift; sourceTree = "<group>"; };
+		BA7727E861BC77633DF47E71 /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
 		C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStore.swift; sourceTree = "<group>"; };
 		CAE524E080E5A97C5278E6C9 /* TLDRTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TLDRTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CC7282EE495D90BA46111BC9 /* RuntimeEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironment.swift; sourceTree = "<group>"; };
@@ -81,6 +84,7 @@
 		DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStoreTests.swift; sourceTree = "<group>"; };
 		DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironmentTests.swift; sourceTree = "<group>"; };
 		E1F705DA9969C70BBC405DF0 /* FocusedContextCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCapture.swift; sourceTree = "<group>"; };
+		E21ECFCF333D799B4F14027C /* Hotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hotkey.swift; sourceTree = "<group>"; };
 		E53B725FB98167E479605F08 /* TLDR.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TLDR.entitlements; sourceTree = "<group>"; };
 		E788954DD95B74224B5FF5CF /* ImageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDiagnostics.swift; sourceTree = "<group>"; };
 		E9B4A11BE00C4FC73DA334EF /* ApplicationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT; };
@@ -141,6 +145,7 @@
 			isa = PBXGroup;
 			children = (
 				B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */,
+				BA7727E861BC77633DF47E71 /* HotkeyTests.swift */,
 				DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */,
 				453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */,
 				DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */,
@@ -156,6 +161,7 @@
 				D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */,
 				6CD32F3BB2B51896CCB61046 /* Config.swift */,
 				E1F705DA9969C70BBC405DF0 /* FocusedContextCapture.swift */,
+				E21ECFCF333D799B4F14027C /* Hotkey.swift */,
 				33734F5BBE20AC6361260668 /* HotkeyManager.swift */,
 				E788954DD95B74224B5FF5CF /* ImageDiagnostics.swift */,
 				2A8FA8A782D7DFB81FCAD62F /* Info.plist */,
@@ -269,6 +275,7 @@
 				F8803B44FA557188A1D6EB84 /* ArtifactWriter.swift in Sources */,
 				D864396819460CA1D5F83202 /* Config.swift in Sources */,
 				0AAC39909F4CC492D9D22D81 /* FocusedContextCapture.swift in Sources */,
+				3CBB07D4EED7BFDC062EF9EF /* Hotkey.swift in Sources */,
 				3AD5F66AA5739C405BCB9CBF /* HotkeyManager.swift in Sources */,
 				CBE142CC7B8BC2BC42DC7F99 /* ImageDiagnostics.swift in Sources */,
 				51F46FA6BC30A495ECC7994D /* Inserter.swift in Sources */,
@@ -294,6 +301,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */,
+				F65BEFEC7B96C25117515BC5 /* HotkeyTests.swift in Sources */,
 				24B02464DB464CD2EB3812C2 /* PendingRunStoreTests.swift in Sources */,
 				8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */,
 				82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */,

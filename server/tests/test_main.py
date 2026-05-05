@@ -105,6 +105,138 @@ class MainTests(unittest.TestCase):
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_accepts_multiple_screenshots_in_order(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            images = kwargs["images"]
+            self.assertEqual([data for data, _ in images], [b"zero", b"one", b"two"])
+            return {
+                "status": "ok",
+                "tldr": "Long page summary.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 111,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-frames",
+                        "schema_version": 1,
+                        "capture_mode": "frontmost_window_scroll",
+                        "input_mode": "screenshot",
+                    }
+                )
+            },
+            files=[
+                ("screenshot_2", ("two.png", b"two", "image/png")),
+                ("screenshot_0", ("zero.png", b"zero", "image/png")),
+                ("screenshot_1", ("one.png", b"one", "image/png")),
+            ],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["request_id"], "req-frames")
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_legacy_single_screenshot_field(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(kwargs["images"], [(b"legacy", "image/png")])
+            return {
+                "status": "ok",
+                "tldr": "Legacy screenshot summary.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 111,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-legacy-shot",
+                        "input_mode": "screenshot",
+                    }
+                )
+            },
+            files={"screenshot": ("screen.png", b"legacy", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["request_id"], "req-legacy-shot")
+
+    def test_v1_tldr_rejects_malformed_screenshot_field(self) -> None:
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={"request": json.dumps({"request_id": "req-bad", "input_mode": "screenshot"})},
+            files={"screenshot_foo": ("screen.png", b"bad", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("invalid screenshot frame field", response.json()["detail"])
+
+    def test_v1_tldr_rejects_out_of_range_screenshot_field(self) -> None:
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={"request": json.dumps({"request_id": "req-bad-index", "input_mode": "screenshot"})},
+            files={"screenshot_999": ("screen.png", b"bad", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("invalid screenshot frame field", response.json()["detail"])
+
+    def test_v1_tldr_rejects_string_screenshot_field(self) -> None:
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps({"request_id": "req-string-frame", "input_mode": "screenshot"}),
+                "screenshot_0": "not-a-file",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("must be a file", response.json()["detail"])
+
+    def test_v1_tldr_rejects_duplicate_frame_zero(self) -> None:
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={"request": json.dumps({"request_id": "req-dup", "input_mode": "screenshot"})},
+            files=[
+                ("screenshot", ("legacy.png", b"legacy", "image/png")),
+                ("screenshot_0", ("zero.png", b"zero", "image/png")),
+            ],
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("duplicate screenshot frame index", response.json()["detail"])
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
     def test_v1_tldr_accepts_ocr_only(self, create_client: mock.Mock, generate: mock.Mock) -> None:
         create_client.return_value = object()
         generate.return_value = {

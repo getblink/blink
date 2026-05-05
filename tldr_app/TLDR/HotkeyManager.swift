@@ -5,7 +5,10 @@ import IOKit.hid
 final class HotkeyManager {
     private let isOverlayActive: () -> Bool
     private let isCustomInputActive: () -> Bool
+    private let isCollectingActive: () -> Bool
     private let onSummarize: () -> Void
+    private let onSubmitCollecting: () -> Void
+    private let onCancelCollecting: () -> Void
     private let onChoice: (Int) -> Void
     private let onInsert: () -> Bool
     private let onCustomInsert: () -> Bool
@@ -15,17 +18,23 @@ final class HotkeyManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    private let summaryKeyCode: CGKeyCode = 17
-    private let summaryFlags: CGEventFlags = [.maskControl, .maskShift]
+    private let summaryKeyCode: CGKeyCode
+    private let summaryFlags: CGEventFlags
+    private let returnKeyCode: CGKeyCode = 36
+    private let escapeKeyCode: CGKeyCode = 53
     private let relevantFlags: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift,
         .maskSecondaryFn, .maskNumericPad, .maskHelp, .maskAlphaShift,
     ]
 
     init(
+        summaryHotkey: Hotkey,
         isOverlayActive: @escaping () -> Bool,
         isCustomInputActive: @escaping () -> Bool,
+        isCollectingActive: @escaping () -> Bool,
         onSummarize: @escaping () -> Void,
+        onSubmitCollecting: @escaping () -> Void,
+        onCancelCollecting: @escaping () -> Void,
         onChoice: @escaping (Int) -> Void,
         onInsert: @escaping () -> Bool,
         onCustomInsert: @escaping () -> Bool,
@@ -33,9 +42,14 @@ final class HotkeyManager {
         onTextEditing: @escaping (TextEditingShortcut) -> Bool,
         onDismiss: @escaping () -> Void
     ) {
+        self.summaryKeyCode = summaryHotkey.keyCode
+        self.summaryFlags = summaryHotkey.flags
         self.isOverlayActive = isOverlayActive
         self.isCustomInputActive = isCustomInputActive
+        self.isCollectingActive = isCollectingActive
         self.onSummarize = onSummarize
+        self.onSubmitCollecting = onSubmitCollecting
+        self.onCancelCollecting = onCancelCollecting
         self.onChoice = onChoice
         self.onInsert = onInsert
         self.onCustomInsert = onCustomInsert
@@ -93,6 +107,21 @@ final class HotkeyManager {
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags.intersection(manager.relevantFlags)
+
+        if manager.isCollectingActive() {
+            if keyCode == manager.summaryKeyCode && flags == manager.summaryFlags {
+                DispatchQueue.main.async { manager.onSummarize() }
+                return nil
+            }
+            if keyCode == manager.returnKeyCode && flags.isEmpty {
+                DispatchQueue.main.async { manager.onSubmitCollecting() }
+                return nil
+            }
+            if keyCode == manager.escapeKeyCode && flags.isEmpty {
+                DispatchQueue.main.async { manager.onCancelCollecting() }
+                return nil
+            }
+        }
 
         if manager.isOverlayActive(),
            let command = OverlayKeyRouter.command(
