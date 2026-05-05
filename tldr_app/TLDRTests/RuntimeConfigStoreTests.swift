@@ -19,5 +19,6 @@ final class RuntimeConfigStoreTests: XCTestCase {
         XCTAssertEqual(config.model, "gemini-2.0-flash")
         XCTAssertEqual(config.allowEventLogging, true)
         XCTAssertEqual(config.allowContentRetention, false)
+        XCTAssertEqual(config.soundsEnabled, true)
     }
 }

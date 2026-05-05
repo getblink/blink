@@ -5,6 +5,7 @@ final class TLDRCoordinator {
     private let config: Config
     private let runtimeStore: RuntimeConfigStore
     private let eventClient: TLDREventClient
+    private let soundEffects: SoundEffects
     private let queue = DispatchQueue(label: "tldr.coordinator", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
     private var currentSuggestions: [String] = []
@@ -17,10 +18,16 @@ final class TLDRCoordinator {
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
 
-    init(config: Config, runtimeStore: RuntimeConfigStore, eventClient: TLDREventClient) {
+    init(
+        config: Config,
+        runtimeStore: RuntimeConfigStore,
+        eventClient: TLDREventClient,
+        soundEffects: SoundEffects
+    ) {
         self.config = config
         self.runtimeStore = runtimeStore
         self.eventClient = eventClient
+        self.soundEffects = soundEffects
     }
 
     var isOverlayActive: Bool {
@@ -63,6 +70,7 @@ final class TLDRCoordinator {
             let startedAt = Date()
             let startedPerf = monotonicNow()
             var lastPhase = "capture_started"
+            var captureBlankLikely = false
 
             let pendingPayload: [String: Any] = [
                 "request_id": requestID,
@@ -93,6 +101,9 @@ final class TLDRCoordinator {
                 details: ["frontmost_app": frontmostApp]
             )
             status("capturing window...")
+            DispatchQueue.main.async {
+                self.soundEffects.play(.capture)
+            }
 
             do {
                 let captureStartedPerf = monotonicNow()
@@ -165,6 +176,7 @@ final class TLDRCoordinator {
                     ]
                 )
                 if (diagnostics["blank_likely"] as? Bool) == true {
+                    captureBlankLikely = true
                     emitEvent(
                         requestID: requestID,
                         type: "capture_blank_detected",
@@ -203,6 +215,9 @@ final class TLDRCoordinator {
                         self?.dismissOverlay()
                     }
                     self.overlay.showLoading(tldr: "Reading this screen...")
+                    if captureBlankLikely {
+                        self.overlay.showSoftError("This capture looks blank. TLDR will still try to read it.")
+                    }
                 }
                 let pythonStartedPerf = monotonicNow()
                 let result = try PythonRunner.runOnceStreaming(
@@ -224,7 +239,7 @@ final class TLDRCoordinator {
                             guard self.currentRequestID == requestID else { return }
                             switch event {
                             case .phase(let message):
-                                self.overlay.updateSummary(message)
+                                self.overlay.updateLoadingPhase(message)
                             case .partialTLDR(let text):
                                 self.overlay.updateSummary(text)
                             case .partialSuggestions(let list):
@@ -310,6 +325,11 @@ final class TLDRCoordinator {
                         tldr: result.tldr,
                         suggestions: self.currentSuggestions
                     )
+                    self.soundEffects.play(.resultReady)
+                    if result.tldr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        && self.currentSuggestions.isEmpty {
+                        self.overlay.showSoftError("TLDR came back empty. Try a clearer or more text-heavy window.")
+                    }
                     self.emitEvent(
                         requestID: requestID,
                         type: "overlay_shown",
@@ -432,7 +452,6 @@ final class TLDRCoordinator {
         let text = currentSuggestions[index]
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
-        overlay.close()
 
         if let requestID {
             emitEvent(
@@ -447,6 +466,7 @@ final class TLDRCoordinator {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         status("copied suggestion \(index + 1)")
+        soundEffects.play(.copy)
         if let requestID {
             emitEvent(
                 requestID: requestID,
@@ -459,7 +479,20 @@ final class TLDRCoordinator {
         }
 
         recordChoice(index: index, text: text, action: "copied")
-        resetCurrentRun()
+        currentBundleDir = nil
+        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        let finishingRequestID = requestID
+        overlay.confirmCopy { [weak self] in
+            guard let self else { return }
+            if let finishingRequestID {
+                guard self.currentRequestID == finishingRequestID else { return }
+            } else {
+                guard self.currentRequestID == nil else { return }
+            }
+            self.overlay.dismissAnimated { [weak self] in
+                self?.resetCurrentRun()
+            }
+        }
     }
 
     @MainActor
@@ -468,8 +501,10 @@ final class TLDRCoordinator {
         let text = currentSuggestions[index]
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
-        overlay.close()
         recordChoice(index: index, text: text, action: "inserted")
+        currentBundleDir = nil
+        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        let finishingRequestID = requestID
         status("inserting suggestion \(index + 1)...")
 
         if let requestID {
@@ -486,61 +521,72 @@ final class TLDRCoordinator {
             )
         }
 
-        // Give NSRunningApplication.activate time to land on the previous
-        // frontmost app before we synthesize Cmd+V — otherwise the paste
-        // sometimes hits TLDR's still-active panel context instead.
-        Inserter.insert(text: text, activationDelay: 0.15) { [weak self] result in
+        overlay.confirmInsert { [weak self] in
             guard let self else { return }
-            switch result {
-            case .success:
-                self.status("inserted suggestion \(index + 1)")
-                if let requestID {
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "suggestion_inserted",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["chosen_index": index + 1]
-                    )
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "run_completed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["outcome": "inserted", "chosen_index": index + 1]
-                    )
-                    PendingRunStore.finish(requestID: requestID)
+            if let finishingRequestID {
+                guard self.currentRequestID == finishingRequestID else { return }
+            } else {
+                guard self.currentRequestID == nil else { return }
+            }
+            self.overlay.dismissAnimated { [weak self] in
+                guard let self else { return }
+                // Give NSRunningApplication.activate time to land on the previous
+                // frontmost app before we synthesize Cmd+V — otherwise the paste
+                // sometimes hits TLDR's still-active panel context instead.
+                Inserter.insert(text: text, activationDelay: 0.15) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success:
+                        self.status("inserted suggestion \(index + 1)")
+                        self.soundEffects.play(.insert)
+                        if let requestID {
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "suggestion_inserted",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: ["chosen_index": index + 1]
+                            )
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "run_completed",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: ["outcome": "inserted", "chosen_index": index + 1]
+                            )
+                            PendingRunStore.finish(requestID: requestID)
+                        }
+                    case .failure(let error):
+                        if let requestID {
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "paste_failed",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: [
+                                    "chosen_index": index + 1,
+                                    "error": self.shortErrorSummary(error),
+                                ]
+                            )
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "run_completed",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: ["outcome": "paste_failed", "chosen_index": index + 1]
+                            )
+                            PendingRunStore.finish(requestID: requestID)
+                        }
+                        self.reportFailure(
+                            title: "Paste Failed",
+                            statusText: "paste failed: \(self.shortErrorSummary(error))",
+                            detail: self.detailedErrorMessage(error)
+                        )
+                    }
                 }
-            case .failure(let error):
-                if let requestID {
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "paste_failed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: [
-                            "chosen_index": index + 1,
-                            "error": self.shortErrorSummary(error),
-                        ]
-                    )
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "run_completed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["outcome": "paste_failed", "chosen_index": index + 1]
-                    )
-                    PendingRunStore.finish(requestID: requestID)
-                }
-                self.reportFailure(
-                    title: "Paste Failed",
-                    statusText: "paste failed: \(self.shortErrorSummary(error))",
-                    detail: self.detailedErrorMessage(error)
-                )
+                self.resetCurrentRun()
             }
         }
-
-        resetCurrentRun()
     }
 
     @MainActor
@@ -549,9 +595,8 @@ final class TLDRCoordinator {
         guard !trimmed.isEmpty else { return }
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
-        overlay.close()
         recordCustomReply(text: trimmed)
-        status("inserting your reply...")
+        status("nice — inserting your reply...")
 
         if let requestID {
             PendingRunStore.update(requestID: requestID) { payload in
@@ -568,51 +613,65 @@ final class TLDRCoordinator {
             )
         }
 
-        Inserter.insert(text: trimmed, activationDelay: 0.15) { [weak self] result in
+        let pasteRequestID = requestID
+        overlay.dismissAnimated { [weak self] in
             guard let self else { return }
-            switch result {
-            case .success:
-                self.status("inserted your reply")
-                if let requestID {
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "run_completed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["outcome": "user_typed"]
-                    )
-                    PendingRunStore.finish(requestID: requestID)
-                }
-            case .failure(let error):
-                if let requestID {
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "paste_failed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: [
-                            "chosen_action": "user_typed",
-                            "error": self.shortErrorSummary(error),
-                        ]
-                    )
-                    self.emitEvent(
-                        requestID: requestID,
-                        type: "run_completed",
-                        allowLogging: self.runtimeStore.allowEventLogging,
-                        clientMetadata: clientMetadata,
-                        details: ["outcome": "paste_failed", "chosen_action": "user_typed"]
-                    )
-                    PendingRunStore.finish(requestID: requestID)
-                }
-                self.reportFailure(
-                    title: "Paste Failed",
-                    statusText: "paste failed: \(self.shortErrorSummary(error))",
-                    detail: self.detailedErrorMessage(error)
-                )
+            // If the user dismissed the overlay (Esc / outside-click) during
+            // dismiss, the run was already finalized — don't resurrect it by
+            // pasting into whatever app is now frontmost.
+            if let pasteRequestID, self.currentRequestID != pasteRequestID {
+                return
             }
+            if pasteRequestID == nil, self.currentRequestID != nil {
+                return
+            }
+            Inserter.insert(text: trimmed, activationDelay: 0.15) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.status("inserted your reply")
+                    self.soundEffects.play(.insert)
+                    self.celebrateAtDestinationCaret()
+                    if let requestID {
+                        self.emitEvent(
+                            requestID: requestID,
+                            type: "run_completed",
+                            allowLogging: self.runtimeStore.allowEventLogging,
+                            clientMetadata: clientMetadata,
+                            details: ["outcome": "user_typed"]
+                        )
+                        PendingRunStore.finish(requestID: requestID)
+                    }
+                case .failure(let error):
+                    if let requestID {
+                        self.emitEvent(
+                            requestID: requestID,
+                            type: "paste_failed",
+                            allowLogging: self.runtimeStore.allowEventLogging,
+                            clientMetadata: clientMetadata,
+                            details: [
+                                "chosen_action": "user_typed",
+                                "error": self.shortErrorSummary(error),
+                            ]
+                        )
+                        self.emitEvent(
+                            requestID: requestID,
+                            type: "run_completed",
+                            allowLogging: self.runtimeStore.allowEventLogging,
+                            clientMetadata: clientMetadata,
+                            details: ["outcome": "paste_failed", "chosen_action": "user_typed"]
+                        )
+                        PendingRunStore.finish(requestID: requestID)
+                    }
+                    self.reportFailure(
+                        title: "Paste Failed",
+                        statusText: "paste failed: \(self.shortErrorSummary(error))",
+                        detail: self.detailedErrorMessage(error)
+                    )
+                }
+            }
+            self.resetCurrentRun()
         }
-
-        resetCurrentRun()
     }
 
     @MainActor
@@ -632,6 +691,19 @@ final class TLDRCoordinator {
         overlay.onDismissKey = nil
     }
 
+    /// Fire confetti at the destination app's caret after a successful
+    /// paste. Best-effort: silently skips when accessibility permission is
+    /// missing or the focused element doesn't expose a caret rectangle.
+    private func celebrateAtDestinationCaret() {
+        // Tiny delay so the focused element has settled on the post-paste
+        // caret position — some apps (notably web text fields) update their
+        // selection asynchronously after the synthetic Cmd+V lands.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard let caret = FocusedContextCapture.caretScreenPoint() else { return }
+            ConfettiPanel.fire(at: caret)
+        }
+    }
+
     private func isCurrentRequest(_ requestID: String) -> Bool {
         if Thread.isMainThread {
             return currentRequestID == requestID
@@ -647,7 +719,9 @@ final class TLDRCoordinator {
         let requestID = currentRequestID
         currentStreamingRun?.terminate()
         currentStreamingRun = nil
-        overlay.close()
+        currentRequestID = nil
+        currentBundleDir = nil
+        choiceState = SuggestionChoiceState(suggestionCount: 0)
         status("dismissed")
         recordDismiss()
         if let requestID {
@@ -668,7 +742,9 @@ final class TLDRCoordinator {
             )
             PendingRunStore.finish(requestID: requestID)
         }
-        resetCurrentRun()
+        overlay.dismissAnimated { [weak self] in
+            self?.resetCurrentRun()
+        }
     }
 
     private func makeStagingDir() throws -> URL {
@@ -834,6 +910,7 @@ final class TLDRCoordinator {
     private func reportFailure(title: String, statusText: String, detail: String) {
         status(statusText)
         DispatchQueue.main.async {
+            self.soundEffects.play(.hardError)
             self.onFailureNotice?(title, detail)
         }
     }

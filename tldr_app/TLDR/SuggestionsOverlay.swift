@@ -111,6 +111,9 @@ final class SuggestionsOverlay: NSObject {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
         static let summaryMinHeight: CGFloat = 144
+        static let loadingMinHeight: CGFloat = 56
+        static let loadingDotSize: CGFloat = 8
+        static let loadingDotTextGap: CGFloat = 10
         static let sectionGap: CGFloat = 14
         static let suggestionGap: CGFloat = 8
         static let summaryFontSize: CGFloat = 16
@@ -136,6 +139,7 @@ final class SuggestionsOverlay: NSObject {
         static let enterHintRightInset: CGFloat = 24
         static let enterHintBottomInset: CGFloat = 4
         static let animationDuration: TimeInterval = 0.22
+        static let momentDuration: TimeInterval = 0.34
 
         static var suggestionPaddingY: CGFloat {
             (suggestionCollapsedHeight - suggestionCollapsedTextHeight) / 2
@@ -166,6 +170,9 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
     private var summaryLabel: NSTextField?
+    private var loadingPulseDot: NSView?
+    private var isLoadingState: Bool = false
+    private var softErrorBanner: NSView?
     private var summaryBaseFrame: NSRect = .zero
     private var summaryTextY: CGFloat = 0
     private var suggestionCards: [SuggestionCard] = []
@@ -180,6 +187,8 @@ final class SuggestionsOverlay: NSObject {
     private var lastOutsideClickAt: TimeInterval = 0
     private var currentHeightDelta: CGFloat = 0
     private var previousFrontmost: NSRunningApplication?
+    private var hasPlayedSuggestionArrival = false
+    private var isDismissing = false
     private(set) var expandedSuggestionIndex: Int?
 
     var onCustomInputFocusChanged: ((Bool) -> Void)?
@@ -209,7 +218,8 @@ final class SuggestionsOverlay: NSObject {
             tldr: tldr,
             suggestions: [],
             showsCustomInput: false,
-            hintText: nil
+            hintText: nil,
+            isLoading: true
         )
     }
 
@@ -217,7 +227,8 @@ final class SuggestionsOverlay: NSObject {
         tldr: String,
         suggestions: [String],
         showsCustomInput: Bool,
-        hintText: String?
+        hintText: String?,
+        isLoading: Bool = false
     ) {
         close()
 
@@ -228,12 +239,14 @@ final class SuggestionsOverlay: NSObject {
         let contentWidth = Layout.panelWidth
         let summaryLabelWidth = contentWidth - 48
         let summaryTextY = Layout.summaryBottomInset + (hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap)
-        let summaryHeight = max(
-            Layout.summaryMinHeight,
-            measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
-                + summaryTextY
-                + Layout.summaryTopInset
-        )
+        let summaryHeight = isLoading
+            ? Layout.loadingMinHeight
+            : max(
+                Layout.summaryMinHeight,
+                measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
+                    + summaryTextY
+                    + Layout.summaryTopInset
+            )
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
         let expandedHeights = visibleSuggestions.map { text in
             max(
@@ -320,18 +333,56 @@ final class SuggestionsOverlay: NSObject {
             summary.content.addSubview(hint)
         }
 
-        let summaryLabel = label(
-            frame: NSRect(
-                x: 24,
-                y: summaryTextY,
-                width: contentWidth - 48,
-                height: summaryHeight - summaryTextY - Layout.summaryTopInset
-            ),
-            text: tldr,
-            font: summaryFont,
-            color: .labelColor,
-            lineSpacing: Layout.summaryLineSpacing
-        )
+        let summaryLabel: NSTextField
+        if isLoading {
+            // Compact loading layout: a centered horizontal group of
+            // [pulsing dot] [placeholder text] sitting at vertical center
+            // of the (much shorter) summary card. We size and position the
+            // group as a unit so it stays visually balanced.
+            let textWidth = ceil(measureLoadingTextWidth(tldr, font: summaryFont))
+            let textHeight = ceil(summaryFont.ascender - summaryFont.descender)
+            let groupWidth = Layout.loadingDotSize + Layout.loadingDotTextGap + textWidth
+            let groupX = (summaryFrame.width - groupWidth) / 2
+            let centerY = summaryFrame.height / 2
+            let dot = installLoadingDot(in: summary.content, at: NSRect(
+                x: groupX,
+                y: centerY - Layout.loadingDotSize / 2,
+                width: Layout.loadingDotSize,
+                height: Layout.loadingDotSize
+            ))
+            loadingPulseDot = dot
+            // Generous label width avoids any subpixel-rounding truncation
+            // ("Reading this scree…" was the symptom). The label is left
+            // aligned, so the visual text origin is still at groupX + dot +
+            // gap — extra pixels just live empty to the right.
+            let labelWidth = min(textWidth + 24, summaryFrame.width - groupX
+                - Layout.loadingDotSize - Layout.loadingDotTextGap - 16)
+            summaryLabel = label(
+                frame: NSRect(
+                    x: groupX + Layout.loadingDotSize + Layout.loadingDotTextGap,
+                    y: centerY - textHeight / 2,
+                    width: labelWidth,
+                    height: textHeight
+                ),
+                text: tldr,
+                font: summaryFont,
+                color: .labelColor,
+                singleLine: true
+            )
+        } else {
+            summaryLabel = label(
+                frame: NSRect(
+                    x: 24,
+                    y: summaryTextY,
+                    width: contentWidth - 48,
+                    height: summaryHeight - summaryTextY - Layout.summaryTopInset
+                ),
+                text: tldr,
+                font: summaryFont,
+                color: .labelColor,
+                lineSpacing: Layout.summaryLineSpacing
+            )
+        }
         summary.content.addSubview(summaryLabel)
         content.addSubview(summary.outer)
 
@@ -408,6 +459,8 @@ final class SuggestionsOverlay: NSObject {
         panel.customReplyField = custom?.field
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
+        self.hasPlayedSuggestionArrival = false
+        self.isLoadingState = isLoading
 
         // Remember the app the user was working in so we can restore focus
         // when the overlay closes — the panel needs to activate to render
@@ -442,6 +495,50 @@ final class SuggestionsOverlay: NSObject {
         // so the panel always opens with #4 centered and hint hidden.
         applyCustomInputFocusState(focused: false, animated: false)
         installMouseMonitors()
+        if !isLoading, !visibleSuggestions.isEmpty {
+            hasPlayedSuggestionArrival = true
+            playArrivalAnimation(summary: summary.outer, cards: cards.map(\.outer))
+        }
+    }
+
+    /// Update the placeholder text mid-loading without tearing down the
+    /// pulsing dot or growing the card. Used for `.phase` events from the
+    /// streaming pipeline ("Reading screen…", "Calling Gemini…", etc.).
+    func updateLoadingPhase(_ text: String) {
+        guard isLoadingState, let summaryCard, let summaryLabel else {
+            updateSummary(text)
+            return
+        }
+        let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
+        let textWidth = ceil(measureLoadingTextWidth(text, font: font))
+        let textHeight = ceil(font.ascender - font.descender)
+        let groupWidth = Layout.loadingDotSize + Layout.loadingDotTextGap + textWidth
+        let groupX = (summaryCard.frame.width - groupWidth) / 2
+        let centerY = summaryCard.frame.height / 2
+        if let dot = loadingPulseDot {
+            dot.frame = NSRect(
+                x: groupX,
+                y: centerY - Layout.loadingDotSize / 2,
+                width: Layout.loadingDotSize,
+                height: Layout.loadingDotSize
+            )
+        }
+        let labelWidth = min(textWidth + 24, summaryCard.frame.width - groupX
+            - Layout.loadingDotSize - Layout.loadingDotTextGap - 16)
+        summaryLabel.frame = NSRect(
+            x: groupX + Layout.loadingDotSize + Layout.loadingDotTextGap,
+            y: centerY - textHeight / 2,
+            width: labelWidth,
+            height: textHeight
+        )
+        setLabelText(
+            summaryLabel,
+            text: text,
+            font: font,
+            color: .labelColor,
+            lineSpacing: 0,
+            singleLine: true
+        )
     }
 
     func updateSummary(_ text: String) {
@@ -450,10 +547,18 @@ final class SuggestionsOverlay: NSObject {
               let summaryCard,
               let summaryLabel
         else { return }
+        let wasLoading = isLoadingState
+        if wasLoading {
+            tearDownLoadingState()
+        }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
         let labelWidth = Layout.panelWidth - 48
+        // When transitioning out of loading the card was clamped to the
+        // compact loadingMinHeight; grow it to at least summaryMinHeight so
+        // multi-line content has the normal breathing room.
+        let floor = wasLoading ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
-            summaryBaseFrame.height,
+            floor,
             measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing)
                 + summaryTextY
                 + Layout.summaryTopInset
@@ -480,6 +585,23 @@ final class SuggestionsOverlay: NSObject {
                 y: summaryTextY,
                 width: labelWidth,
                 height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
+            )
+            if wasLoading {
+                // Anchor summaryBaseFrame and basePanelHeight to the new
+                // post-loading layout so subsequent grows compute from the
+                // right baseline.
+                summaryBaseFrame = summaryCard.frame
+                basePanelHeight = newPanelHeight
+            }
+        } else if wasLoading {
+            // Even when the new text fits in summaryBaseFrame, the loading
+            // layout positioned the label as a centered single-line group.
+            // Reset to the standard top-anchored multi-line frame.
+            summaryLabel.frame = NSRect(
+                x: 24,
+                y: summaryTextY,
+                width: labelWidth,
+                height: summaryBaseFrame.height - summaryTextY - Layout.summaryTopInset
             )
         }
         setLabelText(
@@ -610,6 +732,10 @@ final class SuggestionsOverlay: NSObject {
         panel.customReplyField = customCard.field
         self.basePanelHeight = newPanelHeight
         self.currentHeightDelta = 0
+        if !hasPlayedSuggestionArrival, !cards.isEmpty {
+            hasPlayedSuggestionArrival = true
+            playArrivalAnimation(summary: summaryCard, cards: cards.map(\.outer))
+        }
     }
 
     func focusCustomInput() {
@@ -849,6 +975,9 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func close() {
+        tearDownLoadingState()
+        softErrorBanner?.removeFromSuperview()
+        softErrorBanner = nil
         removeMouseMonitors()
         customInputHintLabel?.alphaValue = 0
         panel?.close()
@@ -867,6 +996,8 @@ final class SuggestionsOverlay: NSObject {
         customInputTint = nil
         expandedSuggestionIndex = nil
         currentHeightDelta = 0
+        hasPlayedSuggestionArrival = false
+        isDismissing = false
 
         if let prev = previousFrontmost,
            !prev.isTerminated,
@@ -874,6 +1005,112 @@ final class SuggestionsOverlay: NSObject {
             prev.activate()
         }
         previousFrontmost = nil
+    }
+
+    func dismissAnimated(completion: (() -> Void)? = nil) {
+        guard let panel, let contentView, !isDismissing else {
+            completion?()
+            return
+        }
+        isDismissing = true
+        // Anchor the contentView's layer at center so the scale-down reads as a
+        // shrink-into-self rather than a top-left collapse. Adjust position so
+        // the layer doesn't visibly jump when we shift the anchor point.
+        if let layer = contentView.layer {
+            let oldAnchor = layer.anchorPoint
+            let newAnchor = CGPoint(x: 0.5, y: 0.5)
+            let dx = (newAnchor.x - oldAnchor.x) * layer.bounds.width
+            let dy = (newAnchor.y - oldAnchor.y) * layer.bounds.height
+            layer.anchorPoint = newAnchor
+            layer.position = CGPoint(x: layer.position.x + dx, y: layer.position.y + dy)
+
+            let scale = CABasicAnimation(keyPath: "transform.scale")
+            scale.fromValue = 1.0
+            scale.toValue = 0.96
+            scale.duration = 0.22
+            scale.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            scale.fillMode = .forwards
+            scale.isRemovedOnCompletion = false
+            layer.add(scale, forKey: "dismissScale")
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            guard let self else { return }
+            self.close()
+            completion?()
+        }
+    }
+
+    func showSoftError(_ message: String) {
+        guard let contentView else { return }
+        softErrorBanner?.removeFromSuperview()
+
+        let tint = NSColor.systemRed
+        let width = Layout.panelWidth
+        let height: CGFloat = 44
+        let targetFrame = NSRect(
+            x: Layout.shadowBleed,
+            y: contentView.bounds.height - Layout.shadowBleed - height,
+            width: width,
+            height: height
+        )
+        let banner = NSView(frame: targetFrame.offsetBy(dx: 0, dy: height + 8))
+        banner.wantsLayer = true
+        banner.layer?.cornerRadius = height / 2
+        banner.layer?.masksToBounds = true
+        banner.layer?.backgroundColor = tint.withAlphaComponent(0.22).cgColor
+        banner.alphaValue = 0
+
+        let icon = NSImageView(frame: NSRect(x: 18, y: 11, width: 22, height: 22))
+        icon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+        icon.contentTintColor = tint
+        banner.addSubview(icon)
+
+        let messageLabel = label(
+            frame: NSRect(x: 50, y: 11, width: width - 72, height: 22),
+            text: message,
+            font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            color: .labelColor,
+            singleLine: true
+        )
+        banner.addSubview(messageLabel)
+        contentView.addSubview(banner, positioned: .above, relativeTo: nil)
+        softErrorBanner = banner
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.28
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            banner.animator().frame = targetFrame
+            banner.animator().alphaValue = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self, weak banner] in
+            guard let self, let banner, self.softErrorBanner === banner else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                banner.animator().alphaValue = 0
+            } completionHandler: {
+                banner.removeFromSuperview()
+                if self.softErrorBanner === banner {
+                    self.softErrorBanner = nil
+                }
+            }
+        }
+    }
+
+    func confirmCopy(completion: @escaping () -> Void) {
+        let screen = panel?.screen ?? NSScreen.main
+        if let screen {
+            CopyConfirmationPill.show(on: screen)
+        }
+        completion()
+    }
+
+    func confirmInsert(completion: @escaping () -> Void) {
+        completion()
     }
 
     private static let useLegacyGlass: Bool = RuntimeEnvironment.forceLegacyGlass()
@@ -950,6 +1187,66 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         view.layer?.cornerRadius = radius
+    }
+
+    private func installLoadingDot(in host: NSView, at frame: NSRect) -> NSView {
+        let dot = NSView(frame: frame)
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = frame.height / 2
+        dot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        // Composite above the glass material so the accent reads cleanly
+        // through the frosted backdrop.
+        dot.layer?.zPosition = 1
+        host.addSubview(dot)
+
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0
+        pulse.toValue = 0.4
+        pulse.duration = 0.7
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        dot.layer?.add(pulse, forKey: "loadingPulse")
+        return dot
+    }
+
+    private func tearDownLoadingState() {
+        loadingPulseDot?.layer?.removeAllAnimations()
+        loadingPulseDot?.removeFromSuperview()
+        loadingPulseDot = nil
+        isLoadingState = false
+    }
+
+    private func playArrivalAnimation(summary: NSView?, cards: [NSView]) {
+        animateScale(view: summary, from: 0.96, to: 1.0, duration: Layout.momentDuration)
+        for (index, card) in cards.enumerated() {
+            card.alphaValue = 0
+            let finalFrame = card.frame
+            card.frame = finalFrame.offsetBy(dx: 0, dy: -12)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.06) {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = Layout.momentDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    card.animator().frame = finalFrame
+                    card.animator().alphaValue = 1
+                }
+            }
+        }
+    }
+
+    private func animateScale(view: NSView?, from: CGFloat, to: CGFloat, duration: TimeInterval) {
+        guard let view else { return }
+        view.wantsLayer = true
+        let animation = CASpringAnimation(keyPath: "transform.scale")
+        animation.fromValue = from
+        animation.toValue = to
+        animation.mass = 0.8
+        animation.stiffness = 220
+        animation.damping = 17
+        animation.initialVelocity = 0
+        animation.duration = duration
+        view.layer?.add(animation, forKey: "arrivalScale")
+        view.layer?.setAffineTransform(CGAffineTransform(scaleX: to, y: to))
     }
 
     private func makeSuggestionCard(
@@ -1372,5 +1669,203 @@ final class SuggestionsOverlay: NSObject {
     private func measureWidth(_ text: String, font: NSFont) -> CGFloat {
         let attributed = NSAttributedString(string: text, attributes: [.font: font])
         return ceil(attributed.size().width)
+    }
+
+    /// Width measurement that matches NSTextField's actual single-line
+    /// rendering. `attributedString.size()` rounds short of the on-screen
+    /// glyph run by a few subpixel units, which makes a single-line label
+    /// frame sized to that value truncate the trailing characters
+    /// ("Reading this scree…" instead of "Reading this screen…").
+    private func measureLoadingTextWidth(_ text: String, font: NSFont) -> CGFloat {
+        let cell = NSTextFieldCell()
+        cell.isBezeled = false
+        cell.isEditable = false
+        cell.isSelectable = false
+        cell.drawsBackground = false
+        cell.usesSingleLineMode = true
+        cell.lineBreakMode = .byClipping
+        cell.attributedStringValue = NSAttributedString(
+            string: text, attributes: [.font: font]
+        )
+        let size = cell.cellSize(forBounds: NSRect(
+            x: 0, y: 0, width: 100_000, height: 100_000
+        ))
+        return ceil(size.width)
+    }
+}
+
+private enum CopyConfirmationPill {
+    static func show(on screen: NSScreen) {
+        let pillWidth: CGFloat = 280
+        let pillHeight: CGFloat = 44
+
+        let x = screen.frame.midX - pillWidth / 2
+        // Start fully off-screen above the top edge; land just below the menubar.
+        let startFrame = NSRect(x: x, y: screen.frame.maxY, width: pillWidth, height: pillHeight)
+        let landFrame = NSRect(
+            x: x,
+            y: screen.visibleFrame.maxY - 12 - pillHeight,
+            width: pillWidth,
+            height: pillHeight
+        )
+
+        let panel = NSPanel(
+            contentRect: startFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        panel.alphaValue = 0
+
+        let container = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
+
+        let pill = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.92).cgColor
+        pill.layer?.cornerRadius = pillHeight / 2
+        pill.layer?.shadowColor = NSColor.black.cgColor
+        pill.layer?.shadowOpacity = 0.25
+        pill.layer?.shadowRadius = 8
+        pill.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        container.addSubview(pill)
+
+        let iconSize: CGFloat = 20
+        let iconY = (pillHeight - iconSize) / 2
+        let icon = NSImageView(frame: NSRect(x: 18, y: iconY, width: iconSize, height: iconSize))
+        icon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+        icon.contentTintColor = .white
+        pill.addSubview(icon)
+
+        let labelX: CGFloat = 18 + iconSize + 10
+        let labelH: CGFloat = 20
+        let labelField = NSTextField(labelWithString: "Copied")
+        labelField.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        labelField.textColor = .white
+        labelField.frame = NSRect(x: labelX, y: (pillHeight - labelH) / 2, width: pillWidth - labelX - 18, height: labelH)
+        labelField.isEditable = false
+        labelField.isSelectable = false
+        labelField.isBordered = false
+        labelField.drawsBackground = false
+        pill.addSubview(labelField)
+
+        panel.orderFrontRegardless()
+
+        // Spring drop-in: overshoot cubic bezier gives a subtle bounce on landing.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.28
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1.0)
+            panel.animator().setFrame(landFrame, display: true)
+            panel.animator().alphaValue = 1
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28 + 1.4) {
+            let exitFrame = NSRect(x: x, y: screen.frame.maxY, width: pillWidth, height: pillHeight)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                panel.animator().setFrame(exitFrame, display: true)
+                panel.animator().alphaValue = 0
+            } completionHandler: {
+                panel.close()
+            }
+        }
+    }
+}
+
+enum ConfettiPanel {
+    private static let panelSize = NSSize(width: 360, height: 240)
+    private static let palette: [NSColor] = [
+        .systemPink, .systemYellow, .systemTeal, .systemPurple, .systemGreen,
+    ]
+
+    /// Fire a confetti burst centered on a screen-coordinate caret point.
+    /// The burst lives on its own floating panel so the suggestions overlay
+    /// can tear down in parallel without taking the celebration with it.
+    static func fire(at caret: CGPoint) {
+        let frame = NSRect(
+            x: caret.x - panelSize.width / 2,
+            y: caret.y - panelSize.height / 2,
+            width: panelSize.width,
+            height: panelSize.height
+        )
+        let panel = NSPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+
+        let container = NSView(frame: NSRect(origin: .zero, size: panelSize))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
+
+        let emitter = CAEmitterLayer()
+        emitter.frame = container.bounds
+        // Emit from the panel's local center — the panel itself is centered
+        // on the caret in screen coords, so the burst origin is the caret.
+        emitter.emitterPosition = CGPoint(x: panelSize.width / 2, y: panelSize.height / 2)
+        emitter.emitterShape = .point
+        emitter.emitterMode = .points
+        emitter.renderMode = .unordered
+        emitter.zPosition = 1000
+        emitter.emitterCells = palette.compactMap { color in
+            guard let image = confettiImage(color: color) else { return nil }
+            let cell = CAEmitterCell()
+            cell.contents = image
+            // ~4 pieces per color × 5 colors ≈ 20 pieces total.
+            cell.birthRate = 4
+            cell.lifetime = 0.7
+            cell.lifetimeRange = 0.25
+            cell.velocity = 260
+            cell.velocityRange = 70
+            cell.emissionLongitude = .pi / 2
+            // Tightened upward cone (~50° spread) since the origin is precise.
+            cell.emissionRange = .pi / 3.5
+            cell.spin = 4
+            cell.spinRange = 6
+            cell.scale = 0.6
+            cell.scaleRange = 0.35
+            cell.yAcceleration = -340
+            cell.alphaSpeed = -0.9
+            return cell
+        }
+        container.layer?.addSublayer(emitter)
+        panel.orderFrontRegardless()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            emitter.birthRate = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+            panel.close()
+        }
+    }
+
+    private static func confettiImage(color: NSColor) -> CGImage? {
+        let size = NSSize(width: 8, height: 12)
+        let image = NSImage(size: size, flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+            return true
+        }
+        var rect = NSRect(origin: .zero, size: size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 }

@@ -29,6 +29,7 @@
 		82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */; };
 		8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */; };
 		91B0CD5A1F048D786CDD1D1B /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */; };
+		A2B975BAF38E0B6AC21F5770 /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5467296FDD090C672968683E /* SoundEffects.swift */; };
 		AFFD91C322C4BCBF1A589DA5 /* TLDRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8FC9688321A6AA3C445F2F8 /* TLDRApp.swift */; };
 		C40F53D81F93D2A08188E351 /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */; };
 		CBE142CC7B8BC2BC42DC7F99 /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E788954DD95B74224B5FF5CF /* ImageDiagnostics.swift */; };
@@ -64,6 +65,7 @@
 		453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStoreTests.swift; sourceTree = "<group>"; };
 		4777BAF6F74870A0A994554E /* MenubarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarController.swift; sourceTree = "<group>"; };
 		5156FFEE481556DB8DB7E4CB /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
+		5467296FDD090C672968683E /* SoundEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundEffects.swift; sourceTree = "<group>"; };
 		5FD77C90100587BDA7E79E10 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
 		6CD32F3BB2B51896CCB61046 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
@@ -169,6 +171,7 @@
 				CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */,
 				CC7282EE495D90BA46111BC9 /* RuntimeEnvironment.swift */,
 				9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */,
+				5467296FDD090C672968683E /* SoundEffects.swift */,
 				1B4357519C159532DCFE2C5F /* SuggestionChoiceState.swift */,
 				B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */,
 				E53B725FB98167E479605F08 /* TLDR.entitlements */,
@@ -281,6 +284,7 @@
 				7C7DE9E5DB2E2B812D7518B4 /* RuntimeConfigStore.swift in Sources */,
 				36D0A75D68BA547BD1879262 /* RuntimeEnvironment.swift in Sources */,
 				697884BC80BAC724A9749483 /* ScreenCapture.swift in Sources */,
+				A2B975BAF38E0B6AC21F5770 /* SoundEffects.swift in Sources */,
 				E5E39A2434931ECC82E8BA46 /* SuggestionChoiceState.swift in Sources */,
 				C40F53D81F93D2A08188E351 /* SuggestionsOverlay.swift in Sources */,
 				AFFD91C322C4BCBF1A589DA5 /* TLDRApp.swift in Sources */,

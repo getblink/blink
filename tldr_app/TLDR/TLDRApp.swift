@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionsWindow: PermissionsWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: TLDREventClient?
+    private var soundEffects: SoundEffects?
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
 
@@ -34,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.runtimeStore = runtimeStore
         let eventClient = TLDREventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
+        let soundEffects = SoundEffects(runtimeStore: runtimeStore)
+        self.soundEffects = soundEffects
 
         PendingRunStore.sweepAbandonedRuns(
             eventClient: eventClient,
@@ -44,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator = TLDRCoordinator(
             config: config,
             runtimeStore: runtimeStore,
-            eventClient: eventClient
+            eventClient: eventClient,
+            soundEffects: soundEffects
         )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)
