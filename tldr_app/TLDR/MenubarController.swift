@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Sparkle
 
 @MainActor
 final class MenubarController: NSObject {
@@ -17,6 +18,8 @@ final class MenubarController: NSObject {
     private var statusLabel: NSMenuItem!
     private var modelMenu: NSMenu?
     private var modelObserver: AnyCancellable?
+    private var updateMenuItem: NSMenuItem?
+    private weak var updaterController: SPUStandardUpdaterController?
 
     init(
         coordinator: TLDRCoordinator,
@@ -48,6 +51,11 @@ final class MenubarController: NSObject {
         }
     }
 
+    func setUpdater(_ updaterController: SPUStandardUpdaterController?) {
+        self.updaterController = updaterController
+        updateMenuItem?.isEnabled = updaterController != nil
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
@@ -65,6 +73,11 @@ final class MenubarController: NSObject {
             .target = self
         menu.addItem(withTitle: "Permissions...", action: #selector(openPermissions), keyEquivalent: "")
             .target = self
+        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = self
+        updateItem.isEnabled = updaterController != nil
+        updateMenuItem = updateItem
+        menu.addItem(updateItem)
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         modelItem.submenu = buildModelMenu()
@@ -133,6 +146,10 @@ final class MenubarController: NSObject {
 
     @objc private func openPermissions() {
         onShowPermissions()
+    }
+
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        updaterController?.checkForUpdates(sender)
     }
 
     private func updateIndicator(for status: String) {

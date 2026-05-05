@@ -49,6 +49,23 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 echo "[tldr] built $APP_PATH"
 
+BUILD_NUMBER="${TLDR_BUILD_NUMBER:-$(git -C "$APP_DIR/.." rev-list --count HEAD)}"
+echo "[tldr] stamping CFBundleVersion=$BUILD_NUMBER"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" \
+    "$APP_PATH/Contents/Info.plist"
+
+if [[ -n "${TLDR_SPARKLE_FEED_URL:-}" ]]; then
+    echo "[tldr] stamping SUFeedURL=$TLDR_SPARKLE_FEED_URL"
+    /usr/libexec/PlistBuddy -c "Set :SUFeedURL $TLDR_SPARKLE_FEED_URL" \
+        "$APP_PATH/Contents/Info.plist"
+fi
+
+if [[ -n "${TLDR_SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
+    echo "[tldr] stamping SUPublicEDKey from TLDR_SPARKLE_PUBLIC_ED_KEY"
+    /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $TLDR_SPARKLE_PUBLIC_ED_KEY" \
+        "$APP_PATH/Contents/Info.plist"
+fi
+
 RESOURCES="$APP_PATH/Contents/Resources"
 mkdir -p "$RESOURCES/python"
 

@@ -53,6 +53,14 @@ Use `install_local_app.sh` for dogfood rebuilds. It resets TCC by default after
 installing `~/Applications/TLDR.app`; pass `--skip-tcc-reset` only when you are
 doing a non-dogfood script check and do not want to re-grant permissions.
 
+`scripts/build.sh` stamps the built bundle's `CFBundleVersion` from
+`git rev-list --count HEAD`; set `TLDR_BUILD_NUMBER=` when cutting a release
+from a dirty or otherwise non-linear tree.
+
+`scripts/fetch_python.sh` pins the python-build-standalone tarball by SHA256.
+When bumping `PYTHON_VERSION`, `PBS_RELEASE`, `ARCH`, or `BUILD`, update the
+case table in that script with the matching upstream `.sha256` release asset.
+
 For Gemini or proxy-backed runs, put runtime env in `~/.tldr/.env`:
 
 ```bash
@@ -95,3 +103,23 @@ Optional overrides:
 - `~/.tldr/settings.json`
 - `~/.tldr/prompts/prompt.txt`
 - `~/.tldr/runtime-config.json`
+
+## Sparkle Releases
+
+TLDR uses Sparkle 2 for prompted updates. Generate the EdDSA key once with
+Sparkle's `generate_keys` tool, store the private key in Keychain, and put the
+public key plus R2 appcast URL in `tldr_app/scripts/config.env`:
+
+```bash
+TLDR_SPARKLE_FEED_URL=https://downloads.example.com/tldr/appcast.xml
+TLDR_SPARKLE_PUBLIC_ED_KEY=...
+TLDR_SPARKLE_SIGN_UPDATE=/path/to/sign_update
+TLDR_SPARKLE_KEYCHAIN_ACCOUNT="TLDR Sparkle EdDSA"
+TLDR_R2_BUCKET=tldr-downloads
+TLDR_R2_PUBLIC_DOMAIN=downloads.example.com
+```
+
+`bash tldr_app/scripts/release.sh` fetches the pinned Python runtime, builds,
+signs, notarizes, packages the DMG, signs the update for Sparkle, writes
+`tldr_app/build/appcast.xml`, and uploads the DMG/appcast to R2. Set
+`TLDR_RELEASE_UPLOAD=0` for a local dry run.

@@ -26,3 +26,4 @@ tldr_app/scripts/config.env
 tldr_app/Resources/proxy.env
 tldr_app/build/
 tldr_app/python-dist/
+.wrangler/
