@@ -51,8 +51,10 @@ Operational rules:
 - The server must not persist screenshot bytes or response bodies.
 - When `DATABASE_URL` is configured, the server may persist structured
   request/event telemetry.
-- Request telemetry includes the returned summary, suggestions, raw model
-  output, and terminal outcome metadata. Screenshot bytes are never persisted.
+- Request telemetry includes the returned summary, suggestions, and raw
+  model output on `tldr_requests`. Terminal outcome and chosen index are
+  derived at read time from `tldr_events` via the
+  `tldr_requests_with_outcome` view. Screenshot bytes are never persisted.
 - When `REDIS_URL` is configured, the server may cache response JSON keyed by
   input hash only when `allow_content_retention=true`.
 
@@ -98,10 +100,13 @@ Success response:
 `stored` is `true` only when the event reached durable telemetry storage. It is
 `false` when event logging is disabled, storage is unavailable, or the backend
 is running without a configured database.
-Terminal events `suggestion_copied`, `suggestion_inserted`, and
-`suggestion_dismissed` also update `tldr_requests.outcome` and optional
-`tldr_requests.chosen_index`. The legacy event name `overlay_dismissed` is
-accepted as an alias for `suggestion_dismissed` for older clients.
+
+The events handler only writes to `tldr_events`; it does not denormalize
+outcome onto the request row. Terminal outcome (`copied` / `inserted` /
+`dismissed` / `user_typed` / `paste_failed`) and `chosen_index` are derived
+from the latest `run_completed` event for each request via the
+`tldr_requests_with_outcome` view. Analytics queries should select from
+that view rather than `tldr_requests` directly.
 
 ## `POST /v1/auth/mint`
 

@@ -35,8 +35,6 @@ CREATE TABLE IF NOT EXISTS tldr_requests (
     summary TEXT,
     suggestions JSONB,
     raw_model_output TEXT,
-    chosen_index INTEGER,
-    outcome TEXT,
     warnings JSONB NOT NULL,
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -51,16 +49,44 @@ ALTER TABLE tldr_requests
     ADD COLUMN IF NOT EXISTS suggestions JSONB;
 ALTER TABLE tldr_requests
     ADD COLUMN IF NOT EXISTS raw_model_output TEXT;
+-- chosen_index / outcome were briefly stored on the request row but are
+-- now derived from tldr_events via the tldr_requests_with_outcome view.
+-- Drop them if they're hanging around from an older deploy. Safe because
+-- the previous columns were nullable and only ever populated by us.
 ALTER TABLE tldr_requests
-    ADD COLUMN IF NOT EXISTS chosen_index INTEGER;
+    DROP COLUMN IF EXISTS chosen_index;
 ALTER TABLE tldr_requests
-    ADD COLUMN IF NOT EXISTS outcome TEXT;
+    DROP COLUMN IF EXISTS outcome;
 CREATE INDEX IF NOT EXISTS tldr_requests_created_at_idx
     ON tldr_requests (created_at DESC);
 CREATE INDEX IF NOT EXISTS tldr_requests_install_id_idx
     ON tldr_requests (install_id);
 CREATE INDEX IF NOT EXISTS tldr_requests_input_hash_idx
     ON tldr_requests (input_hash);
+"""
+
+# View that derives terminal outcome + chosen_index from the latest
+# `run_completed` event for each request. Source of truth lives in
+# tldr_events; the view exposes it as ergonomic columns for analytics
+# without a write-time denormalization step.
+REQUESTS_WITH_OUTCOME_VIEW = """
+CREATE OR REPLACE VIEW tldr_requests_with_outcome AS
+SELECT
+    r.*,
+    latest.outcome,
+    latest.chosen_index
+FROM tldr_requests r
+LEFT JOIN LATERAL (
+    SELECT
+        payload->'details'->>'outcome' AS outcome,
+        NULLIF(payload->'details'->>'chosen_index', '')::int AS chosen_index
+    FROM tldr_events
+    WHERE request_id = r.request_id
+      AND event_type = 'run_completed'
+      AND payload->'details'->>'outcome' IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+) latest ON TRUE;
 """
 
 DEVICE_TOKENS_SCHEMA = """
@@ -115,6 +141,8 @@ class TelemetryStore:
                 cur.execute(REQUESTS_SCHEMA)
                 cur.execute(EVENTS_SCHEMA)
                 cur.execute(DEVICE_TOKENS_SCHEMA)
+                # View depends on both base tables existing.
+                cur.execute(REQUESTS_WITH_OUTCOME_VIEW)
             conn.commit()
         self.schema_ready = True
 
@@ -150,14 +178,12 @@ class TelemetryStore:
                         summary,
                         suggestions,
                         raw_model_output,
-                        chosen_index,
-                        outcome,
                         warnings,
                         error
                     ) VALUES (
                         %s, %s, %s, (%s)::jsonb, %s, %s, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
                         (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
-                        %s, %s, %s, %s, %s, %s, (%s)::jsonb, %s, %s, %s, (%s)::jsonb, %s
+                        %s, %s, %s, %s, %s, %s, (%s)::jsonb, %s, (%s)::jsonb, %s
                     )
                     ON CONFLICT (request_id) DO UPDATE SET
                         token_id = EXCLUDED.token_id,
@@ -207,8 +233,6 @@ class TelemetryStore:
                         payload.get("summary"),
                         json.dumps(payload.get("suggestions"), ensure_ascii=True),
                         payload.get("raw_model_output"),
-                        payload.get("chosen_index"),
-                        payload.get("outcome"),
                         json.dumps(payload["warnings"], ensure_ascii=True),
                         payload["error"],
                     ),
@@ -242,32 +266,6 @@ class TelemetryStore:
                 )
             conn.commit()
         return True
-
-    def update_request_outcome(
-        self,
-        *,
-        request_id: str,
-        chosen_index: int | None,
-        outcome: str,
-    ) -> bool:
-        if not self.enabled or self.database_url is None:
-            return False
-        self._ensure_schema()
-        assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE tldr_requests
-                    SET chosen_index = %s,
-                        outcome = %s
-                    WHERE request_id = %s
-                    """,
-                    (chosen_index, outcome, request_id),
-                )
-                updated = cur.rowcount > 0
-            conn.commit()
-        return updated
 
     def mint_device_token(self, *, install_id: str, token_hash: str) -> None:
         if not self.enabled or self.database_url is None:

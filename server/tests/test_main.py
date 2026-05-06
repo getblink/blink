@@ -740,10 +740,12 @@ class MainTests(unittest.TestCase):
         stored_payload = telemetry_store.record_event.call_args.kwargs["payload"]
         self.assertEqual(stored_payload["install_id"], "install-abc")
 
-    def test_events_update_terminal_outcome_on_request_row(self) -> None:
+    def test_events_endpoint_does_not_mutate_request_row(self) -> None:
+        # Outcome is now derived from the run_completed event via the
+        # tldr_requests_with_outcome view, so the events handler should
+        # only record the event itself — never UPDATE the requests table.
         telemetry_store = mock.Mock()
         telemetry_store.record_event.return_value = True
-        telemetry_store.update_request_outcome.return_value = True
 
         with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
             response = self.client.post(
@@ -751,17 +753,16 @@ class MainTests(unittest.TestCase):
                 headers={"Authorization": "Bearer dev-token"},
                 json={
                     "request_id": "req-123",
-                    "event_type": "suggestion_inserted",
+                    "event_type": "run_completed",
                     "created_at": "2026-04-29T00:00:00Z",
-                    "details": {"chosen_index": 2},
+                    "details": {"outcome": "user_typed"},
                 },
             )
         self.assertEqual(response.status_code, 200)
-        telemetry_store.update_request_outcome.assert_called_once_with(
-            request_id="req-123",
-            chosen_index=2,
-            outcome="inserted",
-        )
+        telemetry_store.record_event.assert_called_once()
+        # Mock auto-creates attributes on access; .called is False unless we
+        # actually invoked it, so this asserts the mutation path is gone.
+        self.assertFalse(telemetry_store.update_request_outcome.called)
 
     def test_auth_mint_uses_bootstrap_and_persists_hashed_device_token(self) -> None:
         telemetry_store = mock.Mock()
@@ -788,7 +789,6 @@ class MainTests(unittest.TestCase):
         # successful mint round-trip.
         telemetry_store = mock.Mock()
         telemetry_store.record_event.return_value = True
-        telemetry_store.update_request_outcome.return_value = True
 
         with mock.patch.dict(os.environ, {"BLINK_BOOTSTRAP_TOKEN": "bootstrap"}, clear=False), \
              mock.patch("server.main._telemetry_store", return_value=telemetry_store):

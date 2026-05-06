@@ -297,23 +297,6 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
     }
 
 
-def _terminal_event_outcome(payload: dict[str, Any]) -> tuple[int | None, str] | None:
-    event_type = str(payload.get("event_type") or "")
-    details = _dict_or_none(payload.get("details")) or {}
-    if event_type == "suggestion_copied":
-        outcome = "copied"
-    elif event_type == "suggestion_inserted":
-        outcome = "inserted"
-    elif event_type in {"suggestion_dismissed", "overlay_dismissed"}:
-        outcome = "dismissed"
-    else:
-        return None
-
-    raw_index = details.get("chosen_index")
-    chosen_index = raw_index if isinstance(raw_index, int) else None
-    return chosen_index, outcome
-
-
 def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     settings = gemini.DEFAULT_SETTINGS.copy()
     preferences = envelope.get("preferences") or {}
@@ -389,8 +372,6 @@ def _record_request(
     summary: str | None = None,
     suggestions: list[str] | None = None,
     raw_model_output: str | None = None,
-    chosen_index: int | None = None,
-    outcome: str | None = None,
 ) -> None:
     try:
         _telemetry_store().record_request(
@@ -418,8 +399,6 @@ def _record_request(
                 "summary": summary,
                 "suggestions": suggestions,
                 "raw_model_output": raw_model_output,
-                "chosen_index": chosen_index,
-                "outcome": outcome,
                 "warnings": warnings,
                 "error": error,
             }
@@ -887,20 +866,11 @@ async def tldr_events(
     stored = False
     if _bool_env("TLDR_EVENT_LOGGING", True):
         try:
-            store = _telemetry_store()
-            stored = store.record_event(
+            stored = _telemetry_store().record_event(
                 token_id=token_id,
                 event_type=str(payload["event_type"]),
                 payload=payload,
             )
-            outcome = _terminal_event_outcome(payload)
-            if outcome is not None:
-                chosen_index, outcome_name = outcome
-                stored = store.update_request_outcome(
-                    request_id=str(payload["request_id"]),
-                    chosen_index=chosen_index,
-                    outcome=outcome_name,
-                ) or stored
         except Exception as exc:
             logger.warning(
                 "tldr_event_storage_failed token_id=%s request_id=%s error=%s",
