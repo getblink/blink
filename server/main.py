@@ -16,13 +16,13 @@ from fastapi.responses import StreamingResponse
 
 try:
     from . import gemini
-    from .auth import require_bearer_token
+    from .auth import generate_device_token, require_bearer_token, token_hash_for
     from .cache import ResponseCache
     from .env_loader import load_workspace_env
     from .storage import TelemetryStore
 except ImportError:
     import gemini  # type: ignore[no-redef]
-    from auth import require_bearer_token  # type: ignore[no-redef]
+    from auth import generate_device_token, require_bearer_token, token_hash_for  # type: ignore[no-redef]
     from cache import ResponseCache  # type: ignore[no-redef]
     from env_loader import load_workspace_env  # type: ignore[no-redef]
     from storage import TelemetryStore  # type: ignore[no-redef]
@@ -297,6 +297,23 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
     }
 
 
+def _terminal_event_outcome(payload: dict[str, Any]) -> tuple[int | None, str] | None:
+    event_type = str(payload.get("event_type") or "")
+    details = _dict_or_none(payload.get("details")) or {}
+    if event_type == "suggestion_copied":
+        outcome = "copied"
+    elif event_type == "suggestion_inserted":
+        outcome = "inserted"
+    elif event_type in {"suggestion_dismissed", "overlay_dismissed"}:
+        outcome = "dismissed"
+    else:
+        return None
+
+    raw_index = details.get("chosen_index")
+    chosen_index = raw_index if isinstance(raw_index, int) else None
+    return chosen_index, outcome
+
+
 def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     settings = gemini.DEFAULT_SETTINGS.copy()
     preferences = envelope.get("preferences") or {}
@@ -369,6 +386,11 @@ def _record_request(
     input_hash: str,
     warnings: list[str],
     error: str | None,
+    summary: str | None = None,
+    suggestions: list[str] | None = None,
+    raw_model_output: str | None = None,
+    chosen_index: int | None = None,
+    outcome: str | None = None,
 ) -> None:
     try:
         _telemetry_store().record_request(
@@ -393,6 +415,11 @@ def _record_request(
                 "latency_ms": latency_ms,
                 "usage_tokens": usage_tokens,
                 "input_hash": input_hash,
+                "summary": summary,
+                "suggestions": suggestions,
+                "raw_model_output": raw_model_output,
+                "chosen_index": chosen_index,
+                "outcome": outcome,
                 "warnings": warnings,
                 "error": error,
             }
@@ -409,6 +436,57 @@ def _record_request(
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"ok": True, "version": _version()}
+
+
+@app.post("/v1/auth/mint")
+async def mint_device_token(
+    request: Request,
+    token_id: str = Depends(require_bearer_token),
+) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="request body must contain valid JSON",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="request body must be a JSON object",
+        )
+    install_id = str(payload.get("install_id") or "").strip()
+    if not install_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="install_id is required",
+        )
+    if len(install_id) > 128:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="install_id exceeds 128 characters",
+        )
+    plaintext_token = generate_device_token()
+    try:
+        _telemetry_store().mint_device_token(
+            install_id=install_id,
+            token_hash=token_hash_for(plaintext_token),
+        )
+    except Exception as exc:
+        logger.warning(
+            "device_token_mint_failed bootstrap_token_id=%s install_id=%s error=%s",
+            token_id,
+            install_id,
+            _sanitized_error_message(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="device token storage unavailable",
+        ) from exc
+    return {
+        "token": plaintext_token,
+        "token_type": "bearer",
+    }
 
 
 async def _run_tldr_request(
@@ -486,6 +564,8 @@ async def _run_tldr_request(
                 input_hash=input_hash,
                 warnings=cached_warnings,
                 error=None,
+                summary=str(cached.get("tldr") or ""),
+                suggestions=[str(item) for item in cached.get("suggestions") or []],
             )
             return _ok_response(cached, envelope["request_id"], cached_warnings)
 
@@ -531,6 +611,9 @@ async def _run_tldr_request(
                                 input_hash=input_hash,
                                 warnings=warnings,
                                 error=None,
+                                summary=str(data.get("tldr") or ""),
+                                suggestions=[str(item) for item in data.get("suggestions") or []],
+                                raw_model_output=str(data.get("raw") or ""),
                             )
                             data = _ok_response(data, envelope["request_id"], warnings)
                         else:
@@ -557,6 +640,9 @@ async def _run_tldr_request(
                                 input_hash=input_hash,
                                 warnings=warnings,
                                 error=detail,
+                                summary=str(data.get("tldr") or ""),
+                                suggestions=[str(item) for item in data.get("suggestions") or []],
+                                raw_model_output=str(data.get("raw") or ""),
                             )
                             data = {
                                 "request_id": envelope["request_id"],
@@ -657,6 +743,9 @@ async def _run_tldr_request(
             input_hash=input_hash,
             warnings=warnings,
             error=None,
+            summary=str(payload.get("tldr") or ""),
+            suggestions=[str(item) for item in payload.get("suggestions") or []],
+            raw_model_output=str(payload.get("raw") or ""),
         )
         return _ok_response(payload, envelope["request_id"], warnings)
 
@@ -672,6 +761,7 @@ async def _run_tldr_request(
             input_hash=input_hash,
             warnings=warnings,
             error=detail,
+            raw_model_output=str(payload.get("raw") or ""),
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -689,6 +779,9 @@ async def _run_tldr_request(
         input_hash=input_hash,
         warnings=warnings,
         error=detail,
+        summary=str(payload.get("tldr") or ""),
+        suggestions=[str(item) for item in payload.get("suggestions") or []],
+        raw_model_output=str(payload.get("raw") or ""),
     )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -794,11 +887,20 @@ async def tldr_events(
     stored = False
     if _bool_env("TLDR_EVENT_LOGGING", True):
         try:
-            stored = _telemetry_store().record_event(
+            store = _telemetry_store()
+            stored = store.record_event(
                 token_id=token_id,
                 event_type=str(payload["event_type"]),
                 payload=payload,
             )
+            outcome = _terminal_event_outcome(payload)
+            if outcome is not None:
+                chosen_index, outcome_name = outcome
+                stored = store.update_request_outcome(
+                    request_id=str(payload["request_id"]),
+                    chosen_index=chosen_index,
+                    outcome=outcome_name,
+                ) or stored
         except Exception as exc:
             logger.warning(
                 "tldr_event_storage_failed token_id=%s request_id=%s error=%s",

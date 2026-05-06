@@ -20,6 +20,13 @@ final class SuggestionsPanel: NSPanel {
         if onLocalKeyDown?(event) == true {
             return
         }
+        // Swallow unhandled keys while the panel is the key window so stray
+        // characters don't beep via NSResponder's default chain or leak past
+        // the modal. When the panel isn't key (e.g. loading or collecting
+        // states), preserve the original passthrough behavior.
+        if isKeyWindow {
+            return
+        }
         super.keyDown(with: event)
     }
 }
@@ -541,6 +548,16 @@ final class SuggestionsOverlay: NSObject {
             panel.makeFirstResponder(nil)
             applyCustomInputFocusState(focused: false, animated: false)
             customInputField?.onFocusChanged?(false)
+            // Take key status only once a real summary is on screen so the
+            // panel's local key handler swallows stray keys (otherwise "h"
+            // typed during the ready state leaks to the source app). The
+            // panel uses `.nonactivatingPanel`, so becoming key does not
+            // change the active app — only key routing. While loading, we
+            // wait until updateSummary fires so the user can keep typing in
+            // the source app during the request round-trip.
+            if !isLoading {
+                panel.makeKey()
+            }
         } else {
             // Collecting state: stay non-activating so the source app
             // remains frontmost and subsequent capture presses still see
@@ -612,6 +629,10 @@ final class SuggestionsOverlay: NSObject {
         let wasLoading = isLoadingState
         if wasLoading {
             tearDownLoadingState()
+            // Streaming-loading path: now that the real summary is on screen,
+            // promote the panel to key so its local handler intercepts stray
+            // keystrokes. Mirrors the immediate-show path in `show(...)`.
+            panel.makeKey()
         }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
         let labelWidth = Layout.panelWidth - 48

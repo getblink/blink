@@ -1236,6 +1236,36 @@ class TldrOnceTests(unittest.TestCase):
             else:
                 os.environ["TLDR_DISABLE_PROXY"] = old_disable
 
+    def test_proxy_settings_prefers_device_token_file(self) -> None:
+        old_proxy_url = os.environ.get("BLINK_PROXY_URL")
+        old_proxy_token = os.environ.get("BLINK_PROXY_TOKEN")
+        old_disable = os.environ.get("TLDR_DISABLE_PROXY")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                device_token = Path(tmp) / "device_token"
+                device_token.write_text("tldr_dt_device\n", encoding="utf-8")
+                os.environ["BLINK_PROXY_URL"] = "https://proxy.example"
+                os.environ["BLINK_PROXY_TOKEN"] = "bootstrap"
+                os.environ.pop("TLDR_DISABLE_PROXY", None)
+
+                with mock.patch.object(tldr_once, "DEVICE_TOKEN_PATH", device_token):
+                    settings = tldr_once.proxy_settings_from_env()
+
+            self.assertEqual(settings, {"url": "https://proxy.example", "token": "tldr_dt_device"})
+        finally:
+            if old_proxy_url is None:
+                os.environ.pop("BLINK_PROXY_URL", None)
+            else:
+                os.environ["BLINK_PROXY_URL"] = old_proxy_url
+            if old_proxy_token is None:
+                os.environ.pop("BLINK_PROXY_TOKEN", None)
+            else:
+                os.environ["BLINK_PROXY_TOKEN"] = old_proxy_token
+            if old_disable is None:
+                os.environ.pop("TLDR_DISABLE_PROXY", None)
+            else:
+                os.environ["TLDR_DISABLE_PROXY"] = old_disable
+
     def test_main_enriches_proxy_request_with_stateful_context(self) -> None:
         old_proxy_url = os.environ.get("BLINK_PROXY_URL")
         old_proxy_token = os.environ.get("BLINK_PROXY_TOKEN")

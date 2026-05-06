@@ -25,7 +25,8 @@ Returns:
 
 Headers:
 
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <device token>`; legacy shared tokens are accepted
+  only while `BLINK_LEGACY_TOKEN_ALLOWED=true`
 
 Body:
 
@@ -61,6 +62,26 @@ Accepts client behavior and diagnostics events keyed by `request_id` and
 returns `{"ok": true, "stored": <bool>}` so the client can tell whether the
 event actually reached durable storage. `stored` is `false` when logging is
 disabled, the database is unavailable, or telemetry storage is not configured.
+Terminal suggestion events also denormalize outcome metadata onto
+`tldr_requests`: `suggestion_copied`, `suggestion_inserted`, and
+`suggestion_dismissed` set `outcome` and optional `chosen_index`.
+
+### `POST /v1/auth/mint`
+
+Mint a per-install device token. This endpoint accepts only the bootstrap token:
+
+```json
+{"install_id": "anonymous-install-uuid"}
+```
+
+Success response:
+
+```json
+{"token": "tldr_dt_...", "token_type": "bearer"}
+```
+
+The plaintext token is returned once. The server stores only its SHA-256 hash,
+revokes any prior token for that `install_id`, and rate-limits minting per IP.
 
 ### `POST /tldr`
 
@@ -91,7 +112,10 @@ WHERE tldr_requests.install_id = $1
 ORDER BY tldr_requests.created_at, tldr_events.created_at;
 ```
 
-Deleting `~/.tldr/install_id` on the client rotates the identifier.
+The shipped app also stores its minted bearer token at `~/.tldr/device_token`
+with mode `0600`. Deleting `~/.tldr/device_token` causes the app to mint a
+replacement token on the next launch. Deleting `~/.tldr/install_id` rotates the
+anonymous identifier.
 
 ## Environment
 
@@ -99,18 +123,22 @@ Copy [`server/.env.example`](.env.example) into the repo-root `.env` or
 `.env.local` for local dev. Required variables:
 
 - `GEMINI_API_KEY` — Railway secret or local dev key
-- `BLINK_API_TOKENS` — comma-separated accepted bearer tokens
+- `BLINK_BOOTSTRAP_TOKEN` — accepted only by `/v1/auth/mint`
+- `BLINK_API_TOKENS` — comma-separated legacy bearer tokens for the deprecation window
+- `BLINK_LEGACY_TOKEN_ALLOWED` — defaults to `true`; set `false` after legacy builds age out
 - `DATABASE_URL` — optional Postgres telemetry storage
 - `REDIS_URL` — optional Redis cache endpoint
 - `TLDR_ALLOWED_MODELS` — comma-separated server allowlist
 - `TLDR_EVENT_LOGGING` — defaults to `true`
 - `TLDR_CACHE_RESPONSES` — defaults to `true`
 - `TLDR_RESPONSE_CACHE_TTL_SECONDS` — defaults to `86400`
+- `TLDR_MINT_RATE_LIMIT_PER_MINUTE` — defaults to `5` per client IP
 
 Client-side variables used by the local TLDR runner and future Swift app:
 
 - `BLINK_PROXY_URL` — base URL of this server, for example `http://localhost:8000`
-- `BLINK_PROXY_TOKEN` — one tester token from `BLINK_API_TOKENS`
+- `BLINK_PROXY_TOKEN` — bootstrap token for packaged builds; device tokens in
+  `~/.tldr/device_token` take precedence once minted
 
 ## Local development
 
