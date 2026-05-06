@@ -133,6 +133,9 @@ final class SuggestionsOverlay: NSObject {
         static let thumbStripHeight: CGFloat = 56
         static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
+        static let summaryHeaderBottomGap: CGFloat = 4
+        static let bottomHintHeight: CGFloat = 18
+        static let bottomHintTopGap: CGFloat = 14
         static let cardPaddingX: CGFloat = 24
         static let suggestionCollapsedHeight: CGFloat = 62
         static let customInputHeight: CGFloat = 62
@@ -190,6 +193,9 @@ final class SuggestionsOverlay: NSObject {
     private var customInputField: CustomReplyField?
     private var customInputHintLabel: NSTextField?
     private var customInputTint: NSView?
+    private var bottomHintLabel: NSTextField?
+    private var bottomHintBaseFrame: NSRect = .zero
+    private var showsTldrHeader: Bool = false
     private var suggestionClickTargets: [SuggestionCardClickTarget] = []
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
@@ -218,7 +224,9 @@ final class SuggestionsOverlay: NSObject {
             tldr: tldr,
             suggestions: suggestions,
             showsCustomInput: true,
-            hintText: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss"
+            hintText: nil,
+            bottomHintText: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss",
+            showsTldrHeader: true
         )
     }
 
@@ -228,6 +236,7 @@ final class SuggestionsOverlay: NSObject {
             suggestions: [],
             showsCustomInput: false,
             hintText: nil,
+            showsTldrHeader: true,
             isLoading: true
         )
     }
@@ -257,6 +266,8 @@ final class SuggestionsOverlay: NSObject {
         suggestions: [String],
         showsCustomInput: Bool,
         hintText: String?,
+        bottomHintText: String? = nil,
+        showsTldrHeader: Bool = false,
         isLoading: Bool = false,
         thumbnails: [NSImage] = [],
         flashLastThumbnail: Bool = false,
@@ -265,7 +276,10 @@ final class SuggestionsOverlay: NSObject {
         close()
 
         let visibleSuggestions = Array(suggestions.prefix(3))
-        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
+        // Loading state keeps the medium weight for visual contrast with the
+        // pulsing dot; the actual TLDR body is regular weight so the bold
+        // "tl;dr" label sits above it as a header.
+        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: isLoading ? .medium : .regular)
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let contentWidth = Layout.panelWidth
@@ -273,11 +287,13 @@ final class SuggestionsOverlay: NSObject {
         let hintBlockHeight = hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap
         let thumbBlockHeight = thumbnails.isEmpty ? 0 : Layout.thumbStripHeight + Layout.summaryHintGap
         let summaryTextY = Layout.summaryBottomInset + hintBlockHeight + thumbBlockHeight
+        let useHeader = showsTldrHeader && !isLoading
+        let bodyBoldPrefix = useHeader ? "tl;dr" : nil
         let summaryHeight = isLoading
             ? Layout.loadingMinHeight
             : max(
                 Layout.summaryMinHeight,
-                measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing)
+                measureHeight(tldr, width: summaryLabelWidth, font: summaryFont, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
                     + summaryTextY
                     + Layout.summaryTopInset
             )
@@ -296,7 +312,10 @@ final class SuggestionsOverlay: NSObject {
             ? (visibleSuggestions.isEmpty ? Layout.customInputHeight : Layout.suggestionGap + Layout.customInputHeight)
             : 0
         let stackHeight = suggestionStackHeight + customStackHeight
-        let contentHeight = summaryHeight + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
+        let bottomHintBlockHeight = bottomHintText == nil ? 0 : Layout.bottomHintTopGap + Layout.bottomHintHeight
+        let contentHeight = summaryHeight
+            + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
+            + bottomHintBlockHeight
         let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
         let panelHeight = contentHeight + Layout.shadowBleed * 2
 
@@ -447,7 +466,8 @@ final class SuggestionsOverlay: NSObject {
                 text: tldr,
                 font: summaryFont,
                 color: .labelColor,
-                lineSpacing: Layout.summaryLineSpacing
+                lineSpacing: Layout.summaryLineSpacing,
+                boldPrefix: bodyBoldPrefix
             )
         }
         summary.content.addSubview(summaryLabel)
@@ -509,6 +529,32 @@ final class SuggestionsOverlay: NSObject {
             custom = nil
         }
 
+        let bottomHint: NSTextField?
+        let bottomHintFrame: NSRect
+        if let bottomHintText {
+            y -= Layout.bottomHintTopGap
+            y -= Layout.bottomHintHeight
+            bottomHintFrame = NSRect(
+                x: contentX + 24,
+                y: y,
+                width: contentWidth - 48,
+                height: Layout.bottomHintHeight
+            )
+            let hint = label(
+                frame: bottomHintFrame,
+                text: bottomHintText,
+                font: hintFont,
+                color: .tertiaryLabelColor,
+                singleLine: true
+            )
+            hint.alignment = .center
+            content.addSubview(hint)
+            bottomHint = hint
+        } else {
+            bottomHint = nil
+            bottomHintFrame = .zero
+        }
+
         self.panel = panel
         self.contentView = content
         self.basePanelHeight = panelHeight
@@ -523,6 +569,9 @@ final class SuggestionsOverlay: NSObject {
         self.customInputField = custom?.field
         self.customInputHintLabel = custom?.enterHint
         self.customInputTint = custom?.tint
+        self.bottomHintLabel = bottomHint
+        self.bottomHintBaseFrame = bottomHintFrame
+        self.showsTldrHeader = showsTldrHeader
         panel.customReplyField = custom?.field
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
@@ -634,7 +683,8 @@ final class SuggestionsOverlay: NSObject {
             // keystrokes. Mirrors the immediate-show path in `show(...)`.
             panel.makeKey()
         }
-        let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
+        let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
+        let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let labelWidth = Layout.panelWidth - 48
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
@@ -642,7 +692,7 @@ final class SuggestionsOverlay: NSObject {
         let floor = wasLoading ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
             floor,
-            measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing)
+            measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
                 + summaryTextY
                 + Layout.summaryTopInset
         )
@@ -697,7 +747,8 @@ final class SuggestionsOverlay: NSObject {
             font: font,
             color: .labelColor,
             lineSpacing: Layout.summaryLineSpacing,
-            singleLine: false
+            singleLine: false,
+            boldPrefix: bodyBoldPrefix
         )
     }
 
@@ -716,10 +767,16 @@ final class SuggestionsOverlay: NSObject {
         customInputField = nil
         customInputHintLabel = nil
         customInputTint = nil
+        bottomHintLabel?.removeFromSuperview()
+        bottomHintLabel = nil
         panel.customReplyField = nil
         expandedSuggestionIndex = nil
 
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
+        let bottomHintText = showsTldrHeader
+            ? "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss"
+            : nil
         let contentWidth = Layout.panelWidth
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
         let expandedHeights = visibleSuggestions.map { text in
@@ -736,9 +793,10 @@ final class SuggestionsOverlay: NSObject {
             ? Layout.customInputHeight
             : Layout.suggestionGap + Layout.customInputHeight
         let stackHeight = suggestionStackHeight + customStackHeight
+        let bottomHintBlockHeight = bottomHintText == nil ? 0 : Layout.bottomHintTopGap + Layout.bottomHintHeight
 
         let summaryHeight = summaryCard.frame.height
-        let contentHeight = summaryHeight + Layout.sectionGap + stackHeight
+        let contentHeight = summaryHeight + Layout.sectionGap + stackHeight + bottomHintBlockHeight
         let newPanelWidth = panel.frame.width
         let newPanelHeight = contentHeight + Layout.shadowBleed * 2
 
@@ -810,12 +868,40 @@ final class SuggestionsOverlay: NSObject {
         let customCard = makeCustomInputCard(frame: customFrame, font: suggestionFont)
         contentView.addSubview(customCard.outer)
 
+        let bottomHint: NSTextField?
+        let bottomHintFrame: NSRect
+        if let bottomHintText {
+            y -= Layout.bottomHintTopGap
+            y -= Layout.bottomHintHeight
+            bottomHintFrame = NSRect(
+                x: contentX + 24,
+                y: y,
+                width: contentWidth - 48,
+                height: Layout.bottomHintHeight
+            )
+            let hint = label(
+                frame: bottomHintFrame,
+                text: bottomHintText,
+                font: hintFont,
+                color: .tertiaryLabelColor,
+                singleLine: true
+            )
+            hint.alignment = .center
+            contentView.addSubview(hint)
+            bottomHint = hint
+        } else {
+            bottomHint = nil
+            bottomHintFrame = .zero
+        }
+
         self.suggestionCards = cards
         self.customInputCard = customCard.outer
         self.customInputBaseFrame = customFrame
         self.customInputField = customCard.field
         self.customInputHintLabel = customCard.enterHint
         self.customInputTint = customCard.tint
+        self.bottomHintLabel = bottomHint
+        self.bottomHintBaseFrame = bottomHintFrame
         panel.customReplyField = customCard.field
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
@@ -918,6 +1004,11 @@ final class SuggestionsOverlay: NSObject {
                 current.origin.y += panelDrop
                 customInputCard.frame = current
             }
+            if let bottomHintLabel {
+                var current = bottomHintLabel.frame
+                current.origin.y += panelDrop
+                bottomHintLabel.frame = current
+            }
         }
 
         NSAnimationContext.runAnimationGroup { context in
@@ -1013,6 +1104,9 @@ final class SuggestionsOverlay: NSObject {
             if let customInputCard {
                 customInputCard.animator().frame = customInputBaseFrame
             }
+            if let bottomHintLabel {
+                bottomHintLabel.animator().frame = bottomHintBaseFrame
+            }
         }
 
         currentHeightDelta = heightDelta
@@ -1070,6 +1164,9 @@ final class SuggestionsOverlay: NSObject {
             if let customInputCard {
                 customInputCard.animator().frame = customInputBaseFrame
             }
+            if let bottomHintLabel {
+                bottomHintLabel.animator().frame = bottomHintBaseFrame
+            }
         }
         currentHeightDelta = 0
         expandedSuggestionIndex = nil
@@ -1095,6 +1192,9 @@ final class SuggestionsOverlay: NSObject {
         customInputField = nil
         customInputHintLabel = nil
         customInputTint = nil
+        bottomHintLabel = nil
+        bottomHintBaseFrame = .zero
+        showsTldrHeader = false
         expandedSuggestionIndex = nil
         currentHeightDelta = 0
         hasPlayedSuggestionArrival = false
@@ -1173,7 +1273,7 @@ final class SuggestionsOverlay: NSObject {
         let messageLabel = label(
             frame: NSRect(x: 50, y: 11, width: width - 72, height: 22),
             text: message,
-            font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            font: NSFont.systemFont(ofSize: 13, weight: .regular),
             color: .labelColor,
             singleLine: true
         )
@@ -1391,7 +1491,7 @@ final class SuggestionsOverlay: NSObject {
                 height: Layout.suggestionNumberHeight
             ),
             text: "\(index)",
-            font: NSFont.systemFont(ofSize: Layout.suggestionFontSize, weight: .semibold),
+            font: NSFont.systemFont(ofSize: Layout.suggestionFontSize, weight: .medium),
             color: .secondaryLabelColor,
             singleLine: true
         )
@@ -1475,7 +1575,7 @@ final class SuggestionsOverlay: NSObject {
                 height: Layout.suggestionNumberHeight
             ),
             text: "4",
-            font: NSFont.systemFont(ofSize: Layout.suggestionFontSize, weight: .semibold),
+            font: NSFont.systemFont(ofSize: Layout.suggestionFontSize, weight: .medium),
             color: .secondaryLabelColor,
             singleLine: true
         )
@@ -1668,7 +1768,8 @@ final class SuggestionsOverlay: NSObject {
         font: NSFont,
         color: NSColor,
         lineSpacing: CGFloat = 0,
-        singleLine: Bool = false
+        singleLine: Bool = false,
+        boldPrefix: String? = nil
     ) -> NSTextField {
         let label = NSTextField(labelWithString: "")
         label.frame = frame
@@ -1682,7 +1783,8 @@ final class SuggestionsOverlay: NSObject {
             font: font,
             color: color,
             lineSpacing: lineSpacing,
-            singleLine: singleLine
+            singleLine: singleLine,
+            boldPrefix: boldPrefix
         )
         return label
     }
@@ -1693,12 +1795,24 @@ final class SuggestionsOverlay: NSObject {
         font: NSFont,
         color: NSColor,
         lineSpacing: CGFloat,
-        singleLine: Bool
+        singleLine: Bool,
+        boldPrefix: String? = nil
     ) {
         label.font = font
         label.textColor = color
         label.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         label.usesSingleLineMode = singleLine
+        if boldPrefix != nil {
+            label.attributedStringValue = makeBodyAttributedString(
+                text: text,
+                font: font,
+                color: color,
+                lineSpacing: lineSpacing,
+                singleLine: singleLine,
+                boldPrefix: boldPrefix
+            )
+            return
+        }
         guard lineSpacing > 0 else {
             label.stringValue = text
             return
@@ -1720,18 +1834,31 @@ final class SuggestionsOverlay: NSObject {
         _ text: String,
         width: CGFloat,
         font: NSFont,
-        lineSpacing: CGFloat = 0
+        lineSpacing: CGFloat = 0,
+        boldPrefix: String? = nil
     ) -> CGFloat {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.lineSpacing = lineSpacing
-        let attributed = NSAttributedString(
-            string: text,
-            attributes: [
-                .font: font,
-                .paragraphStyle: paragraph,
-            ]
-        )
+        let attributed: NSAttributedString
+        if boldPrefix != nil {
+            attributed = makeBodyAttributedString(
+                text: text,
+                font: font,
+                color: .labelColor,
+                lineSpacing: lineSpacing,
+                singleLine: false,
+                boldPrefix: boldPrefix
+            )
+        } else {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            paragraph.lineSpacing = lineSpacing
+            attributed = NSAttributedString(
+                string: text,
+                attributes: [
+                    .font: font,
+                    .paragraphStyle: paragraph,
+                ]
+            )
+        }
         let cell = NSTextFieldCell()
         cell.isBezeled = false
         cell.isEditable = false
@@ -1743,6 +1870,44 @@ final class SuggestionsOverlay: NSObject {
         cell.attributedStringValue = attributed
         let size = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 1_000_000))
         return ceil(size.height)
+    }
+
+    private func makeBodyAttributedString(
+        text: String,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat,
+        singleLine: Bool,
+        boldPrefix: String?
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        if let boldPrefix {
+            let headerFont = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
+            let headerPara = NSMutableParagraphStyle()
+            headerPara.lineBreakMode = .byWordWrapping
+            headerPara.lineSpacing = lineSpacing
+            headerPara.paragraphSpacing = Layout.summaryHeaderBottomGap
+            result.append(NSAttributedString(
+                string: boldPrefix + "\n",
+                attributes: [
+                    .font: headerFont,
+                    .foregroundColor: color,
+                    .paragraphStyle: headerPara,
+                ]
+            ))
+        }
+        let bodyPara = NSMutableParagraphStyle()
+        bodyPara.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        bodyPara.lineSpacing = lineSpacing
+        result.append(NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: bodyPara,
+            ]
+        ))
+        return result
     }
 
     private func collapsedSingleLineText(_ text: String, width: CGFloat, font: NSFont) -> String {
@@ -1850,7 +2015,7 @@ private enum CopyConfirmationPill {
         let labelX: CGFloat = 18 + iconSize + 10
         let labelH: CGFloat = 20
         let labelField = NSTextField(labelWithString: "Copied")
-        labelField.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        labelField.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         labelField.textColor = .white
         labelField.frame = NSRect(x: labelX, y: (pillHeight - labelH) / 2, width: pillWidth - labelX - 18, height: labelH)
         labelField.isEditable = false
