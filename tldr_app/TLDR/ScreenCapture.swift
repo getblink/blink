@@ -106,28 +106,32 @@ enum ScreenCapture {
             throw CaptureError.noCapturableWindow(ownerName: ownerName)
         }
 
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-        let config = SCStreamConfiguration()
-        // Size the capture buffer to the window's pixel dimensions at the
-        // owning display's backing scale so we don't downsample.
         let scale = await MainActor.run { backingScaleFactor(for: window.frame) }
-        config.width = max(1, Int(window.frame.width) * scale)
-        config.height = max(1, Int(window.frame.height) * scale)
-        config.showsCursor = false
-        config.scalesToFit = true
 
-        let cgImage: CGImage
-        do {
-            cgImage = try await SCScreenshotManager.captureImage(
-                contentFilter: filter, configuration: config
-            )
-        } catch {
-            if isPermissionDenialError(error) {
-                throw CaptureError.permissionDenied
+        if shouldUseDisplayFallback(windowFrame: window.frame, scale: scale),
+           let display = displayForWindow(window, in: content) {
+            do {
+                let pngData = try await captureDisplayPNG(display)
+                await MainActor.run {
+                    CaptureConfirmationOverlay.flash(frame: display.frame)
+                }
+                return Capture(
+                    pngData: pngData,
+                    capturedAt: startedAt,
+                    windowFramePoints: display.frame,
+                    windowID: window.windowID,
+                    shareableContent: content
+                )
+            } catch {
+                if isPermissionDenialError(error) {
+                    throw CaptureError.permissionDenied
+                }
+                // If the full-display fallback is unavailable for this
+                // surface, keep the older window path as a last resort.
             }
-            throw CaptureError.underlying(error)
         }
 
+        let cgImage = try await captureWindowImage(window, scale: scale)
         guard let pngData = cgImageToPNG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
@@ -141,6 +145,17 @@ enum ScreenCapture {
             windowID: window.windowID,
             shareableContent: content
         )
+    }
+
+    static func shouldUseDisplayFallback(windowFrame: CGRect, scale: Int) -> Bool {
+        let pixelWidth = windowFrame.width * CGFloat(max(1, scale))
+        let pixelHeight = windowFrame.height * CGFloat(max(1, scale))
+        guard pixelWidth > 0, pixelHeight > 0 else { return false }
+        // Full-screen apps can surface a thin title/toolbar strip through
+        // ScreenCaptureKit. Capturing that as the "window" gives TLDR a
+        // 3000x64 image and highlights only the app chrome, so promote very
+        // wide, very short captures to display capture.
+        return pixelHeight < 180 && (pixelWidth / pixelHeight) >= 8
     }
 
     /// Sync bridge for call sites that aren't async-native. Blocks the caller's
@@ -264,6 +279,80 @@ enum ScreenCapture {
         }
 
         return candidates[bestIndex]
+    }
+
+    private static func captureWindowImage(_ window: SCWindow, scale: Int) async throws -> CGImage {
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let config = SCStreamConfiguration()
+        // Size the capture buffer to the window's pixel dimensions at the
+        // owning display's backing scale so we don't downsample.
+        config.width = max(1, Int(window.frame.width) * scale)
+        config.height = max(1, Int(window.frame.height) * scale)
+        config.showsCursor = false
+        config.scalesToFit = true
+
+        do {
+            return try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+        } catch {
+            if isPermissionDenialError(error) {
+                throw CaptureError.permissionDenied
+            }
+            throw CaptureError.underlying(error)
+        }
+    }
+
+    private static func captureDisplayPNG(_ display: SCDisplay) async throws -> Data {
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        if #available(macOS 14.2, *) {
+            filter.includeMenuBar = false
+        }
+        let scale = await MainActor.run { backingScaleFactor(for: display.frame) }
+        let config = SCStreamConfiguration()
+        config.width = max(1, display.width * scale)
+        config.height = max(1, display.height * scale)
+        config.showsCursor = false
+        config.scalesToFit = false
+
+        let cgImage: CGImage
+        do {
+            cgImage = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+        } catch {
+            if isPermissionDenialError(error) {
+                throw CaptureError.permissionDenied
+            }
+            throw CaptureError.underlying(error)
+        }
+        guard let pngData = cgImageToPNG(cgImage) else {
+            throw CaptureError.imageEncodingFailed
+        }
+        return pngData
+    }
+
+    private static func displayForWindow(_ window: SCWindow, in content: SCShareableContent) -> SCDisplay? {
+        guard !content.displays.isEmpty else { return nil }
+        let center = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        var bestDisplay = content.displays[0]
+        var bestArea: CGFloat = -1
+        var bestContainsCenter = false
+        for display in content.displays {
+            let intersection = display.frame.intersection(window.frame)
+            let area = intersection.isNull ? 0 : intersection.width * intersection.height
+            let containsCenter = display.frame.contains(center)
+            let isBetter = (containsCenter && !bestContainsCenter)
+                || (containsCenter == bestContainsCenter && area > bestArea)
+            if isBetter {
+                bestDisplay = display
+                bestArea = area
+                bestContainsCenter = containsCenter
+            }
+        }
+        return bestDisplay
     }
 
     @MainActor

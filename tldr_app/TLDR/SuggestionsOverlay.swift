@@ -300,20 +300,19 @@ final class SuggestionsOverlay: NSObject {
         )
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
-        // Borderless only — no `.nonactivatingPanel`. AppKit draws an extra
-        // glass outline around `NSGlassEffectView` in the
-        // non-activating-panel context (see scratchpad/tldr_reply/overlay.py).
-        // Trade-off: TLDR briefly steals focus from the source app; we
-        // capture and restore the previous frontmost on close so Cmd+V still
-        // lands in the right place.
-        let style: NSWindow.StyleMask = [.borderless]
+        let style: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
         let panel = SuggestionsPanel(
             contentRect: frame,
             styleMask: style,
             backing: .buffered,
             defer: false
         )
-        panel.level = .statusBar
+        // Full-screen apps live in their own Space. A normal status-bar-level
+        // panel can be ordered successfully but still sit behind the full-screen
+        // window, so match the transient capture/celebration panels: join all
+        // Spaces as a full-screen auxiliary and use a high transient level.
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.isFloatingPanel = true
         panel.worksWhenModal = true
         panel.hidesOnDeactivate = false
@@ -525,10 +524,9 @@ final class SuggestionsOverlay: NSObject {
 
         if activates {
             // Remember the app the user was working in so we can restore
-            // focus when the overlay closes — the panel needs to activate to
-            // render NSGlassEffectView without an AppKit outline AND to
-            // receive keystrokes via AppKit when the custom-input field is
-            // focused.
+            // focus when the overlay closes after paste/copy actions. The
+            // panel itself stays non-activating so it can sit above full-screen
+            // Spaces without pulling the user out of the source app.
             let frontmost = NSWorkspace.shared.frontmostApplication
             let ownPID = NSRunningApplication.current.processIdentifier
             if let frontmost, frontmost.processIdentifier != ownPID {
@@ -536,26 +534,11 @@ final class SuggestionsOverlay: NSObject {
             } else {
                 previousFrontmost = nil
             }
-            // We need an unconditional activation here so the panel becomes
-            // key on first show — otherwise the user has to click before the
-            // keyboard works.
-            NSApp.activate(ignoringOtherApps: true)
-            panel.makeKeyAndOrderFront(nil)
-            // When the panel becomes key, AppKit auto-selects the first
-            // editable view as first responder — that's our
-            // `CustomReplyField`, which would flip `customInputActive` to
-            // true and route 1/2/3 into the text field instead of
-            // triggering suggestion expansion. Clear focus explicitly so
-            // the panel itself owns the responder chain until the user
-            // presses 4 or clicks the field.
+            panel.orderFrontRegardless()
+            // Keep the custom field visually unfocused on open; global hotkey
+            // routing handles 1/2/3/Return/Esc while the source app remains
+            // frontmost.
             panel.makeFirstResponder(nil)
-            // Belt-and-suspenders: AppKit's auto-promote-then-resign of the
-            // CustomReplyField on `makeKeyAndOrderFront` can leave the hint
-            // visible and the field/number lifted (`resignFirstResponder`
-            // doesn't reliably fire `onFocusChanged?(false)` when the
-            // field editor was the actual responder). Snap to the
-            // unfocused state so the panel always opens with #4 centered
-            // and hint hidden.
             applyCustomInputFocusState(focused: false, animated: false)
             customInputField?.onFocusChanged?(false)
         } else {
@@ -613,6 +596,13 @@ final class SuggestionsOverlay: NSObject {
         )
     }
 
+    private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
+        let screenFrame = panel.screen?.frame
+            ?? NSScreen.main?.frame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return screenFrame.midY - height / 2
+    }
+
     func updateSummary(_ text: String) {
         guard let panel,
               let contentView,
@@ -640,11 +630,15 @@ final class SuggestionsOverlay: NSObject {
             let newPanelHeight = basePanelHeight + summaryDelta
             let newFrame = NSRect(
                 x: panel.frame.origin.x,
-                y: basePanelTopY - newPanelHeight,
+                y: centeredOriginY(for: panel, height: newPanelHeight),
                 width: panel.frame.width,
                 height: newPanelHeight
             )
             panel.setFrame(newFrame, display: true, animate: false)
+            // Re-anchor basePanelTopY to the actual post-clamp top edge so any
+            // later expand/collapse uses the recentered top, not the stale
+            // loading-pill top.
+            basePanelTopY = panel.frame.maxY
             contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
             summaryCard.frame = NSRect(
                 x: summaryBaseFrame.origin.x,
@@ -729,7 +723,7 @@ final class SuggestionsOverlay: NSObject {
 
         let newFrame = NSRect(
             x: panel.frame.origin.x,
-            y: basePanelTopY - newPanelHeight,
+            y: centeredOriginY(for: panel, height: newPanelHeight),
             width: newPanelWidth,
             height: newPanelHeight
         )
@@ -803,6 +797,7 @@ final class SuggestionsOverlay: NSObject {
         self.customInputTint = customCard.tint
         panel.customReplyField = customCard.field
         self.basePanelHeight = newPanelHeight
+        self.basePanelTopY = panel.frame.maxY
         self.currentHeightDelta = 0
         if !hasPlayedSuggestionArrival, !cards.isEmpty {
             hasPlayedSuggestionArrival = true

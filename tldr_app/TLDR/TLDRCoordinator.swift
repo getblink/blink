@@ -655,7 +655,7 @@ final class TLDRCoordinator {
             }
         } catch {
             let wasDismissed = DispatchQueue.main.sync {
-                self.currentRequestID != requestID && self.currentRequestID != nil
+                self.currentRequestID != requestID
             }
             if wasDismissed {
                 return
