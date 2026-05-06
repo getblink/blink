@@ -8,6 +8,12 @@ APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$APP_DIR/build"
 CONFIG="${CONFIG:-Release}"
 
+ROOT_ENV="$APP_DIR/../.env"
+if [[ -f "$ROOT_ENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$ROOT_ENV"
+fi
+
 if [[ -f "$SCRIPT_DIR/config.env" ]]; then
     # shellcheck disable=SC1090
     source "$SCRIPT_DIR/config.env"
