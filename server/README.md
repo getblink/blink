@@ -62,9 +62,10 @@ Accepts client behavior and diagnostics events keyed by `request_id` and
 returns `{"ok": true, "stored": <bool>}` so the client can tell whether the
 event actually reached durable storage. `stored` is `false` when logging is
 disabled, the database is unavailable, or telemetry storage is not configured.
-Terminal suggestion events also denormalize outcome metadata onto
-`tldr_requests`: `suggestion_copied`, `suggestion_inserted`, and
-`suggestion_dismissed` set `outcome` and optional `chosen_index`.
+Outcome (`copied` / `inserted` / `dismissed` / `user_typed` / `paste_failed`)
+and `chosen_index` are derived from the latest `run_completed` event for
+each request via the `tldr_requests_with_outcome` view; the events handler
+itself does not mutate `tldr_requests`.
 
 ### `POST /v1/auth/mint`
 
