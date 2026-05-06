@@ -15,6 +15,8 @@ final class MenubarController: NSObject {
     private var modelObserver: AnyCancellable?
     private var soundsObserver: AnyCancellable?
     private var soundsMenuItem: NSMenuItem?
+    private var nudgesObserver: AnyCancellable?
+    private var nudgesMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private weak var updaterController: SPUStandardUpdaterController?
     private var thinkingTimer: Timer?
@@ -62,6 +64,33 @@ final class MenubarController: NSObject {
                 self?.soundsMenuItem?.state = enabled ? .on : .off
             }
         }
+        nudgesObserver = runtimeStore.$nudgesEnabled.sink { [weak self] enabled in
+            Task { @MainActor in
+                self?.nudgesMenuItem?.state = enabled ? .on : .off
+            }
+        }
+    }
+
+    /// Screen-space frame of the status item button, used to anchor a nudge
+    /// tip just below it. Returns `nil` if the button has no window yet
+    /// (rare — only before `install()` finishes attaching the status item).
+    func statusItemScreenFrame() -> NSRect? {
+        guard let button = statusItem?.button,
+              let window = button.window else { return nil }
+        let inWindow = button.convert(button.bounds, to: nil)
+        return window.convertToScreen(inWindow)
+    }
+
+    /// Brief subtle pulse to draw attention to the menubar icon.
+    /// Bypasses thinking-animation generation so it can run while idle.
+    func pulseForNudge() {
+        guard let button = statusItem?.button else { return }
+        button.wantsLayer = true
+        pulseButtonScale(to: 1.18, duration: 0.18) { [weak self] in
+            Task { @MainActor in
+                self?.pulseButtonScale(to: 1.0, duration: 0.32, completion: nil)
+            }
+        }
     }
 
     func setUpdater(_ updaterController: SPUStandardUpdaterController?) {
@@ -93,6 +122,12 @@ final class MenubarController: NSObject {
         soundsItem.state = runtimeStore.soundsEnabled ? .on : .off
         soundsMenuItem = soundsItem
         menu.addItem(soundsItem)
+        let nudgesItem = NSMenuItem(title: "Nudges", action: #selector(toggleNudges(_:)), keyEquivalent: "")
+        nudgesItem.target = self
+        nudgesItem.state = runtimeStore.nudgesEnabled ? .on : .off
+        nudgesItem.toolTip = "Briefly remind you to use TLDR when you're shuttling between apps"
+        nudgesMenuItem = nudgesItem
+        menu.addItem(nudgesItem)
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         updateItem.target = self
         updateItem.isEnabled = updaterController != nil
@@ -179,6 +214,10 @@ final class MenubarController: NSObject {
 
     @objc private func toggleSounds(_ sender: NSMenuItem) {
         runtimeStore.soundsEnabled.toggle()
+    }
+
+    @objc private func toggleNudges(_ sender: NSMenuItem) {
+        runtimeStore.nudgesEnabled.toggle()
     }
 
     @objc private func checkForUpdates(_ sender: NSMenuItem) {

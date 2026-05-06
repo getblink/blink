@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controlWindow: ControlWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: TLDREventClient?
+    private var nudgeCoordinator: NudgeCoordinator?
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
     private var hotkeyDisplay: String = ""
@@ -75,12 +76,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menubar.setUpdater(updaterController)
         }
 
+        let nudges = NudgeCoordinator(
+            runtimeStore: runtimeStore,
+            eventClient: eventClient,
+            hotkeyDisplay: summaryHotkey.displayString,
+            menubarFrame: { [weak menubar] in menubar?.statusItemScreenFrame() },
+            pulseMenubar: { [weak menubar] in menubar?.pulseForNudge() },
+            isCoordinatorBusy: { [weak coordinator] in
+                guard let coordinator else { return true }
+                return coordinator.isOverlayActive
+                    || coordinator.isCustomInputActive
+                    || coordinator.isCollectingActive
+            }
+        )
+        self.nudgeCoordinator = nudges
+        nudges.start()
+
         hotkeys = HotkeyManager(
             summaryHotkey: summaryHotkey,
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
-            onSummarize: { [weak coordinator] in coordinator?.summarizeFrontmostWindow() },
+            onSummarize: { [weak coordinator, weak nudges] in
+                Task { @MainActor in nudges?.noteHotkeyInvoked() }
+                coordinator?.summarizeFrontmostWindow()
+            },
             onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
             onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
@@ -154,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyRetryTimer?.invalidate()
         hotkeyRetryTimer = nil
         hotkeys?.stop()
+        nudgeCoordinator?.stop()
     }
 
     func showPermissionsWindow() {
