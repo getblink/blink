@@ -106,20 +106,83 @@ Optional overrides:
 
 ## Sparkle Releases
 
-TLDR uses Sparkle 2 for prompted updates. Generate the EdDSA key once with
-Sparkle's `generate_keys` tool, store the private key in Keychain, and put the
-public key plus R2 appcast URL in `tldr_app/scripts/config.env`:
+TLDR uses Sparkle 2 for prompted updates. The release flow lives in
+`tldr_app/scripts/release.sh`: it fetches the pinned Python runtime, builds,
+signs, notarizes, packages the DMG, signs the update for Sparkle, writes
+`tldr_app/build/appcast.xml`, and uploads the DMG + appcast to R2. Set
+`TLDR_RELEASE_UPLOAD=0` for a local dry run.
+
+### Cutting a release
+
+1. **Bump the marketing version in `tldr_app/project.yml`** (not `Info.plist`).
+   `xcodegen` regenerates `Info.plist` from `project.yml` on every build, so
+   editing `Info.plist` directly is wiped. The build number is auto-stamped
+   from `git rev-list --count HEAD` and does not need a manual bump.
+
+2. **Make sure release env vars are exported.** The scripts source
+   `tldr_app/scripts/config.env` automatically if it exists; alternatively,
+   export the repo-root `.env` before invoking `release.sh`:
+
+   ```bash
+   set -a && source .env && set +a
+   bash tldr_app/scripts/release.sh
+   ```
+
+3. **First run in a fresh workspace also needs `TLDR_SPARKLE_SIGN_UPDATE`.**
+   `release.sh` validates Sparkle's `sign_update` binary up front, but Sparkle
+   is fetched as a Swift Package during the build that has not happened yet.
+   Either point at a sibling workspace's copy, e.g.:
+
+   ```bash
+   export TLDR_SPARKLE_SIGN_UPDATE=$(ls /Users/$USER/conductor/workspaces/blink/*/tldr_app/build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update 2>/dev/null | head -1)
+   ```
+
+   or pre-resolve dependencies once (`xcodebuild -resolvePackageDependencies
+   -project tldr_app/TLDR.xcodeproj`). Subsequent releases in the same
+   workspace pick up the local copy automatically.
+
+### Required environment
 
 ```bash
-TLDR_SPARKLE_FEED_URL=https://downloads.example.com/tldr/appcast.xml
-TLDR_SPARKLE_PUBLIC_ED_KEY=...
-TLDR_SPARKLE_SIGN_UPDATE=/path/to/sign_update
-TLDR_SPARKLE_KEYCHAIN_ACCOUNT="TLDR Sparkle EdDSA"
-TLDR_R2_BUCKET=tldr-downloads
-TLDR_R2_PUBLIC_DOMAIN=downloads.example.com
+# Apple Developer / notarization
+TLDR_TEAM_ID=8W5FCW3BXK              # team ID for codesigning fallback
+TLDR_SIGN_IDENTITY=<sha-1>            # required if the keychain has multiple
+                                      # "Developer ID Application: ..." certs
+                                      # with the same team ID; codesign refuses
+                                      # ambiguous lookups by team ID alone.
+                                      # Find with: security find-identity -v -p codesigning
+TLDR_NOTARY_PROFILE=TLDR-NOTARY      # default; set up once with
+                                      #   xcrun notarytool store-credentials TLDR-NOTARY
+
+# Sparkle
+TLDR_SPARKLE_FEED_URL=https://<r2-public-domain>/appcast.xml
+TLDR_SPARKLE_PUBLIC_ED_KEY=<base64 from Sparkle generate_keys>
+# Optional: TLDR_SPARKLE_KEYCHAIN_ACCOUNT (defaults to Sparkle's lookup)
+# Optional: TLDR_SPARKLE_SIGN_UPDATE (see "First run" note above)
+
+# Cloudflare R2
+TLDR_R2_BUCKET=tldr-releases
+TLDR_R2_PUBLIC_DOMAIN=<pub-*.r2.dev or your custom domain>
+TLDR_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+TLDR_R2_ACCESS_KEY_ID=<S3-compatible token id>
+TLDR_R2_SECRET_ACCESS_KEY=<S3-compatible token secret>
+
+# Bundled into Contents/Resources/proxy.env at build time
+TLDR_PROXY_URL=https://<railway-service>.up.railway.app/
+TLDR_PROXY_TOKEN=<bootstrap token>
 ```
 
-`bash tldr_app/scripts/release.sh` fetches the pinned Python runtime, builds,
-signs, notarizes, packages the DMG, signs the update for Sparkle, writes
-`tldr_app/build/appcast.xml`, and uploads the DMG/appcast to R2. Set
-`TLDR_RELEASE_UPLOAD=0` for a local dry run.
+### What gets stamped at build time
+
+`build.sh` overwrites the placeholder values in `project.yml` after `xcodegen`
+runs:
+
+- `CFBundleVersion` ← `git rev-list --count HEAD` (or `TLDR_BUILD_NUMBER`)
+- `SUFeedURL` ← `TLDR_SPARKLE_FEED_URL` (placeholder stays if the var is empty)
+- `SUPublicEDKey` ← `TLDR_SPARKLE_PUBLIC_ED_KEY` (placeholder stays if empty)
+
+Both placeholders failing to be overwritten is silent — the build still
+succeeds, and existing users can install the DMG, but **that build will not be
+able to discover or verify any future Sparkle update**. Always confirm the
+build log shows both `[tldr] stamping SUFeedURL=...` and `[tldr] stamping
+SUPublicEDKey from TLDR_SPARKLE_PUBLIC_ED_KEY` lines before uploading.

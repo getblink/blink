@@ -76,6 +76,14 @@ bash tldr_app/scripts/make_dmg.sh
 The installer resets TLDR's TCC permissions on every rebuild so Accessibility,
 Input Monitoring, and Screen Recording attach to the fresh binary.
 
+Cutting a Sparkle release (signed, notarized DMG + appcast on Cloudflare R2)
+goes through `tldr_app/scripts/release.sh`. Bump
+`tldr_app/project.yml`'s `CFBundleShortVersionString`, export the repo-root
+`.env` (which holds Apple/Sparkle/R2 credentials), then run the script. See
+[`tldr_app/README.md` → Sparkle Releases](tldr_app/README.md#sparkle-releases)
+for the required env vars and known gotchas (Sparkle `sign_update`
+chicken-and-egg, duplicate-cert disambiguation via `TLDR_SIGN_IDENTITY`).
+
 In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/conductor/shared/blink/fixtures/`, so new workspaces inherit the full captured corpus automatically while archived sweeps still remain self-contained.
 
 Conductor hook receipts now make it easy to sanity-check execution: setup writes `.context/conductor/setup-receipt.json`, and archive appends `~/conductor/archive/blink/_archive_runs.jsonl` plus `archive-receipt.json` inside each preserved archive bundle.
