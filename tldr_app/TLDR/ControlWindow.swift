@@ -15,11 +15,31 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var statusLabel: NSTextField?
     private var modelPopup: NSPopUpButton?
+    private var thinkingPopup: NSPopUpButton?
     private var soundsCheckbox: NSButton?
 
     private var statusSubscription: AnyCancellable?
     private var modelSubscription: AnyCancellable?
+    private var thinkingSubscription: AnyCancellable?
     private var soundsSubscription: AnyCancellable?
+
+    private static let thinkingTitles: [String] = ["Default", "Low", "Medium", "High"]
+    private static func thinkingTitle(for level: String?) -> String {
+        switch level?.lowercased() {
+        case "low": return "Low"
+        case "medium": return "Medium"
+        case "high": return "High"
+        default: return "Default"
+        }
+    }
+    private static func thinkingValue(for title: String) -> String? {
+        switch title {
+        case "Low": return "low"
+        case "Medium": return "medium"
+        case "High": return "high"
+        default: return nil
+        }
+    }
 
     /// The app that was frontmost just before this window took focus, so the
     /// "Summarize" button targets *that* app rather than TLDR itself.
@@ -115,13 +135,24 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         modelPopup = popup
         stack.addArrangedSubview(self.row(label: "Model", control: popup))
 
-        // 5. Sounds checkbox.
+        // 5. Reasoning level picker. "Default" sends no override and lets the
+        // server pick per-model; the rest map to lowercase values the server
+        // allowlists.
+        let thinking = NSPopUpButton()
+        thinking.target = self
+        thinking.action = #selector(thinkingChanged)
+        thinking.addItems(withTitles: Self.thinkingTitles)
+        thinking.selectItem(withTitle: Self.thinkingTitle(for: runtimeStore.thinkingLevel))
+        thinkingPopup = thinking
+        stack.addArrangedSubview(self.row(label: "Reasoning", control: thinking))
+
+        // 6. Sounds checkbox.
         let sounds = NSButton(checkboxWithTitle: "Play sounds", target: self, action: #selector(soundsToggled))
         sounds.state = runtimeStore.soundsEnabled ? .on : .off
         soundsCheckbox = sounds
         stack.addArrangedSubview(sounds)
 
-        // 6. Action buttons.
+        // 7. Action buttons.
         let runsButton = NSButton(title: "Open runs folder", target: self, action: #selector(openRunsFolder))
         runsButton.bezelStyle = .rounded
         let runtimeButton = NSButton(title: "Open ~/.tldr", target: self, action: #selector(openRuntimeFolder))
@@ -133,7 +164,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         buttonRow.spacing = 8
         stack.addArrangedSubview(buttonRow)
 
-        // 7. Retention footer.
+        // 8. Retention footer.
         let footer = NSTextField(wrappingLabelWithString:
             "Summaries and suggestions are stored to improve TLDR; "
             + "screenshots are not retained."
@@ -208,6 +239,17 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
                     }
                 }
             }
+        thinkingSubscription = runtimeStore.$thinkingLevel
+            .receive(on: RunLoop.main)
+            .sink { [weak self] level in
+                MainActor.assumeIsolated {
+                    guard let self, let popup = self.thinkingPopup else { return }
+                    let target = Self.thinkingTitle(for: level)
+                    if popup.itemTitle(at: popup.indexOfSelectedItem) != target {
+                        popup.selectItem(withTitle: target)
+                    }
+                }
+            }
         soundsSubscription = runtimeStore.$soundsEnabled
             .receive(on: RunLoop.main)
             .sink { [weak self] enabled in
@@ -220,6 +262,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     private func stopSubscriptions() {
         statusSubscription = nil
         modelSubscription = nil
+        thinkingSubscription = nil
         soundsSubscription = nil
     }
 
@@ -246,6 +289,11 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     @objc private func modelChanged(_ sender: NSPopUpButton) {
         guard let title = sender.titleOfSelectedItem else { return }
         runtimeStore.model = title
+    }
+
+    @objc private func thinkingChanged(_ sender: NSPopUpButton) {
+        guard let title = sender.titleOfSelectedItem else { return }
+        runtimeStore.thinkingLevel = Self.thinkingValue(for: title)
     }
 
     @objc private func soundsToggled(_ sender: NSButton) {

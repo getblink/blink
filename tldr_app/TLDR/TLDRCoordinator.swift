@@ -1194,6 +1194,9 @@ final class TLDRCoordinator {
             "model": runtime.model,
             "style": "default",
         ]
+        if let level = runtime.thinkingLevel, !level.isEmpty {
+            preferences["thinking_level"] = level
+        }
         if let settingsPath = Paths.settingsPath,
            let settings = JSONFiles.readObject(at: settingsPath) {
             if let temperature = settings["temperature"] {
