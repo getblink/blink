@@ -6,7 +6,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "model": "gemini-3-flash-preview",
@@ -15,6 +15,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "media_resolution": "MEDIA_RESOLUTION_LOW",
     "timeout_seconds": 120,
 }
+
+MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
+PREFERENCE_EXAMPLE_LIMIT = 3
+PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
+VOICE_SAMPLE_MAX_CHARS = 500
+SURFACE_TEXT_MAX_CHARS = 500
+PREFERENCE_TEXT_MAX_CHARS = 360
 
 
 def _is_thinking_model(model: str) -> bool:
@@ -39,6 +46,120 @@ def thinking_level_for_model(model: str) -> str | None:
 def max_output_tokens_for_model(model: str) -> int | None:
     """Per-model override for max_output_tokens, or None to honor settings."""
     return 2048 if _is_thinking_model(model) else None
+
+
+def media_resolution_for_model(model: str, base: str) -> str:
+    if model == "gemini-3-flash-preview":
+        return "MEDIA_RESOLUTION_MEDIUM"
+    return base
+
+
+def _bounded_text(value: Any, limit: int) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, Any] | None) -> str:
+    if not stateful_context:
+        return prompt_text
+    voice_samples = stateful_context.get("voice_samples")
+    preference_examples = stateful_context.get("preference_examples")
+    surface_history = stateful_context.get("recent_surface_history")
+    if not isinstance(voice_samples, list):
+        voice_samples = []
+    if not isinstance(preference_examples, list):
+        preference_examples = []
+    if not isinstance(surface_history, list):
+        surface_history = []
+    if not voice_samples and not preference_examples and not surface_history:
+        return prompt_text
+    preference_texts = {
+        text
+        for example in preference_examples
+        if isinstance(example, dict)
+        for text in [_bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)]
+        if text
+    }
+    lines = [
+        "",
+        "Stateful TLDR context:",
+        "Use user preference examples to infer which suggestions are useful in this surface.",
+        "Use user voice examples for style only. Do not copy facts from them into the current reply unless the current screen supports those facts.",
+        "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
+    ]
+    if preference_examples:
+        lines.extend(
+            [
+                "User preference examples from this same surface:",
+                "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
+                "Infer the preference lesson. Prefer the user's demonstrated intent over generic agreement.",
+            ]
+        )
+        for index, example in enumerate(preference_examples[:PREFERENCE_EXAMPLE_LIMIT], start=1):
+            if not isinstance(example, dict):
+                continue
+            screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
+            user_typed = _bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)
+            rejected = example.get("rejected_suggestions")
+            if not user_typed or not isinstance(rejected, list):
+                continue
+            rejected_texts = [
+                text
+                for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in rejected)
+                if text
+            ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
+            if not rejected_texts:
+                continue
+            lines.append(f"Example {index}:")
+            if screen_takeaway:
+                lines.append(f"Screen takeaway: {screen_takeaway}")
+            lines.append("Model suggestions the user did not use:")
+            for suggestion in rejected_texts:
+                lines.append(f"- {suggestion}")
+            lines.append(f"User typed instead: {user_typed}")
+            lines.append(
+                "Preference lesson: Generate suggestions that match the user's demonstrated move. "
+                "Favor evidence requests, premise checks, concrete agent instructions, or clarifying questions when the user typed those instead of generic agreement."
+            )
+    if voice_samples:
+        rendered_voice_samples = []
+        for sample in voice_samples:
+            if not isinstance(sample, dict):
+                continue
+            text = _bounded_text(sample.get("text"), VOICE_SAMPLE_MAX_CHARS)
+            if text and text not in preference_texts:
+                rendered_voice_samples.append(text)
+        if rendered_voice_samples:
+            lines.append("User voice examples:")
+            for text in rendered_voice_samples:
+                lines.append(f"- {text}")
+    if surface_history:
+        lines.append("Recent same-surface history:")
+        for item in surface_history:
+            if not isinstance(item, dict):
+                continue
+            tldr = _bounded_text(item.get("tldr"), SURFACE_TEXT_MAX_CHARS)
+            custom_reply = _bounded_text(item.get("custom_reply_text"), SURFACE_TEXT_MAX_CHARS)
+            chosen_text = _bounded_text(item.get("chosen_text"), SURFACE_TEXT_MAX_CHARS)
+            chosen_action = _bounded_text(item.get("chosen_action"), 80)
+            chosen_index = item.get("chosen_index")
+            if tldr:
+                lines.append(f"- Prior TLDR: {tldr}")
+            if custom_reply:
+                if custom_reply in preference_texts:
+                    lines.append("  Prior outcome: user typed a custom reply instead of using the suggestions.")
+                else:
+                    lines.append(f"  Prior outcome: {custom_reply}")
+            elif chosen_text:
+                index_text = f" #{chosen_index + 1}" if isinstance(chosen_index, int) else ""
+                action_text = chosen_action or "used"
+                lines.append(
+                    f"  Prior outcome: user {action_text} model suggestion{index_text}; "
+                    "do not copy that prior model-authored wording into new suggestions."
+                )
+    return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
 
 
 def plain_data(value: Any) -> Any:
@@ -138,18 +259,115 @@ def usage_token_count(usage: Any) -> int | None:
     return None
 
 
-def request_context_text(envelope: dict[str, Any]) -> str | None:
-    structured: dict[str, Any] = {
-        "input_mode": envelope.get("input_mode"),
-        "capture_mode": envelope.get("capture_mode"),
-    }
-    for key in ("frontmost_app", "image_diagnostics", "frames", "ocr_packet", "focused_context", "stateful_context"):
-        value = envelope.get(key)
-        if value not in (None, {}, [], ""):
-            structured[key] = value
-    if len(structured) <= 2:
+def extract_partial_suggestions(raw_text: str) -> list[str]:
+    marker = '"suggestions"'
+    marker_index = raw_text.find(marker)
+    if marker_index < 0:
+        return []
+    bracket_index = raw_text.find("[", marker_index + len(marker))
+    if bracket_index < 0:
+        return []
+    suggestions: list[str] = []
+    chars: list[str] = []
+    in_string = False
+    escaped = False
+    for char in raw_text[bracket_index + 1:]:
+        if in_string:
+            if escaped:
+                if char == "n":
+                    chars.append("\n")
+                elif char == "t":
+                    chars.append("\t")
+                elif char == "r":
+                    chars.append("\r")
+                else:
+                    chars.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"':
+                suggestions.append("".join(chars))
+                chars = []
+                in_string = False
+                continue
+            chars.append(char)
+        else:
+            if char == '"':
+                in_string = True
+                continue
+            if char == "]":
+                break
+    if in_string and chars:
+        suggestions.append("".join(chars))
+    return suggestions
+
+
+def extract_partial_tldr(raw_text: str) -> str | None:
+    marker = '"tldr"'
+    marker_index = raw_text.find(marker)
+    if marker_index < 0:
         return None
-    return json.dumps(structured, ensure_ascii=True, sort_keys=True)
+    colon_index = raw_text.find(":", marker_index + len(marker))
+    if colon_index < 0:
+        return None
+    quote_index = raw_text.find('"', colon_index + 1)
+    if quote_index < 0:
+        return None
+
+    chars: list[str] = []
+    escaped = False
+    for char in raw_text[quote_index + 1:]:
+        if escaped:
+            if char == "n":
+                chars.append("\n")
+            elif char == "t":
+                chars.append("\t")
+            elif char == "r":
+                chars.append("\r")
+            else:
+                chars.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            break
+        chars.append(char)
+
+    text = "".join(chars).strip()
+    return text or None
+
+
+def _image_contents(types: Any, images: list[tuple[bytes, str]] | None, image_bytes: bytes | None, mime_type: str) -> list[Any]:
+    if images is None:
+        images = [(image_bytes, mime_type)] if image_bytes is not None else []
+    return [
+        types.Part.from_bytes(
+            data=data,
+            mime_type=image_mime_type,
+        )
+        for data, image_mime_type in images
+    ]
+
+
+def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> Any:
+    model = settings.get("model", "")
+    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    config_kwargs = dict(
+        system_instruction=prompt_text,
+        temperature=settings["temperature"],
+        max_output_tokens=max_tokens,
+        media_resolution=media_resolution_for_model(model, settings["media_resolution"]),
+        response_mime_type="application/json",
+        response_schema=_schema(),
+    )
+    level = thinking_level_for_model(model)
+    if level is not None:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return types.GenerateContentConfig(**config_kwargs)
 
 
 def generate_tldr_and_suggestions(
@@ -157,58 +375,21 @@ def generate_tldr_and_suggestions(
     settings: dict[str, Any],
     prompt_text: str,
     images: list[tuple[bytes, str]] | None = None,
-    context_text: str | None = None,
     image_bytes: bytes | None = None,
     mime_type: str = "image/png",
 ) -> dict[str, Any]:
     from google.genai import types
 
-    contents: list[Any] = []
-    if context_text:
-        contents.append(
-            "Structured capture context (JSON). Treat it as additional evidence; "
-            "do not repeat it verbatim in the output. If stateful_context is "
-            "present, use preference_examples to infer which suggestions the user "
-            "finds useful, use voice_samples only as examples of the user's writing "
-            "style, and use recent_surface_history only for continuity in this same "
-            "immediate surface. Current screen evidence wins; never import unsupported "
-            "facts from history.\n"
-            + context_text
-        )
-    if images is None:
-        images = [(image_bytes, mime_type)] if image_bytes is not None else []
-    for data, image_mime_type in images:
-        contents.append(
-            types.Part.from_bytes(
-                data=data,
-                mime_type=image_mime_type,
-            )
-        )
+    contents = _image_contents(types, images, image_bytes, mime_type)
     if not contents:
-        raise ValueError("No screenshot or structured context was provided.")
+        raise ValueError("No screenshot was provided.")
 
-    model = settings.get("model", "")
-    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
-    config_kwargs = dict(
-        system_instruction=prompt_text,
-        temperature=settings["temperature"],
-        max_output_tokens=max_tokens,
-        media_resolution=settings["media_resolution"],
-        response_mime_type="application/json",
-        response_schema=_schema(),
-    )
-    level = thinking_level_for_model(model)
-    if level is not None:
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
-    config = types.GenerateContentConfig(**config_kwargs)
+    config = _generate_config(types, settings, prompt_text)
 
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
-        contents=contents + [
-            "Summarize this active window and propose three replies. Use any "
-            "structured capture context if it is present."
-        ],
+        contents=contents + [MODEL_CONTENT_TEXT],
         config=config,
     )
     finished = time.perf_counter()
@@ -252,3 +433,85 @@ def generate_tldr_and_suggestions(
         }
     )
     return payload
+
+
+def generate_tldr_and_suggestions_streaming(
+    client: Any,
+    settings: dict[str, Any],
+    prompt_text: str,
+    images: list[tuple[bytes, str]] | None = None,
+    image_bytes: bytes | None = None,
+    mime_type: str = "image/png",
+) -> Iterator[dict[str, Any]]:
+    from google.genai import types
+
+    contents = _image_contents(types, images, image_bytes, mime_type)
+    if not contents:
+        raise ValueError("No screenshot was provided.")
+
+    config = _generate_config(types, settings, prompt_text)
+    started = time.perf_counter()
+    raw_text = ""
+    usage = None
+    last_partial = ""
+    last_partial_suggestions: list[str] = []
+    for chunk in client.models.generate_content_stream(
+        model=settings["model"],
+        contents=contents + [MODEL_CONTENT_TEXT],
+        config=config,
+    ):
+        text = getattr(chunk, "text", None) or ""
+        if text:
+            raw_text += text
+            partial = extract_partial_tldr(raw_text)
+            if partial and partial != last_partial:
+                last_partial = partial
+                yield {"event": "partial_tldr", "data": {"tldr": partial}}
+            partial_suggestions = extract_partial_suggestions(raw_text)
+            if partial_suggestions and partial_suggestions != last_partial_suggestions:
+                last_partial_suggestions = list(partial_suggestions)
+                yield {
+                    "event": "partial_suggestions",
+                    "data": {"suggestions": partial_suggestions},
+                }
+        chunk_usage = getattr(chunk, "usage_metadata", None)
+        if chunk_usage is not None:
+            usage = chunk_usage
+
+    duration_ms = int(round((time.perf_counter() - started) * 1000))
+    raw_final = raw_text.strip()
+    parsed, parse_error = _parse_json_response(raw_final)
+    final: dict[str, Any] = {
+        "raw": raw_final,
+        "usage": plain_data(usage),
+        "duration_ms": duration_ms,
+        "parse_error": parse_error,
+        "model": settings["model"],
+    }
+    if parsed is None:
+        final.update(
+            {
+                "status": "parse_error",
+                "tldr": "Gemini returned non-JSON output.",
+                "suggestions": [raw_final or "[empty response]"],
+            }
+        )
+    else:
+        tldr, suggestions = _normalize_payload(parsed)
+        if len(suggestions) != 3:
+            final.update(
+                {
+                    "status": "schema_mismatch",
+                    "tldr": tldr or "Gemini returned an incomplete response.",
+                    "suggestions": suggestions or [raw_final or "[empty response]"],
+                }
+            )
+        else:
+            final.update(
+                {
+                    "status": "ok",
+                    "tldr": tldr,
+                    "suggestions": suggestions,
+                }
+            )
+    yield {"event": "final", "data": final}

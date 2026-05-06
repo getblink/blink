@@ -49,7 +49,6 @@ targets:
         CFBundleVersion: "1"
         CFBundleExecutable: TLDR
         LSMinimumSystemVersion: "14.0"
-        LSUIElement: true
         SUFeedURL: "https://downloads.example.com/tldr/appcast.xml"
         SUPublicEDKey: "REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY"
         SUEnableAutomaticChecks: true

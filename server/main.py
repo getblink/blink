@@ -416,7 +416,8 @@ async def _run_tldr_request(
     envelope: dict[str, Any],
     screenshots: list[UploadFile],
     token_id: str,
-) -> dict[str, Any]:
+    stream: bool = False,
+) -> dict[str, Any] | StreamingResponse:
     warnings = list(envelope.get("warnings") or [])
     images: list[tuple[bytes, str]] = []
     image_bytes_list: list[bytes] = []
@@ -453,10 +454,10 @@ async def _run_tldr_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="screenshot mode requires a screenshot upload",
         )
-    if not images and not gemini.request_context_text(envelope):
+    if not images:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="request must include a screenshot or structured context",
+            detail="request must include a screenshot",
         )
 
     model_envelope = envelope
@@ -465,7 +466,7 @@ async def _run_tldr_request(
     input_hash = _request_cache_key(storage_envelope, image_bytes_list)
     cache = _response_cache()
     cache_key = _request_cache_key(model_envelope, image_bytes_list) if _cache_allowed(envelope) else None
-    if cache.enabled and cache_key is not None:
+    if not stream and cache.enabled and cache_key is not None:
         cached = cache.get(cache_key)
         if cached is not None:
             cached_warnings = warnings + ["cache_hit"]
@@ -496,13 +497,112 @@ async def _run_tldr_request(
         )
 
     client = gemini.create_client(api_key, settings)
+    prompt_text = gemini.prompt_with_stateful_context(
+        _prompt_text(),
+        model_envelope.get("stateful_context"),
+    )
+    if stream:
+        def stream_events() -> Any:
+            try:
+                for event in gemini.generate_tldr_and_suggestions_streaming(
+                    client=client,
+                    settings=settings,
+                    prompt_text=prompt_text,
+                    images=images,
+                ):
+                    event_name = str(event.get("event") or "message")
+                    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                    if event_name == "final":
+                        if data.get("status") == "ok":
+                            usage_tokens = gemini.usage_token_count(data.get("usage"))
+                            _log_request(
+                                token_id=token_id,
+                                status_name="ok",
+                                duration_ms=data.get("duration_ms"),
+                                usage_tokens=usage_tokens,
+                            )
+                            _record_request(
+                                token_id=token_id,
+                                envelope=storage_envelope,
+                                settings=settings,
+                                status_name="ok",
+                                latency_ms=data.get("duration_ms"),
+                                usage_tokens=usage_tokens,
+                                input_hash=input_hash,
+                                warnings=warnings,
+                                error=None,
+                            )
+                            data = _ok_response(data, envelope["request_id"], warnings)
+                        else:
+                            # SSE intentionally returns HTTP 200 with status in the
+                            # frame: HTTP headers are already flushed by the time we
+                            # know the model's response was bad. The JSON path
+                            # raises 503 in the same case (see below).
+                            status_name = str(data.get("status") or "error")
+                            detail = f"{status_name}: Gemini returned an incomplete response"
+                            usage_tokens = gemini.usage_token_count(data.get("usage"))
+                            _log_request(
+                                token_id=token_id,
+                                status_name=status_name,
+                                duration_ms=data.get("duration_ms"),
+                                usage_tokens=usage_tokens,
+                            )
+                            _record_request(
+                                token_id=token_id,
+                                envelope=storage_envelope,
+                                settings=settings,
+                                status_name=status_name,
+                                latency_ms=data.get("duration_ms"),
+                                usage_tokens=usage_tokens,
+                                input_hash=input_hash,
+                                warnings=warnings,
+                                error=detail,
+                            )
+                            data = {
+                                "request_id": envelope["request_id"],
+                                "status": status_name,
+                                "tldr": data.get("tldr"),
+                                "suggestions": data.get("suggestions") or [],
+                                "duration_ms": data.get("duration_ms"),
+                                "model": data.get("model"),
+                                "warnings": warnings,
+                            }
+                    yield f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=True)}\n\n"
+            except Exception as exc:
+                detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"
+                _log_request(
+                    token_id=token_id,
+                    status_name="upstream_error",
+                    duration_ms=None,
+                    usage_tokens=None,
+                )
+                _record_request(
+                    token_id=token_id,
+                    envelope=storage_envelope,
+                    settings=settings,
+                    status_name="upstream_error",
+                    latency_ms=None,
+                    usage_tokens=None,
+                    input_hash=input_hash,
+                    warnings=warnings,
+                    error=detail,
+                )
+                data = {
+                    "request_id": envelope["request_id"],
+                    "status": "error",
+                    "detail": detail,
+                    "warnings": warnings,
+                }
+                yield f"event: error\ndata: {json.dumps(data, ensure_ascii=True)}\n\n"
+
+        return StreamingResponse(stream_events(), media_type="text/event-stream")
+
     try:
         payload = gemini.generate_tldr_and_suggestions(
             client=client,
             settings=settings,
-            prompt_text=_prompt_text(),
+            prompt_text=prompt_text,
             images=images,
-            context_text=gemini.request_context_text(model_envelope),
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"
@@ -626,11 +726,11 @@ def _frame_index(field_name: str) -> int | None:
     return index
 
 
-@app.post("/v1/tldr")
+@app.post("/v1/tldr", response_model=None)
 async def tldr_v1(
     http_request: Request,
     token_id: str = Depends(require_bearer_token),
-) -> dict[str, Any]:
+) -> dict[str, Any] | StreamingResponse:
     form = await http_request.form()
     request = form.get("request")
     if not isinstance(request, str):
@@ -666,6 +766,7 @@ async def tldr_v1(
                     detail=f"screenshot frame field must be a file: {key}",
                 )
             screenshots_by_index[frame_index] = value
+    wants_stream = "text/event-stream" in http_request.headers.get("accept", "")
     return await _run_tldr_request(
         envelope=envelope,
         screenshots=[
@@ -673,6 +774,7 @@ async def tldr_v1(
             for index in sorted(screenshots_by_index)
         ],
         token_id=token_id,
+        stream=wants_stream,
     )
 
 

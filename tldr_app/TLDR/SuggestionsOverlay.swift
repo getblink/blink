@@ -301,7 +301,7 @@ final class SuggestionsOverlay: NSObject {
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
         // Borderless only — no `.nonactivatingPanel`. AppKit draws an extra
-        // glass outline around `NSGlassEffectView` in the LSUIElement +
+        // glass outline around `NSGlassEffectView` in the
         // non-activating-panel context (see scratchpad/tldr_reply/overlay.py).
         // Trade-off: TLDR briefly steals focus from the source app; we
         // capture and restore the previous frontmost on close so Cmd+V still
@@ -536,11 +536,9 @@ final class SuggestionsOverlay: NSObject {
             } else {
                 previousFrontmost = nil
             }
-            // `NSApp.activate()` (no-arg) is the polite macOS 14+ form and
-            // silently no-ops for LSUIElement apps when another app is in
-            // the foreground. We need an unconditional activation here so
-            // the panel becomes key on first show — otherwise the user has
-            // to click before the keyboard works.
+            // We need an unconditional activation here so the panel becomes
+            // key on first show — otherwise the user has to click before the
+            // keyboard works.
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             // When the panel becomes key, AppKit auto-selects the first
