@@ -18,7 +18,7 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 260),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 100),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -27,34 +27,50 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         win.isReleasedWhenClosed = false
         win.delegate = self
 
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        stack.addArrangedSubview(self.heading("TLDR needs three permissions to run."))
+        let heading = self.heading("TLDR needs three permissions to run.")
 
         rows = []
-        stack.addArrangedSubview(self.permissionRow(
+        // Use an NSGridView so the status icon, name+description, and the
+        // "Open Settings" button align cleanly across rows. NSStackView
+        // can't pin a per-column width when the middle column varies, which
+        // produced the staggered buttons in the previous layout.
+        let grid = NSGridView(numberOfColumns: 3, rows: 0)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.rowSpacing = 14
+        grid.columnSpacing = 12
+        grid.column(at: 0).xPlacement = .center
+        grid.column(at: 1).xPlacement = .leading
+        grid.column(at: 2).xPlacement = .trailing
+        grid.rowAlignment = .firstBaseline
+
+        addPermissionRow(
+            grid: grid,
             title: "Accessibility",
             description: "Read the focused field and paste text.",
             check: { AXIsProcessTrusted() },
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        ))
-        stack.addArrangedSubview(self.permissionRow(
+        )
+        addPermissionRow(
+            grid: grid,
             title: "Input Monitoring",
             description: "Listen for the summary hotkey and numbered choices.",
             check: { PermissionsWindowController.inputMonitoringGranted() },
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-        ))
-        stack.addArrangedSubview(self.permissionRow(
+        )
+        addPermissionRow(
+            grid: grid,
             title: "Screen Recording",
             description: "Capture the window you target.",
             check: { CGPreflightScreenCaptureAccess() },
             url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        ))
+        )
+
+        let stack = NSStackView(views: [heading, grid])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 14
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        stack.translatesAutoresizingMaskIntoConstraints = false
 
         let content = NSView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -66,21 +82,23 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
         win.contentView = content
+        // Auto-size the window to fit the content rather than hardcoding a
+        // height that leaves a half-window of empty space below the rows.
+        content.layoutSubtreeIfNeeded()
+        let target = stack.fittingSize
+        win.setContentSize(NSSize(width: max(target.width, 480), height: target.height))
         window = win
     }
 
-    private func heading(_ text: String) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = NSFont.boldSystemFont(ofSize: 14)
-        return label
-    }
-
-    private func permissionRow(
-        title: String, description: String,
-        check: @escaping () -> Bool, url: String
-    ) -> NSView {
+    private func addPermissionRow(
+        grid: NSGridView,
+        title: String,
+        description: String,
+        check: @escaping () -> Bool,
+        url: String
+    ) {
         let status = NSTextField(labelWithString: "…")
-        status.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        status.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
         rows.append((name: title, check: check, url: url, label: status))
 
         let name = NSTextField(labelWithString: title)
@@ -89,21 +107,27 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         desc.font = NSFont.systemFont(ofSize: 11)
         desc.textColor = .secondaryLabelColor
 
-        let open = NSButton(title: "Open Settings", target: self, action: #selector(openURLButton))
-        open.bezelStyle = .rounded
-        open.setButtonType(.momentaryPushIn)
-        open.identifier = NSUserInterfaceItemIdentifier(url)
-
         let text = NSStackView(views: [name, desc])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 2
 
-        let row = NSStackView(views: [status, text, NSView(), open])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        return row
+        let open = NSButton(title: "Open Settings", target: self, action: #selector(openURLButton))
+        open.bezelStyle = .rounded
+        open.setButtonType(.momentaryPushIn)
+        open.identifier = NSUserInterfaceItemIdentifier(url)
+
+        let row = grid.addRow(with: [status, text, open])
+        // Pin the status cell vertically to the title row so the icon sits
+        // beside the bold name rather than drifting toward the description.
+        row.cell(at: 0).yPlacement = .top
+        row.cell(at: 2).yPlacement = .top
+    }
+
+    private func heading(_ text: String) -> NSView {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.boldSystemFont(ofSize: 14)
+        return label
     }
 
     @objc private func openURLButton(_ sender: NSButton) {
