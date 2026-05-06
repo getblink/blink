@@ -219,6 +219,15 @@ final class SuggestionsOverlay: NSObject {
         panel?.isVisible == true
     }
 
+    /// True when the overlay is on screen and has already promoted past the
+    /// loading layout (i.e. streaming has produced a real summary). Callers
+    /// use this to push final stream values through `updateSummary` /
+    /// `updateSuggestions` instead of re-running `show(...)`, which would
+    /// destroy and rebuild the panel and produce a visible flicker.
+    var isStreamingActive: Bool {
+        isVisible && !isLoadingState
+    }
+
     func show(tldr: String, suggestions: [String]) {
         show(
             tldr: tldr,
