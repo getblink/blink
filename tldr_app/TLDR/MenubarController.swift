@@ -4,16 +4,10 @@ import Sparkle
 
 @MainActor
 final class MenubarController: NSObject {
-    static let modelOptions: [String] = [
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3.1-pro-preview",
-        "gemma-4-26b-a4b-it",
-    ]
-
     private let coordinator: TLDRCoordinator
     private let runtimeStore: RuntimeConfigStore
     private let onShowPermissions: () -> Void
+    private let onShowControlWindow: () -> Void
     private let hotkeyDisplay: String
     private var statusItem: NSStatusItem!
     private var statusLabel: NSMenuItem!
@@ -35,12 +29,14 @@ final class MenubarController: NSObject {
         coordinator: TLDRCoordinator,
         runtimeStore: RuntimeConfigStore,
         hotkeyDisplay: String,
-        onShowPermissions: @escaping () -> Void
+        onShowPermissions: @escaping () -> Void,
+        onShowControlWindow: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.runtimeStore = runtimeStore
         self.hotkeyDisplay = hotkeyDisplay
         self.onShowPermissions = onShowPermissions
+        self.onShowControlWindow = onShowControlWindow
     }
 
     func install() {
@@ -81,6 +77,8 @@ final class MenubarController: NSObject {
         menu.addItem(statusLabel)
         menu.addItem(.separator())
 
+        menu.addItem(withTitle: "Open TLDR Window…", action: #selector(openControlWindow), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "Summarize frontmost window (\(hotkeyDisplay))", action: #selector(triggerSummarize), keyEquivalent: "")
             .target = self
 
@@ -123,11 +121,8 @@ final class MenubarController: NSObject {
         let menu = NSMenu()
         let current = runtimeStore.model
         var seen = Set<String>()
-        var options = Self.modelOptions
-        if !options.contains(current) {
-            options.insert(current, at: 0)
-        }
-        for name in options where seen.insert(name).inserted {
+        for name in ModelChoices.optionsIncluding(current: current)
+        where seen.insert(name).inserted {
             let item = NSMenuItem(title: name, action: #selector(selectModel(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = name
@@ -176,6 +171,10 @@ final class MenubarController: NSObject {
 
     @objc private func openPermissions() {
         onShowPermissions()
+    }
+
+    @objc private func openControlWindow() {
+        onShowControlWindow()
     }
 
     @objc private func toggleSounds(_ sender: NSMenuItem) {
