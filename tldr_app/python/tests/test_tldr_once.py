@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -82,6 +82,218 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIn(b'name="screenshot_1"', body)
         self.assertIn(b"one", body)
         self.assertIn(b"two", body)
+
+    def test_proxy_preferences_are_encoded_in_multipart_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            payload = {
+                "request_id": "req-prefs",
+                "schema_version": 1,
+                "input_mode": "screenshot",
+                "preferences": {
+                    "model": "gemini-3-flash-preview",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                },
+            }
+
+            body, _ = tldr_once._encode_multipart_request(payload, [screenshot])
+
+        self.assertIn(b'"preferences"', body)
+        self.assertIn(b'"model": "gemini-3-flash-preview"', body)
+
+    def test_proxy_sse_parser_emits_partials_and_returns_final(self) -> None:
+        class FakeResponse:
+            def __init__(self) -> None:
+                self.lines = iter(
+                    [
+                        b"event: partial_tldr\n",
+                        b'data: {"tldr":"Sarah needs a reply."}\n',
+                        b"\n",
+                        b"event: partial_suggestions\n",
+                        b'data: {"suggestions":["One","Two"]}\n',
+                        b"\n",
+                        b"event: final\n",
+                        b'data: {"request_id":"req-sse","status":"ok","tldr":"Sarah needs a reply.","suggestions":["One","Two","Three"],"duration_ms":12,"model":"gemini-3-flash-preview","warnings":[]}\n',
+                        b"\n",
+                    ]
+                )
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def readline(self) -> bytes:
+                return next(self.lines, b"")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            stdout = StringIO()
+            with mock.patch.object(tldr_once.request, "urlopen", return_value=FakeResponse()), redirect_stdout(stdout):
+                payload = tldr_once.generate_via_proxy(
+                    request_payload={"request_id": "req-sse"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=True,
+                )
+
+        events = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([event["event"] for event in events], ["partial_tldr", "partial_suggestions"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["request_id"], "req-sse")
+        self.assertEqual(payload["model"], "gemini-3-flash-preview")
+        self.assertEqual(payload["proxy_diagnostics"]["host"], "proxy.example")
+        self.assertEqual(payload["proxy_diagnostics"]["request_path"], "/v1/tldr")
+        self.assertEqual(payload["proxy_diagnostics"]["accept"], "text/event-stream")
+        self.assertTrue(payload["proxy_diagnostics"]["stream_events"])
+
+    def test_proxy_http_error_records_non_secret_diagnostics(self) -> None:
+        def raise_http_error(*_: object, **__: object) -> object:
+            raise tldr_once.error.HTTPError(
+                "https://proxy.example/v1/tldr",
+                404,
+                "Not Found",
+                {"content-type": "application/json"},
+                BytesIO(b'{"detail":"Not Found"}'),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(tldr_once.request, "urlopen", side_effect=raise_http_error):
+                payload = tldr_once.generate_via_proxy(
+                    request_payload={"request_id": "req-http"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=True,
+                )
+
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(
+            payload["proxy_diagnostics"],
+            {
+                "scheme": "https",
+                "host": "proxy.example",
+                "base_path": "/",
+                "request_path": "/v1/tldr",
+                "accept": "text/event-stream",
+                "stream_events": True,
+                "http_status": 404,
+                "content_type": "application/json",
+                "error_type": "http_error",
+            },
+        )
+
+    def test_proxy_stream_non_sse_response_records_diagnostics(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"detail":"Not Found"}'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(tldr_once.request, "urlopen", return_value=FakeResponse()):
+                payload = tldr_once.generate_via_proxy(
+                    request_payload={"request_id": "req-non-sse"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=True,
+                )
+
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(payload["proxy_diagnostics"]["host"], "proxy.example")
+        self.assertEqual(payload["proxy_diagnostics"]["http_status"], 200)
+        self.assertEqual(payload["proxy_diagnostics"]["content_type"], "application/json")
+        self.assertEqual(payload["proxy_diagnostics"]["error_type"], "non_sse_response")
+
+    def test_proxy_stream_accepts_json_final_response_fallback(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "request_id": "req-json-fallback",
+                        "status": "ok",
+                        "tldr": "Sarah needs a reply.",
+                        "suggestions": ["One", "Two", "Three"],
+                        "duration_ms": 12,
+                        "model": "gemini-3-flash-preview",
+                        "warnings": [],
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(tldr_once.request, "urlopen", return_value=FakeResponse()):
+                payload = tldr_once.generate_via_proxy(
+                    request_payload={"request_id": "req-json-fallback"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=True,
+                )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["request_id"], "req-json-fallback")
+        self.assertEqual(payload["suggestions"], ["One", "Two", "Three"])
+        self.assertEqual(payload["proxy_diagnostics"]["fallback"], "json_response")
+        self.assertNotIn("error_type", payload["proxy_diagnostics"])
 
     def test_args_screenshot_cap(self) -> None:
         with self.assertRaisesRegex(ValueError, "At most 8 screenshots"):
@@ -1087,8 +1299,10 @@ class TldrOnceTests(unittest.TestCase):
                     settings: dict[str, object],
                     proxy_settings: dict[str, str],
                     image_paths: list[Path],
+                    stream_events: bool = False,
                 ) -> dict[str, object]:
                     self.assertIn("stateful_context", request_payload)
+                    self.assertEqual(request_payload["preferences"]["model"], "gemini-3.1-flash-lite-preview")
                     self.assertEqual(len(image_paths), 1)
                     return {
                         "status": "ok",
@@ -1137,7 +1351,8 @@ class TldrOnceTests(unittest.TestCase):
                     "client_proxy_payload_with_server_rendering_preview",
                 )
                 self.assertIn("stateful_context", model_context["submitted_request"])
-                self.assertIn("stateful_context", model_context["proxy_server_preview"]["context_text"])
+                self.assertIn("Stateful TLDR context:", model_context["proxy_server_preview"]["system_instruction"])
+                self.assertEqual(model_context["proxy_server_preview"]["contents"], [tldr_once.MODEL_CONTENT_TEXT])
         finally:
             if old_proxy_url is None:
                 os.environ.pop("BLINK_PROXY_URL", None)

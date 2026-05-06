@@ -9,7 +9,7 @@ import shutil
 import sys
 import time
 import traceback
-from urllib import error, request
+from urllib import error, parse, request
 from uuid import uuid4
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,19 +89,7 @@ PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
 DISABLE_PROXY_ENV = "TLDR_DISABLE_PROXY"
 MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
-SERVER_CONTEXT_PREFIX = (
-    "Structured capture context (JSON). Treat it as additional evidence; "
-    "do not repeat it verbatim in the output. If stateful_context is "
-    "present, use preference_examples to infer which suggestions the user "
-    "finds useful, use voice_samples only as examples of the user's writing "
-    "style, and use recent_surface_history only for continuity in this same "
-    "immediate surface. Current screen evidence wins; never import unsupported "
-    "facts from history."
-)
-SERVER_CONTENT_TEXT = (
-    "Summarize this active window and propose three replies. Use any "
-    "structured capture context if it is present."
-)
+SERVER_CONTENT_TEXT = MODEL_CONTENT_TEXT
 
 STATEFUL_CONTEXT_VERSION = 1
 MAX_SCREENSHOT_FRAMES = 8
@@ -601,20 +589,6 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
 
 
-def proxy_request_context_text(envelope: dict[str, Any]) -> str | None:
-    structured: dict[str, Any] = {
-        "input_mode": envelope.get("input_mode"),
-        "capture_mode": envelope.get("capture_mode"),
-    }
-    for key in ("frontmost_app", "image_diagnostics", "ocr_packet", "focused_context", "stateful_context"):
-        value = envelope.get(key)
-        if value not in (None, {}, [], ""):
-            structured[key] = value
-    if len(structured) <= 2:
-        return None
-    return json.dumps(structured, ensure_ascii=True, sort_keys=True)
-
-
 def response_schema():
     from google.genai import types
 
@@ -884,7 +858,6 @@ def write_model_input(
 ) -> None:
     lines = [f"generation_path: {generation_path}", ""]
     if generation_path == "proxy":
-        context_text = proxy_request_context_text(request_payload)
         lines.extend(
             [
                 "scope:",
@@ -896,8 +869,6 @@ def write_model_input(
                 "proxy_server_contents_preview:",
             ]
         )
-        if context_text:
-            lines.extend([SERVER_CONTEXT_PREFIX, context_text])
         lines.extend(
             [
                 SERVER_CONTENT_TEXT,
@@ -936,7 +907,6 @@ def write_model_context(
     stateful_context: dict[str, Any] | None,
     settings: dict[str, Any],
 ) -> None:
-    context_text = proxy_request_context_text(request_payload)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "generation_path": generation_path,
@@ -955,10 +925,7 @@ def write_model_context(
         )
         payload["proxy_server_preview"] = {
             "system_instruction": prompt_text,
-            "context_text": context_text,
-            "contents": (
-                [SERVER_CONTEXT_PREFIX + "\n" + context_text] if context_text else []
-            ) + [SERVER_CONTENT_TEXT],
+            "contents": [SERVER_CONTENT_TEXT],
             "note": "The deployed server owns the exact final model input for proxy runs; this preview mirrors the local server renderer.",
         }
     else:
@@ -970,7 +937,39 @@ def write_model_context(
     save_json(path, payload)
 
 
-def _proxy_error_payload(message: str, *, duration_ms: int | None) -> dict[str, Any]:
+def _proxy_diagnostics(
+    proxy_settings: dict[str, str],
+    *,
+    accept: str,
+    stream_events: bool,
+    http_status: int | None = None,
+    content_type: str | None = None,
+    error_type: str | None = None,
+) -> dict[str, Any]:
+    parsed = parse.urlparse(proxy_settings["url"])
+    diagnostics: dict[str, Any] = {
+        "scheme": parsed.scheme,
+        "host": parsed.netloc,
+        "base_path": parsed.path or "/",
+        "request_path": "/v1/tldr",
+        "accept": accept,
+        "stream_events": stream_events,
+    }
+    if http_status is not None:
+        diagnostics["http_status"] = http_status
+    if content_type:
+        diagnostics["content_type"] = content_type
+    if error_type:
+        diagnostics["error_type"] = error_type
+    return diagnostics
+
+
+def _proxy_error_payload(
+    message: str,
+    *,
+    duration_ms: int | None,
+    proxy_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "status": "error",
         "tldr": "Proxy request failed.",
@@ -982,6 +981,7 @@ def _proxy_error_payload(message: str, *, duration_ms: int | None) -> dict[str, 
         "warnings": [],
         "request_id": None,
         "model": None,
+        "proxy_diagnostics": proxy_diagnostics,
     }
 
 
@@ -994,6 +994,45 @@ def _proxy_error_message(raw_body: str, fallback: str) -> str:
     if not detail:
         return fallback
     return str(detail)
+
+
+def _parse_sse_event_block(block: str) -> tuple[str, dict[str, Any] | None]:
+    event_name = "message"
+    data_lines: list[str] = []
+    for raw_line in block.splitlines():
+        if raw_line.startswith(":"):
+            continue
+        if raw_line.startswith("event:"):
+            event_name = raw_line.removeprefix("event:").strip() or "message"
+        elif raw_line.startswith("data:"):
+            data_lines.append(raw_line.removeprefix("data:").lstrip())
+    if not data_lines:
+        return event_name, None
+    try:
+        parsed = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError:
+        return event_name, None
+    if not isinstance(parsed, dict):
+        return event_name, None
+    return event_name, parsed
+
+
+def _iter_sse_events(response: Any) -> Any:
+    pending: list[str] = []
+    while True:
+        line = response.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else str(line)
+        text = text.rstrip("\r\n")
+        if text:
+            pending.append(text)
+            continue
+        if pending:
+            yield _parse_sse_event_block("\n".join(pending))
+            pending = []
+    if pending:
+        yield _parse_sse_event_block("\n".join(pending))
 
 
 def _encode_multipart_request(
@@ -1032,16 +1071,23 @@ def generate_via_proxy(
     settings: dict[str, Any],
     proxy_settings: dict[str, str],
     image_paths: list[Path],
+    stream_events: bool = False,
 ) -> dict[str, Any]:
     body, boundary = _encode_multipart_request(request_payload, image_paths)
     timeout_seconds = float(settings["timeout_seconds"])
+    accept = "text/event-stream" if stream_events else "application/json"
+    proxy_diagnostics = _proxy_diagnostics(
+        proxy_settings,
+        accept=accept,
+        stream_events=stream_events,
+    )
     req = request.Request(
         f"{proxy_settings['url']}/v1/tldr",
         data=body,
         headers={
             "Authorization": f"Bearer {proxy_settings['token']}",
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Accept": "application/json",
+            "Accept": accept,
         },
         method="POST",
     )
@@ -1049,7 +1095,71 @@ def generate_via_proxy(
     started = time.perf_counter()
     try:
         with request.urlopen(req, timeout=timeout_seconds) as response:
-            raw_text = response.read().decode("utf-8")
+            response_status = getattr(response, "status", None) or getattr(response, "code", None)
+            content_type = response.headers.get("content-type") if getattr(response, "headers", None) else None
+            proxy_diagnostics = _proxy_diagnostics(
+                proxy_settings,
+                accept=accept,
+                stream_events=stream_events,
+                http_status=response_status,
+                content_type=content_type,
+            )
+            if stream_events:
+                if content_type and "text/event-stream" not in content_type.lower():
+                    raw_body = response.read().decode("utf-8", errors="replace")
+                    try:
+                        parsed_json = json.loads(raw_body)
+                    except json.JSONDecodeError:
+                        parsed_json = None
+                    if isinstance(parsed_json, dict) and (
+                        "tldr" in parsed_json
+                        or "suggestions" in parsed_json
+                        or parsed_json.get("status") in {"ok", "error", "parse_error", "schema_mismatch"}
+                    ):
+                        proxy_diagnostics["fallback"] = "json_response"
+                        raw_text = raw_body
+                        parsed = parsed_json
+                    else:
+                        proxy_diagnostics["error_type"] = "non_sse_response"
+                        fallback = f"Proxy returned non-SSE response (HTTP {response_status or 'unknown'})."
+                        return _proxy_error_payload(
+                            _proxy_error_message(raw_body, fallback),
+                            duration_ms=int(round((time.perf_counter() - started) * 1000)),
+                            proxy_diagnostics=proxy_diagnostics,
+                        )
+                else:
+                    final_payload: dict[str, Any] | None = None
+                    raw_events: list[dict[str, Any]] = []
+                    for event_name, data in _iter_sse_events(response):
+                        if data is None:
+                            continue
+                        raw_events.append({"event": event_name, "data": data})
+                        if event_name in {"partial_tldr", "partial_suggestions"}:
+                            emit_stream_event(event_name, data)
+                        elif event_name == "final":
+                            final_payload = data
+                        elif event_name == "error":
+                            final_payload = {
+                                "status": "error",
+                                "tldr": "Proxy request failed.",
+                                "suggestions": [str(data.get("detail") or "Proxy returned an error event.")],
+                                "duration_ms": int(round((time.perf_counter() - started) * 1000)),
+                                "warnings": data.get("warnings") if isinstance(data.get("warnings"), list) else [],
+                                "request_id": data.get("request_id"),
+                                "model": data.get("model"),
+                                "proxy_diagnostics": proxy_diagnostics,
+                            }
+                    raw_text = json.dumps(raw_events, ensure_ascii=True)
+                    if final_payload is None:
+                        return _proxy_error_payload(
+                            "Proxy stream ended without a final event.",
+                            duration_ms=int(round((time.perf_counter() - started) * 1000)),
+                            proxy_diagnostics=proxy_diagnostics,
+                        )
+                    parsed = final_payload
+            else:
+                raw_text = response.read().decode("utf-8")
+                parsed = json.loads(raw_text)
     except error.HTTPError as exc:
         finished = time.perf_counter()
         raw_body = exc.read().decode("utf-8", errors="replace")
@@ -1057,26 +1167,46 @@ def generate_via_proxy(
         return _proxy_error_payload(
             _proxy_error_message(raw_body, fallback),
             duration_ms=int(round((finished - started) * 1000)),
+            proxy_diagnostics=_proxy_diagnostics(
+                proxy_settings,
+                accept=accept,
+                stream_events=stream_events,
+                http_status=exc.code,
+                content_type=exc.headers.get("content-type") if exc.headers else None,
+                error_type="http_error",
+            ),
         )
     except error.URLError as exc:
         finished = time.perf_counter()
         return _proxy_error_payload(
             f"Proxy request failed: {exc.reason}",
             duration_ms=int(round((finished - started) * 1000)),
+            proxy_diagnostics=_proxy_diagnostics(
+                proxy_settings,
+                accept=accept,
+                stream_events=stream_events,
+                error_type="url_error",
+            ),
         )
-
-    finished = time.perf_counter()
-    try:
-        parsed = json.loads(raw_text)
     except json.JSONDecodeError:
+        finished = time.perf_counter()
         return _proxy_error_payload(
             "Proxy returned non-JSON output.",
             duration_ms=int(round((finished - started) * 1000)),
+            proxy_diagnostics=_proxy_diagnostics(
+                proxy_settings,
+                accept=accept,
+                stream_events=stream_events,
+                error_type="json_decode_error",
+            ),
         )
+
+    finished = time.perf_counter()
     if not isinstance(parsed, dict):
         return _proxy_error_payload(
             "Proxy returned an unexpected response.",
             duration_ms=int(round((finished - started) * 1000)),
+            proxy_diagnostics=proxy_diagnostics,
         )
 
     payload: dict[str, Any] = {
@@ -1090,6 +1220,7 @@ def generate_via_proxy(
         "warnings": parsed.get("warnings") if isinstance(parsed.get("warnings"), list) else [],
         "request_id": parsed.get("request_id"),
         "model": parsed.get("model"),
+        "proxy_diagnostics": parsed.get("proxy_diagnostics") if isinstance(parsed.get("proxy_diagnostics"), dict) else proxy_diagnostics,
     }
     return payload
 
@@ -1214,15 +1345,21 @@ def main(argv: list[str] | None = None) -> int:
     proxy_settings = proxy_settings_from_env()
     if stateful_context is not None:
         request_payload["stateful_context"] = stateful_context
+    if proxy_settings is not None and request_payload.get("request_id"):
+        request_payload["preferences"] = {
+            "model": settings["model"],
+            "temperature": settings["temperature"],
+            "max_output_tokens": settings["max_output_tokens"],
+        }
     generation_path = (
         "skip_gemini"
         if args.skip_gemini
         else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
     )
     model_prompt_text = (
-        prompt_text
-        if generation_path == "proxy"
-        else prompt_with_stateful_context(prompt_text, stateful_context)
+        prompt_with_stateful_context(prompt_text, stateful_context)
+        if generation_path in {"proxy", "local_gemini"}
+        else prompt_text
     )
 
     run_dir = args.out_dir / bundle_id()
@@ -1327,6 +1464,7 @@ def main(argv: list[str] | None = None) -> int:
                     settings=settings,
                     proxy_settings=proxy_settings,
                     image_paths=screenshot_outputs,
+                    stream_events=args.stream_events,
                 )
             else:
                 if not os.environ.get("GEMINI_API_KEY"):
@@ -1373,6 +1511,7 @@ def main(argv: list[str] | None = None) -> int:
             "image_bytes_compressed",
             "image_prepare_ms",
             "media_resolution_resolved",
+            "proxy_diagnostics",
         ):
             if key in response:
                 run_log[key] = response[key]
