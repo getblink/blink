@@ -24,6 +24,7 @@
 		512590F7C000F9400F498318 /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDEE29EB3EE474AC3ED7550 /* SuggestionChoiceStateTests.swift */; };
 		51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */; };
 		51F46FA6BC30A495ECC7994D /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152858893A7EE251AC722A08 /* Inserter.swift */; };
+		52EF239CFE8C625D27328C80 /* NudgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B25C60BF32D1E2E221BFB3 /* NudgeCoordinator.swift */; };
 		59EA9C20D9B306853C21C5A0 /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5056F086C8989A44A91D7C /* PermissionsWindow.swift */; };
 		697884BC80BAC724A9749483 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */; };
 		7C7DE9E5DB2E2B812D7518B4 /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */; };
@@ -34,11 +35,13 @@
 		91B0CD5A1F048D786CDD1D1B /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */; };
 		A2B975BAF38E0B6AC21F5770 /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5467296FDD090C672968683E /* SoundEffects.swift */; };
 		AFFD91C322C4BCBF1A589DA5 /* TLDRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8FC9688321A6AA3C445F2F8 /* TLDRApp.swift */; };
+		B23E646BE1DB553469F3A7CE /* BackgroundActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC07AAA16D9FE63C2762AD2E /* BackgroundActivityMonitor.swift */; };
 		C40F53D81F93D2A08188E351 /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */; };
 		CBE142CC7B8BC2BC42DC7F99 /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E788954DD95B74224B5FF5CF /* ImageDiagnostics.swift */; };
 		CCCAD905B22BC516E30516EC /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */; };
 		D864396819460CA1D5F83202 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD32F3BB2B51896CCB61046 /* Config.swift */; };
 		DAAB7B2D7C2E62FB00C954B4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 02DF02804EE5E6B628ADD9D8 /* Sparkle */; };
+		DE1813F9346E55479B3CFA8C /* NudgeOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E368CAEC2A4E935D794ACFB /* NudgeOverlay.swift */; };
 		E057FB3B4EC422E829570A5A /* ScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24CAC1A3187873C8C3559965 /* ScreenCaptureTests.swift */; };
 		E5E39A2434931ECC82E8BA46 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4357519C159532DCFE2C5F /* SuggestionChoiceState.swift */; };
 		E957E85E84F83FBED1C79609 /* JSONFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */; };
@@ -63,6 +66,7 @@
 		1B4357519C159532DCFE2C5F /* SuggestionChoiceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceState.swift; sourceTree = "<group>"; };
 		1C5056F086C8989A44A91D7C /* PermissionsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindow.swift; sourceTree = "<group>"; };
 		1D63E8C0076474B1FCB602BB /* TLDRCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDRCoordinator.swift; sourceTree = "<group>"; };
+		1E368CAEC2A4E935D794ACFB /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
 		1F7C36C1B0120C80920C0A0D /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		221E6D902943E3A3D1A0F285 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		24CAC1A3187873C8C3559965 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
@@ -75,11 +79,13 @@
 		5FD77C90100587BDA7E79E10 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
 		6CD32F3BB2B51896CCB61046 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		713AAEF79D935A8C9D97373F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
+		72B25C60BF32D1E2E221BFB3 /* NudgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeCoordinator.swift; sourceTree = "<group>"; };
 		79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		805815274652A8AE7EA61194 /* TLDREventClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDREventClient.swift; sourceTree = "<group>"; };
 		9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
 		9EB9750E7F80C4BEC3131157 /* OverlayKeyRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayKeyRouter.swift; sourceTree = "<group>"; };
 		A2C733912AE5D9502C61122F /* ControlWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlWindow.swift; sourceTree = "<group>"; };
+		AC07AAA16D9FE63C2762AD2E /* BackgroundActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundActivityMonitor.swift; sourceTree = "<group>"; };
 		AC8DAE5726E664C41CEBDF54 /* TLDR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TLDR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCaptureTests.swift; sourceTree = "<group>"; };
 		B9B57C6D7DE930A2D6871234 /* SuggestionsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionsOverlay.swift; sourceTree = "<group>"; };
@@ -168,6 +174,7 @@
 			isa = PBXGroup;
 			children = (
 				D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */,
+				AC07AAA16D9FE63C2762AD2E /* BackgroundActivityMonitor.swift */,
 				6CD32F3BB2B51896CCB61046 /* Config.swift */,
 				A2C733912AE5D9502C61122F /* ControlWindow.swift */,
 				E1F705DA9969C70BBC405DF0 /* FocusedContextCapture.swift */,
@@ -179,6 +186,8 @@
 				F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */,
 				4777BAF6F74870A0A994554E /* MenubarController.swift */,
 				713AAEF79D935A8C9D97373F /* ModelChoices.swift */,
+				72B25C60BF32D1E2E221BFB3 /* NudgeCoordinator.swift */,
+				1E368CAEC2A4E935D794ACFB /* NudgeOverlay.swift */,
 				9EB9750E7F80C4BEC3131157 /* OverlayKeyRouter.swift */,
 				C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */,
 				1C5056F086C8989A44A91D7C /* PermissionsWindow.swift */,
@@ -285,6 +294,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F8803B44FA557188A1D6EB84 /* ArtifactWriter.swift in Sources */,
+				B23E646BE1DB553469F3A7CE /* BackgroundActivityMonitor.swift in Sources */,
 				D864396819460CA1D5F83202 /* Config.swift in Sources */,
 				43116930AA19430C22CB8756 /* ControlWindow.swift in Sources */,
 				0AAC39909F4CC492D9D22D81 /* FocusedContextCapture.swift in Sources */,
@@ -295,6 +305,8 @@
 				E957E85E84F83FBED1C79609 /* JSONFiles.swift in Sources */,
 				0682C5A13079B01105EA5F0E /* MenubarController.swift in Sources */,
 				3B27C92C271BC5D4A3C98A9D /* ModelChoices.swift in Sources */,
+				52EF239CFE8C625D27328C80 /* NudgeCoordinator.swift in Sources */,
+				DE1813F9346E55479B3CFA8C /* NudgeOverlay.swift in Sources */,
 				812772A65B9F4D443D91AA4C /* OverlayKeyRouter.swift in Sources */,
 				CCCAD905B22BC516E30516EC /* PendingRunStore.swift in Sources */,
 				59EA9C20D9B306853C21C5A0 /* PermissionsWindow.swift in Sources */,

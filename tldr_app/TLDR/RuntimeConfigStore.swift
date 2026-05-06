@@ -9,6 +9,10 @@ struct RuntimeConfigFile: Codable {
     var allowContentRetention: Bool
     var soundsEnabled: Bool
     var thinkingLevel: String?
+    var nudgesEnabled: Bool
+    var lastNudgeAt: Date?
+    var recentNudgeDismissals: [Date]
+    var nudgeCooldownMinutes: Int
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -18,6 +22,10 @@ struct RuntimeConfigFile: Codable {
         case allowContentRetention = "allow_content_retention"
         case soundsEnabled = "sounds_enabled"
         case thinkingLevel = "thinking_level"
+        case nudgesEnabled = "nudges_enabled"
+        case lastNudgeAt = "last_nudge_at"
+        case recentNudgeDismissals = "recent_nudge_dismissals"
+        case nudgeCooldownMinutes = "nudge_cooldown_minutes"
     }
 
     init(
@@ -27,7 +35,11 @@ struct RuntimeConfigFile: Codable {
         allowEventLogging: Bool,
         allowContentRetention: Bool,
         soundsEnabled: Bool,
-        thinkingLevel: String?
+        thinkingLevel: String?,
+        nudgesEnabled: Bool,
+        lastNudgeAt: Date?,
+        recentNudgeDismissals: [Date],
+        nudgeCooldownMinutes: Int
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -36,6 +48,10 @@ struct RuntimeConfigFile: Codable {
         self.allowContentRetention = allowContentRetention
         self.soundsEnabled = soundsEnabled
         self.thinkingLevel = thinkingLevel
+        self.nudgesEnabled = nudgesEnabled
+        self.lastNudgeAt = lastNudgeAt
+        self.recentNudgeDismissals = recentNudgeDismissals
+        self.nudgeCooldownMinutes = nudgeCooldownMinutes
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +65,10 @@ struct RuntimeConfigFile: Codable {
             ?? false
         soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        nudgesEnabled = try container.decodeIfPresent(Bool.self, forKey: .nudgesEnabled) ?? true
+        lastNudgeAt = try container.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
+        recentNudgeDismissals = try container.decodeIfPresent([Date].self, forKey: .recentNudgeDismissals) ?? []
+        nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
     }
 }
 
@@ -72,6 +92,18 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var thinkingLevel: String? {
         didSet { save() }
     }
+    @Published var nudgesEnabled: Bool {
+        didSet { save() }
+    }
+    @Published var lastNudgeAt: Date? {
+        didSet { save() }
+    }
+    @Published var recentNudgeDismissals: [Date] {
+        didSet { save() }
+    }
+    @Published var nudgeCooldownMinutes: Int {
+        didSet { save() }
+    }
 
     private var isSaving = false
 
@@ -83,6 +115,10 @@ final class RuntimeConfigStore: ObservableObject {
         self.allowContentRetention = config.allowContentRetention
         self.soundsEnabled = config.soundsEnabled
         self.thinkingLevel = config.thinkingLevel
+        self.nudgesEnabled = config.nudgesEnabled
+        self.lastNudgeAt = config.lastNudgeAt
+        self.recentNudgeDismissals = config.recentNudgeDismissals
+        self.nudgeCooldownMinutes = config.nudgeCooldownMinutes
     }
 
     var snapshot: RuntimeConfigFile {
@@ -93,7 +129,11 @@ final class RuntimeConfigStore: ObservableObject {
             allowEventLogging: allowEventLogging,
             allowContentRetention: allowContentRetention,
             soundsEnabled: soundsEnabled,
-            thinkingLevel: thinkingLevel
+            thinkingLevel: thinkingLevel,
+            nudgesEnabled: nudgesEnabled,
+            lastNudgeAt: lastNudgeAt,
+            recentNudgeDismissals: recentNudgeDismissals,
+            nudgeCooldownMinutes: nudgeCooldownMinutes
         )
     }
 
@@ -110,7 +150,11 @@ final class RuntimeConfigStore: ObservableObject {
             allowEventLogging: true,
             allowContentRetention: false,
             soundsEnabled: true,
-            thinkingLevel: nil
+            thinkingLevel: nil,
+            nudgesEnabled: true,
+            lastNudgeAt: nil,
+            recentNudgeDismissals: [],
+            nudgeCooldownMinutes: 30
         )
         write(config)
         return config
