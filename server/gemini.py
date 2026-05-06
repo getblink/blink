@@ -364,7 +364,11 @@ def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> 
         response_mime_type="application/json",
         response_schema=_schema(),
     )
-    level = thinking_level_for_model(model)
+    override = settings.get("thinking_level")
+    if isinstance(override, str) and override and _is_thinking_model(model):
+        level: str | None = override
+    else:
+        level = thinking_level_for_model(model)
     if level is not None:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
     return types.GenerateContentConfig(**config_kwargs)

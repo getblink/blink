@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CryptoKit
 import Foundation
 import ScreenCaptureKit
@@ -62,6 +63,12 @@ final class TLDRCoordinator {
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
+
+    /// Combine subject for surfaces that want to subscribe rather than own
+    /// the callback (the menubar already owns `onStatusChange`). Mirrors what
+    /// `status(_:)` sends — last-write-wins, replays the current value to
+    /// new subscribers via `CurrentValueSubject`.
+    let statusSubject = CurrentValueSubject<String, Never>("Idle")
 
     init(
         config: Config,
@@ -1187,6 +1194,9 @@ final class TLDRCoordinator {
             "model": runtime.model,
             "style": "default",
         ]
+        if let level = runtime.thinkingLevel, !level.isEmpty {
+            preferences["thinking_level"] = level
+        }
         if let settingsPath = Paths.settingsPath,
            let settings = JSONFiles.readObject(at: settingsPath) {
             if let temperature = settings["temperature"] {
@@ -1302,6 +1312,7 @@ final class TLDRCoordinator {
     private func status(_ text: String) {
         DispatchQueue.main.async {
             self.onStatusChange?(text)
+            self.statusSubject.send(text)
         }
     }
 

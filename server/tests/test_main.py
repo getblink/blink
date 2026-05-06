@@ -10,7 +10,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from server import gemini
-from server.main import app
+from server.main import _selected_settings, app
 from server.storage import TelemetryStore
 
 
@@ -632,6 +632,225 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("requested_model_disallowed", response.json()["warnings"])
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_propagates_thinking_level_preference(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(kwargs["settings"].get("thinking_level"), "high")
+            return {
+                "status": "ok",
+                "tldr": "ok",
+                "suggestions": ["a", "b", "c"],
+                "duration_ms": 1,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-thinking",
+                        "input_mode": "screenshot",
+                        "preferences": {"thinking_level": "HIGH"},
+                    }
+                )
+            },
+            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["warnings"], [])
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_warns_on_disallowed_thinking_level(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertNotIn("thinking_level", kwargs["settings"])
+            return {
+                "status": "ok",
+                "tldr": "ok",
+                "suggestions": ["a", "b", "c"],
+                "duration_ms": 1,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-thinking-bad",
+                        "input_mode": "screenshot",
+                        "preferences": {"thinking_level": "ludicrous"},
+                    }
+                )
+            },
+            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("requested_thinking_level_disallowed", response.json()["warnings"])
+
+    def test_selected_settings_accepts_each_thinking_level(self) -> None:
+        for raw, expected in [
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("HIGH", "high"),
+            ("  Medium  ", "medium"),
+        ]:
+            warnings: list[str] = []
+            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
+            self.assertEqual(settings.get("thinking_level"), expected, raw)
+            self.assertEqual(warnings, [], raw)
+
+    def test_selected_settings_silently_ignores_empty_thinking_level(self) -> None:
+        for raw in ["", "   "]:
+            warnings: list[str] = []
+            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
+            self.assertNotIn("thinking_level", settings)
+            self.assertEqual(warnings, [], repr(raw))
+
+    def test_selected_settings_silently_ignores_non_string_thinking_level(self) -> None:
+        for raw in [1, True, None, ["high"], {"value": "high"}]:
+            warnings: list[str] = []
+            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
+            self.assertNotIn("thinking_level", settings)
+            self.assertEqual(warnings, [], repr(raw))
+
+    def test_selected_settings_warns_on_unknown_thinking_level(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "ludicrous"}}, warnings
+        )
+        self.assertNotIn("thinking_level", settings)
+        self.assertEqual(warnings, ["requested_thinking_level_disallowed"])
+
+    def test_selected_settings_omits_thinking_level_when_absent(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings({"preferences": {}}, warnings)
+        self.assertNotIn("thinking_level", settings)
+        self.assertEqual(warnings, [])
+
+        warnings = []
+        settings = _selected_settings({}, warnings)
+        self.assertNotIn("thinking_level", settings)
+        self.assertEqual(warnings, [])
+
+    def test_generate_config_uses_default_low_for_thinking_model_without_override(self) -> None:
+        captured_thinking: dict[str, Any] = {}
+
+        class FakeThinkingConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_thinking.update(kwargs)
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        with mock.patch.object(gemini, "_schema", return_value={"schema": True}):
+            gemini._generate_config(
+                FakeTypes,
+                {
+                    "model": "gemini-3-flash-preview",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                    "media_resolution": "MEDIA_RESOLUTION_LOW",
+                },
+                "PROMPT",
+            )
+
+        self.assertEqual(captured_thinking, {"thinking_level": "low"})
+
+    def test_generate_config_uses_client_thinking_level_override(self) -> None:
+        captured_thinking: dict[str, Any] = {}
+
+        class FakeThinkingConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_thinking.update(kwargs)
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        with mock.patch.object(gemini, "_schema", return_value={"schema": True}):
+            gemini._generate_config(
+                FakeTypes,
+                {
+                    "model": "gemini-3-flash-preview",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                    "media_resolution": "MEDIA_RESOLUTION_LOW",
+                    "thinking_level": "high",
+                },
+                "PROMPT",
+            )
+
+        self.assertEqual(captured_thinking, {"thinking_level": "high"})
+
+    def test_generate_config_ignores_thinking_level_on_non_thinking_model(self) -> None:
+        captured_thinking: dict[str, Any] = {}
+        thinking_called = False
+
+        class FakeThinkingConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                nonlocal thinking_called
+                thinking_called = True
+                captured_thinking.update(kwargs)
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        with mock.patch.object(gemini, "_schema", return_value={"schema": True}):
+            gemini._generate_config(
+                FakeTypes,
+                {
+                    "model": "gemini-3.1-flash-lite-preview",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                    "media_resolution": "MEDIA_RESOLUTION_LOW",
+                    "thinking_level": "high",
+                },
+                "PROMPT",
+            )
+
+        self.assertFalse(thinking_called)
+        self.assertEqual(captured_thinking, {})
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")

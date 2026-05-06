@@ -20,10 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menubar: MenubarController!
     private var hotkeys: HotkeyManager!
     private var permissionsWindow: PermissionsWindowController?
+    private var controlWindow: ControlWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: TLDREventClient?
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
+    private var hotkeyDisplay: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = CGRequestScreenCaptureAccess()
@@ -31,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
+        self.hotkeyDisplay = summaryHotkey.displayString
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
         DeviceTokenManager.mintIfNeeded(proxyConfig: RuntimeEnvironment.bootstrapProxyConfig())
@@ -59,7 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator: coordinator,
             runtimeStore: runtimeStore,
             hotkeyDisplay: summaryHotkey.displayString,
-            onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
+            onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
+            onShowControlWindow: { [weak self] in self?.showControlWindow() }
         )
         menubar.install()
         if Self.hasUsableSparkleConfig {
@@ -114,10 +118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 
-        showPermissionsWindow()
+        showControlWindow()
         if !hotkeys.start() {
             startHotkeyRetry()
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        // Dock-icon click while no windows are visible should reopen the
+        // control window — same role the menubar item plays.
+        if !hasVisibleWindows {
+            showControlWindow()
+        }
+        return true
     }
 
     private func startHotkeyRetry() {
@@ -148,6 +161,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             permissionsWindow = PermissionsWindowController()
         }
         permissionsWindow?.show()
+    }
+
+    func showControlWindow() {
+        guard let runtimeStore else { return }
+        if controlWindow == nil {
+            controlWindow = ControlWindowController(
+                coordinator: coordinator,
+                runtimeStore: runtimeStore,
+                hotkeyDisplay: hotkeyDisplay,
+                onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
+            )
+        }
+        controlWindow?.show()
     }
 
     private func showFailureAlert(title: String, message: String) {

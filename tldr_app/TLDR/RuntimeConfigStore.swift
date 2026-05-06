@@ -8,6 +8,7 @@ struct RuntimeConfigFile: Codable {
     var allowEventLogging: Bool
     var allowContentRetention: Bool
     var soundsEnabled: Bool
+    var thinkingLevel: String?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -16,6 +17,7 @@ struct RuntimeConfigFile: Codable {
         case allowEventLogging = "allow_event_logging"
         case allowContentRetention = "allow_content_retention"
         case soundsEnabled = "sounds_enabled"
+        case thinkingLevel = "thinking_level"
     }
 
     init(
@@ -24,7 +26,8 @@ struct RuntimeConfigFile: Codable {
         model: String,
         allowEventLogging: Bool,
         allowContentRetention: Bool,
-        soundsEnabled: Bool
+        soundsEnabled: Bool,
+        thinkingLevel: String?
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -32,6 +35,7 @@ struct RuntimeConfigFile: Codable {
         self.allowEventLogging = allowEventLogging
         self.allowContentRetention = allowContentRetention
         self.soundsEnabled = soundsEnabled
+        self.thinkingLevel = thinkingLevel
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +48,7 @@ struct RuntimeConfigFile: Codable {
         allowContentRetention = try container.decodeIfPresent(Bool.self, forKey: .allowContentRetention)
             ?? false
         soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
+        thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
     }
 }
 
@@ -64,6 +69,9 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var soundsEnabled: Bool {
         didSet { save() }
     }
+    @Published var thinkingLevel: String? {
+        didSet { save() }
+    }
 
     private var isSaving = false
 
@@ -74,6 +82,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.allowEventLogging = config.allowEventLogging
         self.allowContentRetention = config.allowContentRetention
         self.soundsEnabled = config.soundsEnabled
+        self.thinkingLevel = config.thinkingLevel
     }
 
     var snapshot: RuntimeConfigFile {
@@ -83,7 +92,8 @@ final class RuntimeConfigStore: ObservableObject {
             model: model,
             allowEventLogging: allowEventLogging,
             allowContentRetention: allowContentRetention,
-            soundsEnabled: soundsEnabled
+            soundsEnabled: soundsEnabled,
+            thinkingLevel: thinkingLevel
         )
     }
 
@@ -99,7 +109,8 @@ final class RuntimeConfigStore: ObservableObject {
             model: "gemini-3-flash-preview",
             allowEventLogging: true,
             allowContentRetention: false,
-            soundsEnabled: true
+            soundsEnabled: true,
+            thinkingLevel: nil
         )
         write(config)
         return config
