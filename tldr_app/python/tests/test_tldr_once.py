@@ -859,7 +859,7 @@ class TldrOnceTests(unittest.TestCase):
                     json.dumps(
                         {
                             "finished_at": f"2026-05-03T12:0{index}:05+00:00",
-                            "custom_reply_text": f"reply {index}",
+                            "custom_reply_text": f"reply text number {index}",
                             "response": {"tldr": f"Conductor run {index}."},
                         }
                     ),
@@ -879,7 +879,10 @@ class TldrOnceTests(unittest.TestCase):
         assert context is not None
         self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
         self.assertEqual(len(context["recent_surface_history"]), 3)
-        self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["reply 2", "reply 1", "reply 0"])
+        self.assertEqual(
+            [sample["text"] for sample in context["voice_samples"]],
+            ["reply text number 2", "reply text number 1", "reply text number 0"],
+        )
 
     def test_build_stateful_context_keeps_scanning_for_voice_after_history_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -966,6 +969,7 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIn("User typed instead: please inspect the logs first", prompt)
         self.assertIn("Prior outcome: user typed a custom reply instead of using the suggestions.", prompt)
         self.assertNotIn("User voice examples:", prompt)
+        self.assertIn("Imitate their style closely in the suggestions", prompt)
 
     def test_prompt_with_stateful_context_does_not_render_model_authored_chosen_text(self) -> None:
         prompt = tldr_once.prompt_with_stateful_context(
@@ -986,7 +990,7 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIn("do not copy that prior model-authored wording", prompt)
         self.assertNotIn("This looks good. Let's test this new prompt structure.", prompt)
 
-    def test_build_stateful_context_excludes_old_runs_outside_window(self) -> None:
+    def test_build_stateful_context_keeps_voice_past_window_but_drops_surface_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -1005,7 +1009,7 @@ class TldrOnceTests(unittest.TestCase):
                 json.dumps(
                     {
                         "finished_at": "2026-05-03T11:40:05+00:00",
-                        "custom_reply_text": "too old",
+                        "custom_reply_text": "too old to be a surface match",
                         "response": {"tldr": "Old run."},
                     }
                 ),
@@ -1024,7 +1028,8 @@ class TldrOnceTests(unittest.TestCase):
         self.assertIsNotNone(context)
         assert context is not None
         self.assertEqual(context["recent_surface_history"], [])
-        self.assertEqual(context["voice_samples"], [])
+        self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["too old to be a surface match"])
+        self.assertEqual(context["voice_samples"][0]["match_mode"], "bundle_match")
         self.assertEqual(context["surface_match_debug"]["match_mode"], "no_match")
         self.assertEqual(context["surface_match_debug"]["skipped_reasons"]["bundle_match_too_old"], 1)
 
@@ -1063,7 +1068,45 @@ class TldrOnceTests(unittest.TestCase):
         self.assertEqual(context["recent_surface_history"][0]["chosen_text"], "Model-authored text")
         self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
 
-    def test_build_stateful_context_uses_window_id_when_both_runs_have_one(self) -> None:
+    def test_build_stateful_context_drops_short_custom_replies_from_voice_and_preferences(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            short = runs / "20260503-120000-000"
+            short.mkdir(parents=True)
+            (short / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.chat"}}),
+                encoding="utf-8",
+            )
+            (short / "run.json").write_text(
+                json.dumps(
+                    {
+                        "finished_at": "2026-05-03T12:00:05+00:00",
+                        "custom_reply_text": "test!",
+                        "response": {
+                            "tldr": "The agent finished a refactor.",
+                            "suggestions": ["Sounds good.", "I agree.", "Let's proceed."],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat"}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        # Short noise replies must not appear as voice or preference signal.
+        self.assertEqual(context["voice_samples"], [])
+        self.assertEqual(context["preference_examples"], [])
+        # Recent surface history is independent of the floor.
+        self.assertEqual(len(context["recent_surface_history"]), 1)
+
+    def test_build_stateful_context_window_id_mismatch_drops_history_but_keeps_voice_as_bundle_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -1096,7 +1139,8 @@ class TldrOnceTests(unittest.TestCase):
 
         self.assertIsNotNone(context)
         assert context is not None
-        self.assertEqual(context["voice_samples"], [])
+        self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["from a different window"])
+        self.assertEqual(context["voice_samples"][0]["match_mode"], "bundle_match")
         self.assertEqual(context["recent_surface_history"], [])
         self.assertEqual(
             context["surface_match_debug"]["skipped_reasons"]["window_id_mismatch"],
@@ -1172,7 +1216,7 @@ class TldrOnceTests(unittest.TestCase):
         self.assertEqual(context["surface_match_debug"]["match_mode"], "bundle_match")
         self.assertEqual(context["matched_history_count"], 1)
 
-    def test_build_stateful_context_excludes_global_custom_replies_from_other_surfaces(self) -> None:
+    def test_build_stateful_context_collects_cross_surface_voice_with_match_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -1191,7 +1235,7 @@ class TldrOnceTests(unittest.TestCase):
                 json.dumps(
                     {
                         "finished_at": "2026-05-03T12:00:05+00:00",
-                        "custom_reply_text": "do not use this voice",
+                        "custom_reply_text": "voice from another app",
                     }
                 ),
                 encoding="utf-8",
@@ -1208,9 +1252,126 @@ class TldrOnceTests(unittest.TestCase):
 
         self.assertIsNotNone(context)
         assert context is not None
-        self.assertEqual(context["voice_samples"], [])
+        self.assertEqual([sample["text"] for sample in context["voice_samples"]], ["voice from another app"])
+        self.assertEqual(context["voice_samples"][0]["match_mode"], "cross_surface")
         self.assertEqual(context["recent_surface_history"], [])
         self.assertEqual(context["surface_match_debug"]["skipped_reasons"]["bundle_id_mismatch"], 1)
+
+    def test_build_stateful_context_voice_prefers_same_surface_then_cross_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            # Same window (highest voice priority), but oldest of the three.
+            same_window = runs / "20260503-115500-000"
+            same_window.mkdir(parents=True)
+            (same_window / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}}),
+                encoding="utf-8",
+            )
+            (same_window / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T11:55:05+00:00", "custom_reply_text": "same window voice"}),
+                encoding="utf-8",
+            )
+
+            # Same bundle, different window.
+            same_bundle = runs / "20260503-115700-000"
+            same_bundle.mkdir(parents=True)
+            (same_bundle / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 999}}),
+                encoding="utf-8",
+            )
+            (same_bundle / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T11:57:05+00:00", "custom_reply_text": "same bundle voice"}),
+                encoding="utf-8",
+            )
+
+            # Different bundle entirely (most recent, but lowest priority).
+            cross = runs / "20260503-120000-000"
+            cross.mkdir(parents=True)
+            (cross / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.other"}}),
+                encoding="utf-8",
+            )
+            (cross / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T12:00:05+00:00", "custom_reply_text": "cross surface voice"}),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(
+            [sample["text"] for sample in context["voice_samples"]],
+            ["same window voice", "same bundle voice", "cross surface voice"],
+        )
+        self.assertEqual(
+            [sample["match_mode"] for sample in context["voice_samples"]],
+            ["window_match", "bundle_match", "cross_surface"],
+        )
+
+    def test_build_stateful_context_voice_cap_keeps_higher_priority_over_recent_cross_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            # Six recent cross-surface samples (bundle mismatch).
+            for index in range(6):
+                run_dir = runs / f"20260503-1200{index:02d}-000"
+                run_dir.mkdir(parents=True)
+                (run_dir / "request.json").write_text(
+                    json.dumps({"frontmost_app": {"bundle_id": f"com.example.other{index}"}}),
+                    encoding="utf-8",
+                )
+                (run_dir / "run.json").write_text(
+                    json.dumps(
+                        {
+                            "finished_at": f"2026-05-03T12:00:{index:02d}+00:00",
+                            "custom_reply_text": f"cross surface voice number {index}",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            # One older same-window sample. Voice cap is 5; we expect the
+            # same-window sample to bump out the oldest cross-surface one.
+            same = runs / "20260503-115500-000"
+            same.mkdir(parents=True)
+            (same / "request.json").write_text(
+                json.dumps({"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}}),
+                encoding="utf-8",
+            )
+            (same / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T11:55:05+00:00", "custom_reply_text": "same window voice"}),
+                encoding="utf-8",
+            )
+
+            context = tldr_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat", "window_id": 7}},
+                now=tldr_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        voice_texts = [sample["text"] for sample in context["voice_samples"]]
+        self.assertEqual(len(voice_texts), tldr_once.VOICE_SAMPLE_LIMIT)
+        self.assertEqual(voice_texts[0], "same window voice")
+        # The four most-recent cross-surface samples make up the rest.
+        self.assertEqual(
+            voice_texts[1:],
+            [
+                "cross surface voice number 5",
+                "cross surface voice number 4",
+                "cross surface voice number 3",
+                "cross surface voice number 2",
+            ],
+        )
 
     def test_disable_proxy_env_ignores_proxy_credentials(self) -> None:
         old_proxy_url = os.environ.get("BLINK_PROXY_URL")

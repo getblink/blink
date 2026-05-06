@@ -86,7 +86,7 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
         "",
         "Stateful TLDR context:",
         "Use user preference examples to infer which suggestions are useful in this surface.",
-        "Use user voice examples for style only. Do not copy facts from them into the current reply unless the current screen supports those facts.",
+        "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
         "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
     ]
     if preference_examples:

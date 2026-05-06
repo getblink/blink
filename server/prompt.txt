@@ -69,17 +69,18 @@ Suggestion rules, in priority order:
 
 2. Don't invent private facts or commitments not supported by the captured context.
 
-3. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the capture truly calls only for a brief acknowledgement.
+3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the captured context AND from the user voice examples below. The user's house style is the default; only fall back to neutral phrasing where you have no signal. Do not force shortness when a more complete answer fits the user better.
+   Two guards: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
 
-4. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
+4. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the capture truly calls only for a brief acknowledgement.
+
+5. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
    - If the user has already started typing, suggestions are paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
    - Do not repeat the existing draft prefix. Continue after the caret.
    - If the draft ends mid-sentence, continue it naturally.
    - If the draft is already a full sentence, suggest text that could follow it.
 
-5. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current capture does not need.
-
-6. Match the user's register. Study any of the user's own prior messages visible in the captured context, and match their casing, punctuation, directness, vocabulary, and emoji/no-emoji style. Same-surface voice examples are style guides only. Do not force shortness when a more complete answer is more valuable. Current capture evidence wins.
+6. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current capture does not need.
 
 7. Never use em dashes ("—") or en dashes ("–") in any suggestion. Substitute a period, comma, semicolon, or new line.
    - Bad: "Sounds good — I'll send the doc by EOD."
