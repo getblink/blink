@@ -995,6 +995,7 @@ final class TLDRCoordinator {
         }
 
         let pasteRequestID = requestID
+        let modalCaret = overlay.customInputCaretScreenPoint()
         overlay.dismissAnimated { [weak self] in
             guard let self else { return }
             if let pasteRequestID, self.currentRequestID != pasteRequestID {
@@ -1009,7 +1010,7 @@ final class TLDRCoordinator {
                 case .success:
                     self.status("inserted your reply")
                     self.soundEffects.play(.insert)
-                    self.celebrateAtDestinationCaret()
+                    self.celebrateAtDestinationCaret(modalFallback: modalCaret)
                     if let requestID {
                         self.emitEvent(
                             requestID: requestID,
@@ -1070,10 +1071,13 @@ final class TLDRCoordinator {
         overlay.onDismissKey = nil
     }
 
-    private func celebrateAtDestinationCaret() {
+    private func celebrateAtDestinationCaret(modalFallback: CGPoint? = nil) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard let caret = FocusedContextCapture.caretScreenPoint() else { return }
-            ConfettiPanel.fire(at: caret)
+            if let caret = FocusedContextCapture.caretScreenPoint() {
+                ConfettiPanel.fire(at: caret)
+            } else if let fallback = modalFallback {
+                ConfettiPanel.fire(at: fallback)
+            }
         }
     }
 

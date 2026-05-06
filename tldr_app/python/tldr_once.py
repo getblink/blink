@@ -99,9 +99,10 @@ SURFACE_HISTORY_LIMIT = 3
 PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
+VOICE_SAMPLE_MIN_CHARS = 15
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
-STATEFUL_CONTEXT_WINDOW_SECONDS = 15 * 60
+SURFACE_CONTEXT_WINDOW_SECONDS = 15 * 60
 
 DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
@@ -157,17 +158,18 @@ Suggestion rules, in priority order:
 
 2. Don't invent private facts or commitments not supported by the screenshot.
 
-3. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
+3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the screenshot AND from the user voice examples below. The user's house style is the default; only fall back to neutral phrasing where you have no signal. Do not force shortness when a more complete answer fits the user better.
+   Two guards: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
 
-4. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
+4. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
+
+5. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
    - If the user has already started typing, suggestions are paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
    - Do not repeat the existing draft prefix. Continue after the caret.
    - If the draft ends mid-sentence, continue it naturally.
    - If the draft is already a full sentence, suggest text that could follow it.
 
-5. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current screen does not need.
-
-6. Match the user's register. Study any of the user's own prior messages visible in the screenshot, and match their casing, punctuation, directness, vocabulary, and emoji/no-emoji style. Same-surface voice examples are style guides only. Do not force shortness when a more complete answer is more valuable. Current screen evidence wins.
+6. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current screen does not need.
 
 7. Never use em dashes ("—") or en dashes ("–") in any suggestion. Substitute a period, comma, semicolon, or new line.
    - Bad: "Sounds good — I'll send the doc by EOD."
@@ -266,6 +268,17 @@ def _parse_iso(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+_VOICE_PRIORITY_BY_MATCH_MODE = {
+    "window_match": 0,
+    "bundle_match": 1,
+    "cross_surface": 2,
+}
+
+
+def _voice_priority(sample: dict[str, Any]) -> int:
+    return _VOICE_PRIORITY_BY_MATCH_MODE.get(sample.get("match_mode"), 3)
 
 
 def _run_sort_time(run_dir: Path, run_log: dict[str, Any]) -> datetime:
@@ -367,7 +380,7 @@ def build_stateful_context(
         run_pairs.append((run_dir, run_log, request_log, _run_sort_time(run_dir, run_log)))
     run_pairs.sort(key=lambda item: item[3], reverse=True)
 
-    voice_samples: list[dict[str, Any]] = []
+    voice_candidates: list[dict[str, Any]] = []
     seen_voice: set[str] = set()
     preference_examples: list[dict[str, Any]] = []
     seen_preference: set[str] = set()
@@ -382,20 +395,56 @@ def build_stateful_context(
     for run_dir, run_log, request_log, sort_time in run_pairs:
         previous_surface_key = _surface_key(request_log)
         match_mode, skipped_reason = _surface_match(current_surface_key, previous_surface_key)
-        if match_mode is None:
-            reason = skipped_reason or "no_match"
-            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
-            continue
 
         age_seconds = (now - sort_time).total_seconds()
         if age_seconds < 0:
             surface_match_debug["skipped_reasons"]["future_run"] = surface_match_debug["skipped_reasons"].get("future_run", 0) + 1
             continue
-        if age_seconds > STATEFUL_CONTEXT_WINDOW_SECONDS:
+
+        response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
+        custom_text = _bounded_text(run_log.get("custom_reply_text"), VOICE_SAMPLE_MAX_CHARS)
+        # Single-word noise like "test", "ok", "ack" carries no real style or
+        # preference signal and tends to harm the model when it gets imitated
+        # verbatim. Drop it from both voice samples and preference examples.
+        if custom_text and len(custom_text) < VOICE_SAMPLE_MIN_CHARS:
+            custom_text = None
+
+        # Voice samples are not gated by surface match or the recency window:
+        # the user's voice changes slowly and is informative across apps. The
+        # surface buckets below still apply both gates. Same-app voice from a
+        # different window is still high-signal, so a window_id_mismatch
+        # against the same bundle is treated as a bundle_match for voice
+        # purposes (only a true bundle mismatch is cross_surface).
+        if custom_text and custom_text not in seen_voice:
+            frontmost = request_log.get("frontmost_app")
+            if not isinstance(frontmost, dict):
+                frontmost = {}
+            if match_mode:
+                voice_match_mode = match_mode
+            elif skipped_reason == "window_id_mismatch":
+                voice_match_mode = "bundle_match"
+            else:
+                voice_match_mode = "cross_surface"
+            voice_candidates.append(
+                {
+                    "text": custom_text,
+                    "created_at": run_log.get("custom_reply_at") or run_log.get("chosen_at") or run_log.get("finished_at"),
+                    "app_bundle_id": frontmost.get("bundle_id"),
+                    "app_name": frontmost.get("app_name"),
+                    "match_mode": voice_match_mode,
+                }
+            )
+            seen_voice.add(custom_text)
+
+        if match_mode is None:
+            reason = skipped_reason or "no_match"
+            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
+            continue
+        if age_seconds > SURFACE_CONTEXT_WINDOW_SECONDS:
             reason = f"{match_mode}_too_old"
             surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
             continue
-        response = run_log.get("response") if isinstance(run_log.get("response"), dict) else {}
+
         if len(recent_surface_history) < SURFACE_HISTORY_LIMIT:
             history_item = {
                 "created_at": run_log.get("finished_at") or run_log.get("started_at"),
@@ -414,7 +463,6 @@ def build_stateful_context(
                 if surface_match_debug["match_mode"] == "no_match":
                     surface_match_debug["match_mode"] = match_mode
 
-        custom_text = _bounded_text(run_log.get("custom_reply_text"), VOICE_SAMPLE_MAX_CHARS)
         raw_suggestions = response.get("suggestions")
         rejected_suggestions = []
         if isinstance(raw_suggestions, list):
@@ -440,27 +488,13 @@ def build_stateful_context(
             )
             seen_preference.add(custom_text)
 
-        if custom_text and custom_text not in seen_voice and len(voice_samples) < VOICE_SAMPLE_LIMIT:
-            frontmost = request_log.get("frontmost_app")
-            if not isinstance(frontmost, dict):
-                frontmost = {}
-            voice_samples.append(
-                {
-                    "text": custom_text,
-                    "created_at": run_log.get("custom_reply_at") or run_log.get("chosen_at") or run_log.get("finished_at"),
-                    "app_bundle_id": frontmost.get("bundle_id"),
-                    "app_name": frontmost.get("app_name"),
-                    "match_mode": match_mode,
-                }
-            )
-            seen_voice.add(custom_text)
-
-        if (
-            len(recent_surface_history) >= SURFACE_HISTORY_LIMIT
-            and len(voice_samples) >= VOICE_SAMPLE_LIMIT
-            and len(preference_examples) >= PREFERENCE_EXAMPLE_LIMIT
-        ):
-            break
+    # Prefer same-window voice, then same-bundle, then cross-surface. Within
+    # each priority bucket the input order (time-desc) is preserved by the
+    # stable sort, so the cap of VOICE_SAMPLE_LIMIT favors the most relevant
+    # signal when same-surface samples exist, and falls back to recent
+    # cross-surface voice when they don't.
+    voice_candidates.sort(key=_voice_priority)
+    voice_samples = voice_candidates[:VOICE_SAMPLE_LIMIT]
 
     if not voice_samples and not recent_surface_history and not preference_examples:
         if not surface_match_debug["skipped_reasons"]:
@@ -514,7 +548,7 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
         "",
         "Stateful TLDR context:",
         "Use user preference examples to infer which suggestions are useful in this surface.",
-        "Use user voice examples for style only. Do not copy facts from them into the current reply unless the current screen supports those facts.",
+        "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
         "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
     ]
     if preference_examples:

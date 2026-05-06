@@ -860,6 +860,19 @@ final class SuggestionsOverlay: NSObject {
         customInputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    @MainActor
+    func customInputCaretScreenPoint() -> CGPoint? {
+        guard panel != nil, let field = customInputField, field.isEditing else { return nil }
+        if let textView = field.currentEditor() as? NSTextView {
+            let caretRect = textView.firstRect(forCharacterRange: textView.selectedRange(), actualRange: nil)
+            return CGPoint(x: caretRect.midX, y: caretRect.midY)
+        }
+        // Last-ditch fallback: center of the field in screen coordinates.
+        guard let fieldWindow = field.window else { return nil }
+        let fieldRectInScreen = fieldWindow.convertToScreen(field.convert(field.bounds, to: nil))
+        return CGPoint(x: fieldRectInScreen.midX, y: fieldRectInScreen.midY)
+    }
+
     @discardableResult
     func expandSuggestion(index: Int) -> Bool {
         guard let panel, let contentView, index >= 0, index < suggestionCards.count else {
