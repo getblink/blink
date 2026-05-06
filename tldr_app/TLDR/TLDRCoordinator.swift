@@ -648,10 +648,20 @@ final class TLDRCoordinator {
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
-                self.overlay.show(
-                    tldr: result.tldr,
-                    suggestions: self.currentSuggestions
-                )
+                if self.overlay.isStreamingActive {
+                    // Streaming already populated the panel via updateSummary
+                    // and updateSuggestions. Calling show() here would close
+                    // and rebuild the entire NSPanel, producing a whole-UI
+                    // flicker. Push the final values through the in-place
+                    // update entry points instead.
+                    self.overlay.updateSummary(result.tldr)
+                    self.overlay.updateSuggestions(self.currentSuggestions)
+                } else {
+                    self.overlay.show(
+                        tldr: result.tldr,
+                        suggestions: self.currentSuggestions
+                    )
+                }
                 self.soundEffects.play(.resultReady)
                 if result.tldr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && self.currentSuggestions.isEmpty {
