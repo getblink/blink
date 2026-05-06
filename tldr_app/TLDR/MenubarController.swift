@@ -101,6 +101,14 @@ final class MenubarController: NSObject {
         updateMenuItem = updateItem
         menu.addItem(updateItem)
 
+        let retentionItem = NSMenuItem(
+            title: "Summaries and suggestions are stored to improve TLDR; screenshots are not retained.",
+            action: nil,
+            keyEquivalent: ""
+        )
+        retentionItem.isEnabled = false
+        menu.addItem(retentionItem)
+
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         modelItem.submenu = buildModelMenu()
         menu.addItem(modelItem)

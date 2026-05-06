@@ -480,6 +480,8 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         recorded = telemetry_store.record_request.call_args.args[0]
         self.assertEqual(recorded["install_id"], "install-private")
+        self.assertEqual(recorded["summary"], "You're drafting a reply.")
+        self.assertEqual(recorded["suggestions"], ["One", "Two", "Three"])
         self.assertEqual(recorded["focused_context"]["value"]["redacted"], True)
         self.assertEqual(recorded["ocr_packet"]["blocks"][0]["text"]["redacted"], True)
 
@@ -737,6 +739,130 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.json(), {"ok": True, "stored": True})
         stored_payload = telemetry_store.record_event.call_args.kwargs["payload"]
         self.assertEqual(stored_payload["install_id"], "install-abc")
+
+    def test_events_update_terminal_outcome_on_request_row(self) -> None:
+        telemetry_store = mock.Mock()
+        telemetry_store.record_event.return_value = True
+        telemetry_store.update_request_outcome.return_value = True
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer dev-token"},
+                json={
+                    "request_id": "req-123",
+                    "event_type": "suggestion_inserted",
+                    "created_at": "2026-04-29T00:00:00Z",
+                    "details": {"chosen_index": 2},
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        telemetry_store.update_request_outcome.assert_called_once_with(
+            request_id="req-123",
+            chosen_index=2,
+            outcome="inserted",
+        )
+
+    def test_auth_mint_uses_bootstrap_and_persists_hashed_device_token(self) -> None:
+        telemetry_store = mock.Mock()
+
+        with mock.patch.dict(os.environ, {"BLINK_BOOTSTRAP_TOKEN": "bootstrap"}, clear=False), \
+             mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/auth/mint",
+                headers={"Authorization": "Bearer bootstrap"},
+                json={"install_id": "install-abc"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        token = response.json()["token"]
+        self.assertTrue(token.startswith("tldr_dt_"))
+        call = telemetry_store.mint_device_token.call_args.kwargs
+        self.assertEqual(call["install_id"], "install-abc")
+        self.assertEqual(len(call["token_hash"]), 64)
+
+    def test_bootstrap_token_accepted_on_events_during_legacy_window(self) -> None:
+        # During the upgrade window (BLINK_LEGACY_TOKEN_ALLOWED defaults true)
+        # the bundled bootstrap token should also satisfy non-mint endpoints
+        # so first-launch installs aren't bricked between launch and a
+        # successful mint round-trip.
+        telemetry_store = mock.Mock()
+        telemetry_store.record_event.return_value = True
+        telemetry_store.update_request_outcome.return_value = True
+
+        with mock.patch.dict(os.environ, {"BLINK_BOOTSTRAP_TOKEN": "bootstrap"}, clear=False), \
+             mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer bootstrap"},
+                json={
+                    "request_id": "req-bootstrap-event",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_bootstrap_token_rejected_on_events_when_legacy_disabled(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "BLINK_BOOTSTRAP_TOKEN": "bootstrap",
+                "BLINK_LEGACY_TOKEN_ALLOWED": "false",
+            },
+            clear=False,
+        ):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer bootstrap"},
+                json={
+                    "request_id": "req-bootstrap-event",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn(
+            "bootstrap token is only valid for minting",
+            response.json()["detail"],
+        )
+
+    def test_legacy_shared_token_rejected_when_legacy_disabled(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"BLINK_LEGACY_TOKEN_ALLOWED": "false"},
+            clear=False,
+        ):
+            response = self.client.post(
+                "/v1/tldr/events",
+                headers={"Authorization": "Bearer dev-token"},
+                json={
+                    "request_id": "req-legacy",
+                    "event_type": "capture_started",
+                    "created_at": "2026-04-29T00:00:00Z",
+                },
+            )
+        self.assertEqual(response.status_code, 401)
+
+    def test_auth_mint_rejects_install_id_over_128_chars(self) -> None:
+        long_install_id = "x" * 129
+        with mock.patch.dict(os.environ, {"BLINK_BOOTSTRAP_TOKEN": "bootstrap"}, clear=False):
+            response = self.client.post(
+                "/v1/auth/mint",
+                headers={"Authorization": "Bearer bootstrap"},
+                json={"install_id": long_install_id},
+            )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("128", response.json()["detail"])
+
+    def test_auth_mint_returns_500_when_bootstrap_empty(self) -> None:
+        with mock.patch.dict(os.environ, {"BLINK_BOOTSTRAP_TOKEN": ""}, clear=False):
+            response = self.client.post(
+                "/v1/auth/mint",
+                headers={"Authorization": "Bearer anything"},
+                json={"install_id": "install-abc"},
+            )
+        self.assertEqual(response.status_code, 500)
 
     def test_events_report_unstored_when_storage_disabled(self) -> None:
         with mock.patch(

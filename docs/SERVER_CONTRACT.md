@@ -15,7 +15,8 @@ Response:
 
 Headers:
 
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <device token>`; legacy shared tokens are accepted
+  only while `BLINK_LEGACY_TOKEN_ALLOWED=true`
 
 Body:
 
@@ -50,12 +51,14 @@ Operational rules:
 - The server must not persist screenshot bytes or response bodies.
 - When `DATABASE_URL` is configured, the server may persist structured
   request/event telemetry.
+- Request telemetry includes the returned summary, suggestions, raw model
+  output, and terminal outcome metadata. Screenshot bytes are never persisted.
 - When `REDIS_URL` is configured, the server may cache response JSON keyed by
   input hash only when `allow_content_retention=true`.
 
 Error responses:
 
-- `401` — missing or invalid token
+- `401` — missing or invalid device/legacy token
 - `413` — screenshot exceeds 10MB
 - `422` — invalid request envelope or missing screenshot/context
 - `502` — Gemini upstream failure with a sanitized message
@@ -65,7 +68,8 @@ Error responses:
 
 Headers:
 
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <device token>`; legacy shared tokens are accepted
+  only while `BLINK_LEGACY_TOKEN_ALLOWED=true`
 
 Body:
 
@@ -94,6 +98,54 @@ Success response:
 `stored` is `true` only when the event reached durable telemetry storage. It is
 `false` when event logging is disabled, storage is unavailable, or the backend
 is running without a configured database.
+Terminal events `suggestion_copied`, `suggestion_inserted`, and
+`suggestion_dismissed` also update `tldr_requests.outcome` and optional
+`tldr_requests.chosen_index`. The legacy event name `overlay_dismissed` is
+accepted as an alias for `suggestion_dismissed` for older clients.
+
+## `POST /v1/auth/mint`
+
+Headers:
+
+- `Authorization: Bearer <bootstrap token>`
+
+Body:
+
+```json
+{"install_id": "anonymous-install-uuid"}
+```
+
+Success response:
+
+```json
+{"token": "tldr_dt_...", "token_type": "bearer"}
+```
+
+The returned token is shown only once to the client. The server stores its
+SHA-256 hash and revokes any prior token for the same `install_id`.
+
+During the upgrade window (default `BLINK_LEGACY_TOKEN_ALLOWED=true`) the
+bootstrap token also satisfies non-mint endpoints so a fresh install isn't
+bricked between launch and a successful mint round-trip. When
+`BLINK_LEGACY_TOKEN_ALLOWED=false`, the bootstrap token is accepted only on
+`/v1/auth/mint`.
+
+`install_id` is capped at 128 characters.
+
+The mint endpoint's per-IP rate limit reads `X-Forwarded-For` only when
+`TLDR_TRUST_PROXY_HEADERS=true`. Set this when the server runs behind a
+trusted reverse proxy (Railway, Cloudflare, etc.); otherwise the limit
+falls back to `request.client.host`.
+
+Error responses:
+
+- `401` — missing or invalid bootstrap token
+- `422` — request body is not valid JSON, missing `install_id`, or
+  `install_id` exceeds 128 characters
+- `429` — per-IP mint rate limit exceeded (default 5/minute, configurable
+  via `TLDR_MINT_RATE_LIMIT_PER_MINUTE`)
+- `500` — `BLINK_BOOTSTRAP_TOKEN` is empty (server misconfigured)
+- `503` — device token storage is unavailable
 
 ## `POST /tldr`
 
@@ -102,7 +154,7 @@ scratchpad proxy path.
 
 Headers:
 
-- `Authorization: Bearer <token>`
+- `Authorization: Bearer <device or legacy token>`
 
 Body:
 

@@ -7,12 +7,21 @@ struct ProxyConfig {
 
 enum RuntimeEnvironment {
     static func proxyConfig() -> ProxyConfig? {
+        proxyConfig(preferDeviceToken: true)
+    }
+
+    static func bootstrapProxyConfig() -> ProxyConfig? {
+        proxyConfig(preferDeviceToken: false)
+    }
+
+    private static func proxyConfig(preferDeviceToken: Bool) -> ProxyConfig? {
         let env = mergedEnvironment()
         guard !proxyDisabled(in: env) else {
             return nil
         }
         let rawURL = (env["BLINK_PROXY_URL"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = (env["BLINK_PROXY_TOKEN"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundledToken = (env["BLINK_PROXY_TOKEN"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = (preferDeviceToken ? Paths.loadDeviceToken() : nil) ?? bundledToken
         guard !rawURL.isEmpty, !token.isEmpty, let url = URL(string: rawURL) else {
             return nil
         }

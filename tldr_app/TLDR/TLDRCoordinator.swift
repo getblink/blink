@@ -45,6 +45,11 @@ final class TLDRCoordinator {
     private var currentSuggestions: [String] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    // Tracks the request ID for which a terminal event (copied / inserted /
+    // paste_failed flow) has already been emitted, so a follow-on dismissOverlay
+    // call during the close/insert animation does not emit a redundant
+    // suggestion_dismissed and overwrite the server-side outcome.
+    private var terminalEmittedRequestID: String?
     private var currentStreamingRun: PythonRunner.StreamingRun?
     private var choiceState = SuggestionChoiceState(suggestionCount: 0)
     private var running = false
@@ -816,6 +821,9 @@ final class TLDRCoordinator {
         let text = currentSuggestions[index]
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
+        if let requestID {
+            terminalEmittedRequestID = requestID
+        }
         overlay.close()
 
         if let requestID {
@@ -873,6 +881,7 @@ final class TLDRCoordinator {
         status("inserting suggestion \(index + 1)...")
 
         if let requestID {
+            terminalEmittedRequestID = requestID
             PendingRunStore.update(requestID: requestID) { payload in
                 payload["last_phase"] = "paste_started"
                 payload["chosen_index"] = index + 1
@@ -1041,6 +1050,7 @@ final class TLDRCoordinator {
         currentSuggestions = []
         currentBundleDir = nil
         currentRequestID = nil
+        terminalEmittedRequestID = nil
         currentStreamingRun = nil
         choiceState = SuggestionChoiceState(suggestionCount: 0)
         overlay.onCustomInputFocusChanged = nil
@@ -1077,18 +1087,21 @@ final class TLDRCoordinator {
         }
         guard overlay.isVisible else { return }
         let requestID = currentRequestID
+        let alreadyTerminal = (requestID != nil && requestID == terminalEmittedRequestID)
         currentStreamingRun?.terminate()
         currentStreamingRun = nil
         currentRequestID = nil
         currentBundleDir = nil
         choiceState = SuggestionChoiceState(suggestionCount: 0)
         status("dismissed")
-        recordDismiss()
-        if let requestID {
+        if !alreadyTerminal {
+            recordDismiss()
+        }
+        if let requestID, !alreadyTerminal {
             let clientMetadata = Self.clientMetadata()
             emitEvent(
                 requestID: requestID,
-                type: "overlay_dismissed",
+                type: "suggestion_dismissed",
                 allowLogging: runtimeStore.allowEventLogging,
                 clientMetadata: clientMetadata,
                 details: [:]

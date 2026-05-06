@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
+        DeviceTokenManager.mintIfNeeded(proxyConfig: RuntimeEnvironment.bootstrapProxyConfig())
         let eventClient = TLDREventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
         let soundEffects = SoundEffects(runtimeStore: runtimeStore)

@@ -88,6 +88,7 @@ def build_generate_config(types_module, prompt_text: str, settings: dict[str, An
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
 DISABLE_PROXY_ENV = "TLDR_DISABLE_PROXY"
+DEVICE_TOKEN_PATH = Path.home() / ".tldr" / "device_token"
 MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
 SERVER_CONTENT_TEXT = MODEL_CONTENT_TEXT
 
@@ -838,7 +839,11 @@ def proxy_settings_from_env() -> dict[str, str] | None:
     if env_truthy(os.environ.get(DISABLE_PROXY_ENV)):
         return None
     proxy_url = (os.environ.get(PROXY_URL_ENV) or "").strip()
-    proxy_token = (os.environ.get(PROXY_TOKEN_ENV) or "").strip()
+    proxy_token = ""
+    if DEVICE_TOKEN_PATH.exists():
+        proxy_token = DEVICE_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    if not proxy_token:
+        proxy_token = (os.environ.get(PROXY_TOKEN_ENV) or "").strip()
     if not proxy_url and not proxy_token:
         return None
     if not proxy_url or not proxy_token:
