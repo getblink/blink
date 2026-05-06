@@ -181,7 +181,7 @@ final class SuggestionsOverlay: NSObject {
     private var summaryLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
-    private var softErrorBanner: NSView?
+    private var softErrorPanel: NSPanel?
     private var summaryBaseFrame: NSRect = .zero
     private var summaryTextY: CGFloat = 0
     private var suggestionCards: [SuggestionCard] = []
@@ -657,8 +657,7 @@ final class SuggestionsOverlay: NSObject {
             )
             panel.setFrame(newFrame, display: true, animate: false)
             // Re-anchor basePanelTopY to the actual post-clamp top edge so any
-            // later expand/collapse uses the recentered top, not the stale
-            // loading-pill top.
+            // later expand/collapse uses the recentered top.
             basePanelTopY = panel.frame.maxY
             contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
             summaryCard.frame = NSRect(
@@ -1077,8 +1076,8 @@ final class SuggestionsOverlay: NSObject {
 
     func close() {
         tearDownLoadingState()
-        softErrorBanner?.removeFromSuperview()
-        softErrorBanner = nil
+        softErrorPanel?.close()
+        softErrorPanel = nil
         removeMouseMonitors()
         customInputHintLabel?.alphaValue = 0
         panel?.close()
@@ -1114,6 +1113,8 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         isDismissing = true
+        softErrorPanel?.close()
+        softErrorPanel = nil
         // Anchor the contentView's layer at center so the scale-down reads as a
         // shrink-into-self rather than a top-left collapse. Adjust position so
         // the layer doesn't visibly jump when we shift the anchor point.
@@ -1146,57 +1147,82 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func showSoftError(_ message: String) {
-        guard let contentView else { return }
-        softErrorBanner?.removeFromSuperview()
+        guard let overlayPanel = panel else { return }
+        softErrorPanel?.close()
+        softErrorPanel = nil
 
         let tint = NSColor.systemRed
         let width = Layout.panelWidth
         let height: CGFloat = 44
-        let targetFrame = NSRect(
-            x: Layout.shadowBleed,
-            y: contentView.bounds.height - Layout.shadowBleed - height,
-            width: width,
-            height: height
+
+        let landX = overlayPanel.frame.origin.x + Layout.shadowBleed
+        let landY = overlayPanel.frame.maxY - Layout.shadowBleed + 8
+        let landFrame = NSRect(x: landX, y: landY, width: width, height: height)
+        let startFrame = landFrame.offsetBy(dx: 0, dy: 8)
+
+        let bannerPanel = NSPanel(
+            contentRect: startFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
         )
-        let banner = NSView(frame: targetFrame.offsetBy(dx: 0, dy: height + 8))
-        banner.wantsLayer = true
-        banner.layer?.cornerRadius = height / 2
-        banner.layer?.masksToBounds = true
-        banner.layer?.backgroundColor = tint.withAlphaComponent(0.22).cgColor
-        banner.alphaValue = 0
+        bannerPanel.level = .screenSaver
+        bannerPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        bannerPanel.isOpaque = false
+        bannerPanel.backgroundColor = .clear
+        bannerPanel.hasShadow = false
+        bannerPanel.ignoresMouseEvents = true
+        bannerPanel.isReleasedWhenClosed = false
+        bannerPanel.alphaValue = 0
+
+        let container = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        bannerPanel.contentView = container
+
+        let pill = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = tint.withAlphaComponent(0.92).cgColor
+        pill.layer?.cornerRadius = height / 2
+        pill.layer?.shadowColor = NSColor.black.cgColor
+        pill.layer?.shadowOpacity = 0.25
+        pill.layer?.shadowRadius = 8
+        pill.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        container.addSubview(pill)
 
         let icon = NSImageView(frame: NSRect(x: 18, y: 11, width: 22, height: 22))
         icon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
-        icon.contentTintColor = tint
-        banner.addSubview(icon)
+        icon.contentTintColor = .white
+        pill.addSubview(icon)
 
         let messageLabel = label(
             frame: NSRect(x: 50, y: 11, width: width - 72, height: 22),
             text: message,
             font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            color: .labelColor,
+            color: .white,
             singleLine: true
         )
-        banner.addSubview(messageLabel)
-        contentView.addSubview(banner, positioned: .above, relativeTo: nil)
-        softErrorBanner = banner
+        pill.addSubview(messageLabel)
+
+        bannerPanel.orderFrontRegardless()
+        softErrorPanel = bannerPanel
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.28
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            banner.animator().frame = targetFrame
-            banner.animator().alphaValue = 1
+            bannerPanel.animator().setFrame(landFrame, display: true)
+            bannerPanel.animator().alphaValue = 1
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self, weak banner] in
-            guard let self, let banner, self.softErrorBanner === banner else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self, weak bannerPanel] in
+            guard let self, let bannerPanel, self.softErrorPanel === bannerPanel else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                banner.animator().alphaValue = 0
+                bannerPanel.animator().alphaValue = 0
             } completionHandler: {
-                banner.removeFromSuperview()
-                if self.softErrorBanner === banner {
-                    self.softErrorBanner = nil
+                bannerPanel.close()
+                if self.softErrorPanel === bannerPanel {
+                    self.softErrorPanel = nil
                 }
             }
         }
