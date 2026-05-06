@@ -45,7 +45,7 @@ targets:
         CFBundleName: TLDR
         CFBundleDisplayName: TLDR
         CFBundleIdentifier: com.henryz2004.tldr
-        CFBundleShortVersionString: "0.1.1"
+        CFBundleShortVersionString: "0.1.2"
         CFBundleVersion: "1"
         CFBundleExecutable: TLDR
         LSMinimumSystemVersion: "14.0"

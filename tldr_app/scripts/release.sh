@@ -117,20 +117,24 @@ echo "[tldr] dmg sha256: $DMG_SHA256"
 
 if [[ "$UPLOAD" != "0" ]]; then
     echo "[tldr] uploading $DMG_REMOTE_KEY and $APPCAST_REMOTE_KEY to R2 bucket $R2_BUCKET"
-    AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
-    AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    AWS_DEFAULT_REGION=auto \
-        aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$DMG_REMOTE_KEY" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --checksum-algorithm CRC32 \
-            --content-type application/x-apple-diskimage
-    AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
-    AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    AWS_DEFAULT_REGION=auto \
-        aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --checksum-algorithm CRC32 \
-            --content-type application/xml
+    # AWS CLI v2 defaults to sending integrity-check headers that R2 rejects
+    # mid-multipart-upload with `SSLV3_ALERT_BAD_RECORD_MAC` on partNumber=2.
+    # Opt back to legacy behavior so the upload streams without checksum
+    # negotiation R2 doesn't fully support.
+    export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+    export AWS_DEFAULT_REGION=auto
+    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+    export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+    aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$DMG_REMOTE_KEY" \
+        --endpoint-url "$R2_ENDPOINT" \
+        --content-type application/x-apple-diskimage
+    # Short Cache-Control so a fresh release is visible to Sparkle within 60s
+    # instead of being pinned to Cloudflare's default edge TTL for XML.
+    aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
+        --endpoint-url "$R2_ENDPOINT" \
+        --content-type 'application/xml; charset=utf-8' \
+        --cache-control 'public, max-age=60, must-revalidate'
     echo "[tldr] release uploaded: $DMG_URL"
     echo "[tldr] appcast: https://$R2_DOMAIN/$APPCAST_REMOTE_KEY"
 else
