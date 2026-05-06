@@ -37,6 +37,7 @@
 		CCCAD905B22BC516E30516EC /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */; };
 		D864396819460CA1D5F83202 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CD32F3BB2B51896CCB61046 /* Config.swift */; };
 		DAAB7B2D7C2E62FB00C954B4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 02DF02804EE5E6B628ADD9D8 /* Sparkle */; };
+		E057FB3B4EC422E829570A5A /* ScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24CAC1A3187873C8C3559965 /* ScreenCaptureTests.swift */; };
 		E5E39A2434931ECC82E8BA46 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B4357519C159532DCFE2C5F /* SuggestionChoiceState.swift */; };
 		E957E85E84F83FBED1C79609 /* JSONFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */; };
 		F0BEB7DD55D459EE3644EA45 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FD77C90100587BDA7E79E10 /* PythonRunner.swift */; };
@@ -62,6 +63,7 @@
 		1D63E8C0076474B1FCB602BB /* TLDRCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDRCoordinator.swift; sourceTree = "<group>"; };
 		1F7C36C1B0120C80920C0A0D /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		221E6D902943E3A3D1A0F285 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
+		24CAC1A3187873C8C3559965 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		2A8FA8A782D7DFB81FCAD62F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		33734F5BBE20AC6361260668 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStoreTests.swift; sourceTree = "<group>"; };
@@ -151,6 +153,7 @@
 				DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */,
 				453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */,
 				DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */,
+				24CAC1A3187873C8C3559965 /* ScreenCaptureTests.swift */,
 				FEDEE29EB3EE474AC3ED7550 /* SuggestionChoiceStateTests.swift */,
 				0182D6F477D0254061C5BC90 /* TLDREventClientTests.swift */,
 			);
@@ -309,6 +312,7 @@
 				24B02464DB464CD2EB3812C2 /* PendingRunStoreTests.swift in Sources */,
 				8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */,
 				82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */,
+				E057FB3B4EC422E829570A5A /* ScreenCaptureTests.swift in Sources */,
 				512590F7C000F9400F498318 /* SuggestionChoiceStateTests.swift in Sources */,
 				051822496CE4A665967081E1 /* TLDREventClientTests.swift in Sources */,
 			);
