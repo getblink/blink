@@ -142,6 +142,20 @@ without redeploying the server. The installer resets TCC
 on every rebuild so permissions attach to the fresh canonical binary; use
 `--skip-tcc-reset` only for non-dogfood script checks.
 
+Public Sparkle releases (signed/notarized DMG + appcast uploaded to Cloudflare
+R2) go through `tldr_app/scripts/release.sh`. Bump
+`tldr_app/project.yml`'s `CFBundleShortVersionString` (xcodegen rewrites
+`Info.plist` from this on every build, so editing `Info.plist` directly is
+wiped), export the repo-root `.env` so the scripts inherit the credentials
+(`set -a && source .env && set +a`), then run the script. The build log must
+show `[tldr] stamping SUFeedURL=...` and `[tldr] stamping SUPublicEDKey ...`
+— if either line is missing, `TLDR_SPARKLE_FEED_URL` / `TLDR_SPARKLE_PUBLIC_ED_KEY`
+were unset and the build will ship as a Sparkle dead-end. See
+`tldr_app/README.md` → Sparkle Releases for the full env-var list, the
+`sign_update` chicken-and-egg on first run in a fresh workspace, and the
+`TLDR_SIGN_IDENTITY` SHA-1 pin needed when keychain holds duplicate
+"Developer ID Application" certs for the same team.
+
 Tester-deployment bundles (the `app/` channel) are produced by `app/python/run_once.py`, either spawned from `Blink.app` or invoked directly. It emits schema-v1 bundles (`fixture.json` + `source.png` + `target.png` + `run.json` + `output.txt`, plus `target_metadata.json` and `settings.json`) that `./sweep` replays unchanged. Tester zips exported from `Blink.app` land under `scratchpad/field_runs/` via `python scratchpad/import_field_runs.py <zip-or-dir>`.
 
 For Blink.app local testing or profiling, prefer the canonical installer:
