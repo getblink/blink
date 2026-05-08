@@ -113,6 +113,23 @@ if [[ -z "$SITE_PACKAGES_DIR" ]]; then
 fi
 echo "../../python-packages" > "$SITE_PACKAGES_DIR/tldr-site.pth"
 
+ENTITLEMENTS_PATH="${TLDR_ENTITLEMENTS_PATH:-$APP_DIR/TLDR/TLDR.entitlements}"
+# xcodebuild ad-hoc signed the app, but PlistBuddy stamps and the Python /
+# Resources rsync above mutate the bundle, invalidating that signature. The
+# Developer ID flow re-signs from scratch in sign_and_notarize.sh, but
+# install_local_app.sh stops here — without this re-sign the canonical local
+# install ships with a broken signature, which makes Sparkle's Installer.xpc
+# refuse to launch ("error connecting to the installer"). Re-sign just the
+# outer bundle so Sparkle.framework's nested Developer-ID XPCs keep their
+# original signatures.
+echo "[tldr] re-signing ad-hoc after Info.plist + resource stamping"
+codesign --force --sign - \
+    --options=runtime \
+    --timestamp=none \
+    --generate-entitlement-der \
+    --entitlements "$ENTITLEMENTS_PATH" \
+    "$APP_PATH"
+
 echo "[tldr] build complete -> $APP_PATH"
 
 if [[ "${TLDR_SKIP_TCC_RESET:-0}" != "1" ]]; then
