@@ -1,297 +1,166 @@
 ---
+import Base from "../layouts/Base.astro";
+import MetaFooter from "../components/MetaFooter.astro";
+import BrandMark from "../components/BrandMark.astro";
+
 const title = "What is Blink?";
 const description =
   "blink is a context layer for multi‑agent power users that instantly recalls and moves context across every ai thread.";
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-    <meta name="description" content={description} />
-    <meta name="theme-color" content="#09090b" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-
-    <meta property="og:title" content="What is Blink?" />
-    <meta property="og:description" content={description} />
-    <meta property="og:type" content="article" />
-    <meta name="twitter:card" content="summary_large_image" />
-  </head>
-  <body>
-    <div class="ambient" aria-hidden="true"></div>
-    <div class="grid" aria-hidden="true"></div>
-    <div class="vignette" aria-hidden="true"></div>
-
-    <header class="topbar">
-      <a href="/" class="back" aria-label="Back to home">
-        <span class="back__arrow" aria-hidden="true">←</span>
-        <span class="back__text">blink</span>
-      </a>
+<Base title={title} description={description} ogType="article">
+  <main class="shell shell--scroll">
+    <header class="row meta">
+      <div class="cell">
+        <BrandMark />
+        <span>blink</span>
+      </div>
+      <div class="cell muted">story / 02</div>
+      <div class="cell muted">essay</div>
+      <div class="cell right"><a href="/">← back to index</a></div>
     </header>
 
-    <main>
-      <article>
-        <h1>what is blink?</h1>
+    <section class="row article-row">
+      <div class="cell article-cell">
+        <article class="article">
+          <h1>what is blink?</h1>
 
-        <p class="lede">
-          i run multiple ai agents at once and constantly forget what each
-          thread is about.
-        </p>
+          <p class="lede">
+            i run multiple ai agents at once and constantly forget what each
+            thread is about.
+          </p>
 
-        <p>
-          the scene is usually something like: three claude code windows on
-          different branches, a couple of chatgpt tabs from earlier in the
-          day, a slack thread where i was helping a friend debug, and half a
-          dozen facebook marketplace conversations with people i'm reselling
-          stuff to. by the afternoon i can't tell you what any of them are
-          doing without re-reading the whole history.
-        </p>
+          <p>
+            the scene is usually something like: three claude code windows on
+            different branches, a couple of chatgpt tabs from earlier in the
+            day, a slack thread where i was helping a friend debug, and half a
+            dozen facebook marketplace conversations with people i'm reselling
+            stuff to. by the afternoon i can't tell you what any of them are
+            doing without re-reading the whole history.
+          </p>
 
-        <p>
-          every context switch is a tax. re-reading, re-orienting,
-          re-explaining things to the agent i'd already explained an hour
-          ago. across a dozen threads, most of the day goes to reloading
-          state.
-        </p>
+          <p>
+            every context switch is a tax. re-reading, re-orienting,
+            re-explaining things to the agent i'd already explained an hour
+            ago. across a dozen threads, most of the day goes to reloading
+            state.
+          </p>
 
-        <h2>blink is a context layer</h2>
+          <h2>blink is a context layer</h2>
 
-        <p>
-          blink helps people manage multiple agents without getting
-          overwhelmed. it lets you instantly recall and move context across
-          the tools you already use, so the state lives in one place instead
-          of scattered across browser tabs and app windows.
-        </p>
+          <p>
+            blink helps people manage multiple agents without getting
+            overwhelmed. it lets you instantly recall and move context across
+            the tools you already use, so the state lives in one place instead
+            of scattered across browser tabs and app windows.
+          </p>
 
-        <p>
-          the long-term product is an autocomplete system that predicts what
-          you want to say next based on what you were doing.
-        </p>
+          <p>
+            the long-term product is an autocomplete system that predicts what
+            you want to say next based on what you were doing.
+          </p>
 
-        <h2>shipping the smart clipboard first</h2>
+          <h2>shipping the smart clipboard first</h2>
 
-        <p>
-          the first version is a smart clipboard. you copy something in one
-          app and paste into another, and blink figures out what the right
-          thing to paste actually is, accounting for the source, the
-          destination, and what you were trying to do.
-        </p>
+          <p>
+            the first version is a smart clipboard. you copy something in one
+            app and paste into another, and blink figures out what the right
+            thing to paste actually is, accounting for the source, the
+            destination, and what you were trying to do.
+          </p>
 
-        <p>
-          i'm shipping this first because it shares infrastructure with the
-          autocompleter and gets me in front of users faster. the same
-          context-capture and intent-inference layer sits underneath both.
-          one ships in weeks, the other in months.
-        </p>
+          <p>
+            i'm shipping this first because it shares infrastructure with the
+            autocompleter and gets me in front of users faster. the same
+            context-capture and intent-inference layer sits underneath both.
+            one ships in weeks, the other in months.
+          </p>
 
-        <h2>who it's for</h2>
+          <h2>who it's for</h2>
 
-        <p>
-          multi-agent power users. engineers, researchers, and operators
-          running parallel ai workflows across tools that don't talk to each
-          other. there's no good answer for them today. that's where blink
-          starts.
-        </p>
-      </article>
-    </main>
+          <p>
+            multi-agent power users. engineers, researchers, and operators
+            running parallel ai workflows across tools that don't talk to each
+            other. there's no good answer for them today. that's where blink
+            starts.
+          </p>
+        </article>
+      </div>
+    </section>
 
-    <style>
-      :root {
-        --bg: #09090b;
-        --fg: #f5f5f7;
-        --fg-muted: rgba(245, 245, 247, 0.78);
-        --fg-subtle: rgba(245, 245, 247, 0.65);
-        --rule: rgba(245, 245, 247, 0.08);
+    <MetaFooter />
+  </main>
+
+  <style>
+    .article-row {
+      grid-template-columns: 1fr;
+      min-height: 0;
+    }
+
+    .article-cell {
+      padding: clamp(48px, 7vh, 88px) clamp(28px, 5vw, 64px)
+        clamp(64px, 9vh, 112px);
+      align-items: flex-start;
+      justify-content: center;
+    }
+
+    .article {
+      width: 100%;
+      max-width: 640px;
+    }
+
+    .article h1 {
+      font-size: clamp(40px, 5.5vw, 64px);
+      font-weight: 700;
+      letter-spacing: -0.045em;
+      line-height: 1;
+      margin-bottom: 32px;
+      color: var(--fg);
+    }
+
+    .article h2 {
+      font-size: clamp(20px, 2vw, 24px);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      line-height: 1.25;
+      margin-top: 56px;
+      margin-bottom: 16px;
+      color: var(--fg);
+    }
+
+    .article p {
+      font-size: clamp(16px, 1.3vw, 18px);
+      line-height: 1.65;
+      color: #2a2a2a;
+      margin-bottom: 18px;
+      text-wrap: pretty;
+    }
+
+    .article .lede {
+      font-size: clamp(18px, 1.5vw, 21px);
+      color: var(--fg);
+      font-weight: 500;
+      line-height: 1.55;
+      margin-bottom: 28px;
+    }
+
+    .article a {
+      border-bottom: 1px solid var(--fg);
+    }
+
+    .article a:hover {
+      background: var(--accent-soft);
+      color: var(--fg);
+    }
+
+    @media (max-width: 880px) {
+      .article-cell {
+        padding: 40px 20px 64px;
       }
 
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
+      .article h2 {
+        margin-top: 40px;
       }
-
-      html,
-      body {
-        background: var(--bg);
-        color: var(--fg);
-        font-family:
-          "Inter",
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
-
-      body {
-        position: relative;
-        min-height: 100%;
-      }
-
-      .ambient {
-        position: fixed;
-        inset: 0;
-        background:
-          radial-gradient(
-            ellipse 80% 50% at 50% 0%,
-            rgba(255, 255, 255, 0.045),
-            transparent 70%
-          ),
-          radial-gradient(
-            ellipse 60% 40% at 50% 110%,
-            rgba(120, 119, 198, 0.07),
-            transparent 70%
-          );
-        pointer-events: none;
-        z-index: 0;
-      }
-
-      .grid {
-        position: fixed;
-        inset: 0;
-        background-image:
-          linear-gradient(
-            to right,
-            rgba(255, 255, 255, 0.035) 1px,
-            transparent 1px
-          ),
-          linear-gradient(
-            to bottom,
-            rgba(255, 255, 255, 0.035) 1px,
-            transparent 1px
-          );
-        background-size: 64px 64px;
-        mask-image: radial-gradient(
-          ellipse 70% 60% at 50% 30%,
-          black 10%,
-          transparent 80%
-        );
-        -webkit-mask-image: radial-gradient(
-          ellipse 70% 60% at 50% 30%,
-          black 10%,
-          transparent 80%
-        );
-        pointer-events: none;
-        z-index: 0;
-      }
-
-      .vignette {
-        position: fixed;
-        inset: 0;
-        background: radial-gradient(
-          ellipse 100% 100% at 50% 50%,
-          transparent 60%,
-          rgba(0, 0, 0, 0.6) 100%
-        );
-        pointer-events: none;
-        z-index: 0;
-      }
-
-      .topbar {
-        position: relative;
-        z-index: 2;
-        padding: 28px 32px;
-      }
-
-      .back {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.4em;
-        color: var(--fg-subtle);
-        text-decoration: none;
-        font-size: 15px;
-        font-weight: 500;
-        letter-spacing: -0.005em;
-        transition: color 160ms ease;
-      }
-
-      .back:hover {
-        color: var(--fg);
-      }
-
-      .back__arrow {
-        font-size: 0.9em;
-      }
-
-      main {
-        position: relative;
-        z-index: 1;
-        padding: 24px 32px 96px;
-        display: flex;
-        justify-content: center;
-      }
-
-      article {
-        width: 100%;
-        max-width: 640px;
-      }
-
-      h1 {
-        font-size: clamp(36px, 5.5vw, 56px);
-        font-weight: 800;
-        letter-spacing: -0.035em;
-        line-height: 1.05;
-        margin-bottom: 32px;
-        color: var(--fg);
-      }
-
-      h2 {
-        font-size: clamp(20px, 2.2vw, 24px);
-        font-weight: 700;
-        letter-spacing: -0.015em;
-        line-height: 1.25;
-        margin-top: 48px;
-        margin-bottom: 16px;
-        color: var(--fg);
-      }
-
-      p {
-        font-size: clamp(16px, 1.35vw, 18px);
-        line-height: 1.7;
-        color: var(--fg-muted);
-        margin-bottom: 20px;
-        text-wrap: pretty;
-      }
-
-      .lede {
-        font-size: clamp(18px, 1.55vw, 21px);
-        color: var(--fg);
-        font-weight: 500;
-        line-height: 1.55;
-        margin-bottom: 28px;
-      }
-
-      a:focus-visible {
-        outline: 2px solid var(--fg);
-        outline-offset: 4px;
-        border-radius: 2px;
-      }
-
-      @media (max-width: 600px) {
-        .topbar {
-          padding: 20px 20px;
-        }
-
-        main {
-          padding: 16px 20px 72px;
-        }
-
-        h2 {
-          margin-top: 36px;
-        }
-      }
-    </style>
-  </body>
-</html>
+    }
+  </style>
+</Base>

@@ -1,76 +1,46 @@
 ---
+import Base from "../layouts/Base.astro";
+import MetaFooter from "../components/MetaFooter.astro";
+import BrandMark from "../components/BrandMark.astro";
+
 const tagline =
   "instant recall across every AI thread for multi‑agent power users";
 const title = "Blink — instant recall across every AI thread";
 const betaSignupUrl =
   import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
   "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
-const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL || "";
+const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
+  .split(",")
+  .map((url: string) => url.trim())
+  .filter((url: string) => url.length > 0);
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-    <meta name="description" content={tagline} />
-    <meta name="theme-color" content="#09090b" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<Base title={title} description={tagline}>
+  <main class="shell shell--fixed">
+    <header class="row meta">
+      <div class="cell">
+        <BrandMark />
+        <span>blink</span>
+      </div>
+      <div class="cell muted">landing / 01</div>
+      <div class="cell muted">macOS · beta</div>
+      <div class="cell right"><a href="/story">read the story →</a></div>
+    </header>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
-
-    <meta property="og:title" content="Blink" />
-    <meta property="og:description" content={tagline} />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-  </head>
-  <body>
-    <div class="ambient" aria-hidden="true"></div>
-    <div class="grid" aria-hidden="true"></div>
-    <div class="grid-spotlight" aria-hidden="true"></div>
-    <div class="vignette" aria-hidden="true"></div>
-
-    <main class="shell">
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero__copy">
-          <h1 class="wordmark" id="hero-title">
-            <span class="wordmark__text">blink</span><span
-              class="cursor"
-              aria-hidden="true"></span>
-          </h1>
-          <p class="tagline">
-            instant recall across every AI thread<br class="tagline__break" />
-            for multi‑agent power users
-          </p>
-        </div>
-
-        <div class="demo">
-          {demoVideoUrl ? (
-            <video
-              class="demo__video"
-              controls
-              muted
-              loop
-              playsinline
-              preload="metadata"
-              src={demoVideoUrl}
-            ></video>
-          ) : (
-            <div class="demo__placeholder" aria-label="Demo video coming soon">
-              demo coming soon
-            </div>
-          )}
-        </div>
-
+    <section class="row hero" aria-labelledby="hero-title">
+      <div class="cell wordmark-cell">
+        <h1 class="wordmark" id="hero-title">
+          <span class="wordmark__text">blink</span><span
+            class="cursor"
+            aria-hidden="true"></span>
+        </h1>
+        <p class="tagline">
+          instant recall across every AI thread.<br />
+          built for multi‑agent power users.
+        </p>
         <form class="signup" data-state="idle" data-endpoint={betaSignupUrl}>
-          <label class="signup__label" for="email">Get the beta DMG</label>
           <div class="signup__row">
+            <label class="signup__label" for="email">join the beta</label>
             <input
               id="email"
               name="email"
@@ -88,534 +58,352 @@ const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL || "";
               autocomplete="off"
               aria-hidden="true"
             />
-            <button type="submit">Join</button>
           </div>
-          <p class="privacy">
-            We'll only use your email to send the beta DMG. Stored on our
-            server. No marketing.
-          </p>
-          <p class="status status--submitting">Sending…</p>
-          <p class="status status--success">You're on the list.</p>
-          <p class="status status--invalid">That doesn't look like an email.</p>
+          <p class="status status--submitting">sending…</p>
+          <p class="status status--success">you're on the list.</p>
+          <p class="status status--invalid">that doesn't look like an email.</p>
           <p class="status status--network">
-            Couldn't reach the server. Try again in a moment.
+            couldn't reach the server. try again in a moment.
           </p>
-          <p class="status status--rate">Too many tries. Give it a minute.</p>
+          <p class="status status--rate">too many tries. give it a minute.</p>
         </form>
+      </div>
+      <div
+        class="cell demo-cell"
+        data-video-urls={demoVideoUrls.join("|")}
+      >
+        {
+          demoVideoUrls.length > 0 ? (
+            <>
+              <video
+                class="demo__video is-active"
+                data-slot="0"
+                autoplay
+                muted
+                playsinline
+                preload="auto"
+                disablepictureinpicture
+                disableremoteplayback
+                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
+                tabindex="-1"
+                src={demoVideoUrls[0]}
+                aria-label="Blink demo"
+              />
+              <video
+                class="demo__video"
+                data-slot="1"
+                muted
+                playsinline
+                preload="auto"
+                disablepictureinpicture
+                disableremoteplayback
+                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
+                tabindex="-1"
+                src={demoVideoUrls[1 % demoVideoUrls.length]}
+              />
+            </>
+          ) : (
+            <div class="demo__placeholder" aria-label="Demo video coming soon">
+              <span>demo</span>
+              <span class="muted">coming soon</span>
+            </div>
+          )
+        }
+      </div>
+    </section>
 
-        <p class="more">
-          <a href="/story">learn more →</a>
-        </p>
-      </section>
-    </main>
+    <MetaFooter />
+  </main>
 
-    <footer class="footer">
-      <a href="https://github.com/henryz2004/blink">GitHub</a>
-      <span>Source-available under ELv2</span>
-      <a href="mailto:henry@useblink.dev">henry@useblink.dev</a>
-    </footer>
+  <style>
+    /* Hero row — landing-only */
+    .hero {
+      display: flex;
+      align-items: stretch;
+      min-height: 0;
+    }
 
-    <style>
-      :root {
-        --bg: #09090b;
-        --fg: #f5f5f7;
-        --fg-muted: rgba(245, 245, 247, 0.82);
-        --line: rgba(245, 245, 247, 0.16);
-        --panel: rgba(245, 245, 247, 0.055);
-        --accent: #8ee6d8;
-        --mx: -9999px;
-        --my: -9999px;
+    .wordmark-cell {
+      flex: 1;
+      min-width: 0;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px)
+        clamp(20px, 3vh, 32px);
+      gap: clamp(20px, 3vh, 32px);
+    }
+
+    .wordmark {
+      font-size: clamp(4.5rem, 12vw, 11rem);
+      font-weight: 700;
+      line-height: 0.82;
+      letter-spacing: -0.05em;
+      display: inline-flex;
+      align-items: baseline;
+    }
+
+    .wordmark__text {
+      color: var(--fg);
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 0.085em;
+      height: 0.7em;
+      background: var(--accent);
+      margin-left: 0.05em;
+      animation: blink 1.1s steps(2, jump-none) infinite;
+    }
+
+    @keyframes blink {
+      0%,
+      50% {
+        opacity: 1;
       }
-
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
+      50.01%,
+      100% {
+        opacity: 0;
       }
+    }
 
-      html,
-      body {
-        min-height: 100%;
-        background: var(--bg);
-        color: var(--fg);
-        font-family:
-          "Inter",
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
+    .tagline {
+      font-size: clamp(1.05rem, 1.4vw, 1.4rem);
+      font-weight: 500;
+      line-height: 1.4;
+      color: var(--fg);
+      max-width: 38ch;
+    }
 
-      body {
-        position: relative;
-        overflow-x: hidden;
-      }
+    .demo-cell {
+      position: relative;
+      flex-shrink: 0;
+      aspect-ratio: 3 / 4;
+      height: 100%;
+      max-width: 50%;
+      padding: 0;
+      gap: 0;
+      background: var(--surface);
+      overflow: hidden;
+      display: block;
+    }
 
-      .ambient {
-        position: fixed;
-        inset: 0;
-        background:
-          radial-gradient(
-            ellipse 80% 55% at 50% 40%,
-            rgba(255, 255, 255, 0.07),
-            transparent 60%
-          ),
-          radial-gradient(
-            ellipse 60% 40% at 50% 110%,
-            rgba(120, 119, 198, 0.1),
-            transparent 70%
-          );
-        pointer-events: none;
-        z-index: 0;
-      }
+    .demo__video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      opacity: 0;
+      transition: opacity 240ms ease;
+      pointer-events: none;
+    }
 
-      .grid {
-        position: fixed;
-        inset: 0;
-        background-image:
-          linear-gradient(
-            to right,
-            rgba(255, 255, 255, 0.05) 1px,
-            transparent 1px
-          ),
-          linear-gradient(
-            to bottom,
-            rgba(255, 255, 255, 0.05) 1px,
-            transparent 1px
-          );
-        background-size: 64px 64px;
-        mask-image: radial-gradient(
-          ellipse 70% 55% at 50% 50%,
-          black 10%,
-          transparent 75%
-        );
-        -webkit-mask-image: radial-gradient(
-          ellipse 70% 55% at 50% 50%,
-          black 10%,
-          transparent 75%
-        );
-        pointer-events: none;
-        z-index: 0;
-      }
+    .demo__video.is-active {
+      opacity: 1;
+    }
 
-      .grid-spotlight {
-        position: fixed;
-        inset: 0;
-        background-image:
-          linear-gradient(
-            to right,
-            rgba(255, 255, 255, 0.22) 1px,
-            transparent 1px
-          ),
-          linear-gradient(
-            to bottom,
-            rgba(255, 255, 255, 0.22) 1px,
-            transparent 1px
-          );
-        background-size: 64px 64px;
-        mask-image: radial-gradient(
-          circle 280px at var(--mx) var(--my),
-          #000 0%,
-          rgba(0, 0, 0, 0.55) 45%,
-          transparent 85%
-        );
-        -webkit-mask-image: radial-gradient(
-          circle 280px at var(--mx) var(--my),
-          #000 0%,
-          rgba(0, 0, 0, 0.55) 45%,
-          transparent 85%
-        );
-        pointer-events: none;
-        z-index: 0;
-      }
+    .demo__placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 0.78rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
 
-      .vignette {
-        position: fixed;
-        inset: 0;
-        background: radial-gradient(
-          ellipse 100% 100% at 50% 50%,
-          transparent 55%,
-          rgba(0, 0, 0, 0.55) 100%
-        );
-        pointer-events: none;
-        z-index: 0;
-      }
+    /* Signup form — lives inside the wordmark cell, glued to the bottom */
+    .signup {
+      width: 100%;
+      margin-top: auto;
+      display: grid;
+      gap: 8px;
+    }
 
-      .shell {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        min-height: calc(100svh - 70px);
-        display: grid;
-        align-items: center;
-        padding: 48px 24px 28px;
-      }
+    .signup__row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
 
+    .signup__label {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--fg);
+      white-space: nowrap;
+    }
+
+    input {
+      height: 36px;
+      font: inherit;
+      font-size: 14px;
+    }
+
+    input[type="email"] {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--fg);
+      padding: 0;
+      outline: none;
+    }
+
+    input[type="email"]::placeholder {
+      color: var(--fg-muted);
+    }
+
+    .hp {
+      position: absolute;
+      left: -10000px;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    .status {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--fg-muted);
+      min-height: 16px;
+    }
+
+    .status--submitting,
+    .status--success,
+    .status--invalid,
+    .status--network,
+    .status--rate {
+      display: none;
+    }
+
+    .signup[data-state="submitting"] .status--submitting,
+    .signup[data-state="success"] .status--success,
+    .signup[data-state="error-invalid"] .status--invalid,
+    .signup[data-state="error-network"] .status--network,
+    .signup[data-state="error-rate-limit"] .status--rate {
+      display: block;
+    }
+
+    .status--success {
+      color: var(--fg);
+      font-weight: 600;
+    }
+
+    @media (max-width: 880px) {
       .hero {
-        width: min(1120px, 100%);
-        margin: 0 auto;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(340px, 520px);
-        gap: 40px 56px;
-        align-items: center;
+        flex-direction: column;
       }
 
-      .hero__copy {
-        text-align: left;
+      .wordmark-cell {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        gap: 24px;
       }
 
       .wordmark {
-        display: inline-flex;
-        align-items: baseline;
-        justify-content: flex-start;
-        font-weight: 800;
-        font-size: clamp(5.5rem, 11rem, 11rem);
-        letter-spacing: 0;
-        line-height: 0.95;
+        font-size: clamp(4rem, 22vw, 8rem);
       }
 
-      .wordmark__text {
-        color: #ffffff;
-      }
-
-      .cursor {
-        display: inline-block;
-        width: 0.09em;
-        height: 0.78em;
-        background: #ffffff;
-        margin-left: 0.06em;
-        border-radius: 1px;
-        animation: blink 1.1s steps(2, jump-none) infinite;
-        box-shadow: 0 0 24px rgba(255, 255, 255, 0.4);
-      }
-
-      @keyframes blink {
-        0%,
-        50% {
-          opacity: 1;
-        }
-        50.01%,
-        100% {
-          opacity: 0;
-        }
-      }
-
-      .tagline {
-        margin: 28px 0 0;
-        max-width: 620px;
-        font-size: clamp(1rem, 1.25rem, 1.25rem);
-        font-weight: 500;
-        line-height: 1.5;
-        color: var(--fg-muted);
-        letter-spacing: 0;
-        text-wrap: balance;
-      }
-
-      .tagline__break {
-        display: none;
-      }
-
-      .demo {
+      .demo-cell {
         width: 100%;
-      }
-
-      .demo__video,
-      .demo__placeholder {
-        display: block;
-        width: 100%;
-        aspect-ratio: 16 / 10;
-        object-fit: cover;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: #111114;
-        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.35);
-      }
-
-      .demo__placeholder {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: rgba(245, 245, 247, 0.4);
-        font-family: "JetBrains Mono", ui-monospace, monospace;
-        font-size: 0.85rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-      }
-
-      .signup {
-        grid-column: 1 / -1;
-        width: min(720px, 100%);
-        display: grid;
-        gap: 10px;
-      }
-
-      .signup__label {
-        font-size: 0.88rem;
-        font-weight: 700;
-        color: rgba(245, 245, 247, 0.94);
+        max-width: 100%;
+        height: auto;
       }
 
       .signup__row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 112px;
-        gap: 10px;
+        grid-template-columns: 1fr;
       }
+    }
 
-      input,
-      button {
-        height: 46px;
-        border-radius: 8px;
-        font: inherit;
+    @media (prefers-reduced-motion: reduce) {
+      .cursor {
+        animation: none;
+        opacity: 1;
       }
+    }
+  </style>
 
-      input[type="email"] {
-        width: 100%;
-        min-width: 0;
-        border: 1px solid var(--line);
-        background: var(--panel);
-        color: var(--fg);
-        padding: 0 14px;
-        outline: none;
-      }
-
-      input[type="email"]::placeholder {
-        color: rgba(245, 245, 247, 0.42);
-      }
-
-      input[type="email"]:focus {
-        border-color: rgba(142, 230, 216, 0.65);
-        box-shadow: 0 0 0 3px rgba(142, 230, 216, 0.13);
-      }
-
-      button {
-        border: 0;
-        background: var(--fg);
-        color: var(--bg);
-        font-weight: 800;
-        cursor: pointer;
-      }
-
-      button:disabled {
-        cursor: wait;
-        opacity: 0.7;
-      }
-
-      .hp {
-        position: absolute;
-        left: -10000px;
-        width: 1px;
-        height: 1px;
-        opacity: 0;
-      }
-
-      .privacy,
-      .status {
-        min-height: 20px;
-        font-size: 0.84rem;
-        line-height: 1.45;
-      }
-
-      .privacy {
-        color: rgba(245, 245, 247, 0.62);
-      }
-
-      .status {
-        display: none;
-        color: var(--accent);
-      }
-
-      .signup[data-state="submitting"] .status--submitting,
-      .signup[data-state="success"] .status--success,
-      .signup[data-state="error-invalid"] .status--invalid,
-      .signup[data-state="error-network"] .status--network,
-      .signup[data-state="error-rate-limit"] .status--rate {
-        display: block;
-      }
-
-      .more {
-        grid-column: 1 / -1;
-        margin: 0;
-      }
-
-      .more a {
-        color: rgba(245, 245, 247, 0.65);
-        text-decoration: none;
-        font-size: 14px;
-        font-weight: 500;
-        letter-spacing: 0.01em;
-        padding: 6px 10px;
-        border-radius: 6px;
-        transition: color 160ms ease, background 160ms ease;
-      }
-
-      .more a:hover {
-        color: var(--fg);
-        background: rgba(255, 255, 255, 0.04);
-      }
-
-      .more a:focus-visible {
-        outline: 2px solid var(--fg);
-        outline-offset: 2px;
-      }
-
-      .footer {
-        position: relative;
-        z-index: 1;
-        width: min(1120px, calc(100% - 48px));
-        min-height: 70px;
-        margin: 0 auto;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        color: rgba(245, 245, 247, 0.5);
-        font-size: 0.82rem;
-      }
-
-      .footer a {
-        color: rgba(245, 245, 247, 0.68);
-        text-decoration: none;
-      }
-
-      .footer a:hover {
-        color: var(--fg);
-      }
-
-      @media (max-width: 900px) {
-        .hero {
-          grid-template-columns: 1fr;
-          gap: 28px;
+  <script type="module">
+    const form = document.querySelector(".signup");
+    const endpoint = form?.dataset.endpoint;
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!endpoint) return;
+      const button = form.querySelector("button");
+      const data = new FormData(form);
+      form.dataset.state = "submitting";
+      button?.setAttribute("disabled", "true");
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            email: String(data.get("email") || ""),
+            hp: String(data.get("hp") || ""),
+            source: "useblink.dev",
+          }),
+        });
+        if (response.status === 429) {
+          form.dataset.state = "error-rate-limit";
+          return;
         }
-
-        .hero__copy {
-          text-align: center;
+        if (response.status === 422) {
+          form.dataset.state = "error-invalid";
+          return;
         }
-
-        .wordmark {
-          justify-content: center;
-          font-size: clamp(5rem, 7.5rem, 7.5rem);
-        }
-
-        .tagline {
-          margin-left: auto;
-          margin-right: auto;
-        }
-
-        .signup {
-          margin: 0 auto;
-        }
-
-        .more {
-          text-align: center;
-        }
+        form.dataset.state = response.ok ? "success" : "error-network";
+        if (response.ok) form.reset();
+      } catch {
+        form.dataset.state = "error-network";
+      } finally {
+        button?.removeAttribute("disabled");
       }
+    });
 
-      @media (max-width: 600px) {
-        .shell {
-          padding: 34px 18px 24px;
-        }
-
-        .wordmark {
-          font-size: clamp(4.4rem, 5.8rem, 5.8rem);
-        }
-
-        .tagline__break {
-          display: inline;
-        }
-
-        .signup__row {
-          grid-template-columns: 1fr;
-        }
-
-        .footer {
-          width: calc(100% - 36px);
-          flex-direction: column;
-          align-items: flex-start;
-          justify-content: center;
-          padding: 20px 0 28px;
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .cursor {
-          animation: none;
-          opacity: 1;
-        }
-      }
-
-      @media (hover: none) {
-        .grid-spotlight {
-          display: none;
-        }
-      }
-    </style>
-
-    <script is:inline>
-      (() => {
-        const root = document.documentElement;
-        let x = 0;
-        let y = 0;
-        let pending = false;
-        const flush = () => {
-          root.style.setProperty("--mx", x + "px");
-          root.style.setProperty("--my", y + "px");
-          pending = false;
-        };
-        window.addEventListener(
-          "pointermove",
-          (e) => {
-            x = e.clientX;
-            y = e.clientY;
-            if (!pending) {
-              pending = true;
-              requestAnimationFrame(flush);
-            }
-          },
-          { passive: true }
-        );
-      })();
-    </script>
-
-    <script type="module">
-      const form = document.querySelector(".signup");
-      const endpoint = form?.dataset.endpoint;
-      form?.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        if (!endpoint) return;
-        const button = form.querySelector("button");
-        const data = new FormData(form);
-        form.dataset.state = "submitting";
-        button?.setAttribute("disabled", "true");
+    const demoCell = document.querySelector(".demo-cell");
+    const demoUrls = (demoCell?.dataset.videoUrls || "")
+      .split("|")
+      .filter(Boolean);
+    const slots = demoCell?.querySelectorAll("video") || [];
+    if (slots.length === 2 && demoUrls.length > 0) {
+      let videoIndex = 0;
+      let activeSlot = 0;
+      const total = demoUrls.length;
+      const advance = () => {
+        videoIndex = (videoIndex + 1) % total;
+        const nextSlot = 1 - activeSlot;
+        const incoming = slots[nextSlot];
+        const outgoing = slots[activeSlot];
         try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              email: String(data.get("email") || ""),
-              hp: String(data.get("hp") || ""),
-              source: "useblink.dev",
-            }),
-          });
-          if (response.status === 429) {
-            form.dataset.state = "error-rate-limit";
-            return;
-          }
-          if (response.status === 422) {
-            form.dataset.state = "error-invalid";
-            return;
-          }
-          form.dataset.state = response.ok ? "success" : "error-network";
-          if (response.ok) form.reset();
-        } catch {
-          form.dataset.state = "error-network";
-        } finally {
-          button?.removeAttribute("disabled");
+          incoming.currentTime = 0;
+        } catch {}
+        incoming.classList.add("is-active");
+        outgoing.classList.remove("is-active");
+        incoming.play().catch(() => {});
+        outgoing.pause();
+        const followingIndex = (videoIndex + 1) % total;
+        if (outgoing.src !== demoUrls[followingIndex]) {
+          outgoing.src = demoUrls[followingIndex];
+          outgoing.load();
         }
+        activeSlot = nextSlot;
+      };
+      slots.forEach((video, i) => {
+        video.addEventListener("ended", () => {
+          if (i !== activeSlot) return;
+          advance();
+        });
       });
-    </script>
-  </body>
-</html>
+    }
+  </script>
+</Base>
