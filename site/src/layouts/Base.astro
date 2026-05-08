@@ -5,9 +5,15 @@ interface Props {
   title: string;
   description: string;
   ogType?: string;
+  animateLandingOnce?: boolean;
 }
 
-const { title, description, ogType = "website" } = Astro.props;
+const {
+  title,
+  description,
+  ogType = "website",
+  animateLandingOnce = false,
+} = Astro.props;
 ---
 
 <!doctype html>
@@ -24,6 +30,20 @@ const { title, description, ogType = "website" } = Astro.props;
     <meta property="og:description" content={description} />
     <meta property="og:type" content={ogType} />
     <meta name="twitter:card" content="summary_large_image" />
+    {
+      animateLandingOnce && (
+        <script
+          is:inline
+          set:html={`try {
+  if (sessionStorage.getItem('blink:shell-animated')) {
+    document.documentElement.classList.add('no-shell-animate');
+  } else {
+    sessionStorage.setItem('blink:shell-animated', '1');
+  }
+} catch (e) {}`}
+        />
+      )
+    }
   </head>
   <body>
     <slot />
