@@ -51,7 +51,7 @@ Success response:
   "tldr": "...",
   "suggestions": ["...", "...", "..."],
   "duration_ms": 1234,
-  "model": "gemini-3.1-flash-lite-preview",
+  "model": "gemini-3-flash-preview",
   "warnings": []
 }
 ```
@@ -102,9 +102,9 @@ Public endpoint for the `useblink.dev` beta signup form:
 
 The `hp` field is a honeypot. Non-empty values return `{"ok": true}` without
 writing a row. Valid emails are trimmed, lowercased for uniqueness, and stored
-with the original submitted casing for admin display. The endpoint always
-returns `{"ok": true}` for valid submissions, including duplicate emails, so it
-does not leak whether an address is already on the list.
+with the original submitted casing preserved. The endpoint always returns
+`{"ok": true}` for valid submissions, including duplicate emails, so it does
+not leak whether an address is already on the list.
 
 Signup rows live in `beta_signups`:
 
@@ -124,24 +124,12 @@ CREATE TABLE beta_signups (
 stored; the hash is kept only for rate-limiting and abuse forensics. Emails are
 for sending the beta DMG, not marketing.
 
-### `GET /v1/admin/beta-signups`
-
-Admin-only listing endpoint:
+There is no HTTP read endpoint. Inspect signups directly in Postgres:
 
 ```bash
-curl -H "Authorization: Bearer $BLINK_ADMIN_TOKEN" \
-  "https://blink-production-7b5a.up.railway.app/v1/admin/beta-signups?limit=100"
+railway run psql $DATABASE_URL \
+  -c "SELECT email_original, source, created_at FROM beta_signups ORDER BY created_at DESC LIMIT 100"
 ```
-
-Returns:
-
-```json
-{"items": [{"id": "...", "email_original": "person@example.com", "source": "useblink.dev", "created_at": "..."}], "next_cursor": null}
-```
-
-`BLINK_ADMIN_TOKEN` is deliberately separate from bootstrap and `tldr_dt_*`
-device tokens. `?verbose=1` includes `ip_hash` and `user_agent`; the default
-response omits those operational fields.
 
 ### `POST /tldr`
 
@@ -193,7 +181,6 @@ Copy [`server/.env.example`](.env.example) into the repo-root `.env` or
 - `BLINK_CACHE_RESPONSES` — defaults to `true`
 - `BLINK_RESPONSE_CACHE_TTL_SECONDS` — defaults to `86400`
 - `BLINK_MINT_RATE_LIMIT_PER_MINUTE` — defaults to `5` per client IP
-- `BLINK_ADMIN_TOKEN` — required for `GET /v1/admin/beta-signups`
 - `BLINK_IP_HASH_SALT` — persisted salt for beta-signup IP hashes
 - `BLINK_SIGNUP_RATE_LIMIT_PER_MINUTE` — defaults to `5` per hashed IP
 - `BLINK_SIGNUP_RATE_LIMIT_PER_DAY` — defaults to `50` per hashed IP

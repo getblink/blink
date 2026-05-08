@@ -12,7 +12,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
@@ -23,7 +23,6 @@ try:
         check_signup_rate_limit,
         client_ip_for,
         generate_device_token,
-        require_admin_token,
         require_bearer_token,
         token_hash_for,
     )
@@ -36,7 +35,6 @@ except ImportError:
         check_signup_rate_limit,
         client_ip_for,
         generate_device_token,
-        require_admin_token,
         require_bearer_token,
         token_hash_for,
     )
@@ -1000,31 +998,6 @@ async def beta_signup(
             detail="beta signup storage unavailable",
         ) from exc
     return {"ok": True}
-
-
-@app.get("/v1/admin/beta-signups")
-async def admin_beta_signups(
-    _: str = Depends(require_admin_token),
-    limit: int = Query(default=100, ge=1, le=500),
-    cursor: Optional[str] = Query(default=None),
-    verbose: bool = Query(default=False),
-) -> dict[str, Any]:
-    try:
-        items, next_cursor = _telemetry_store().list_beta_signups(
-            limit=limit,
-            cursor=cursor,
-            verbose=verbose,
-        )
-    except Exception as exc:
-        logger.warning(
-            "beta_signup_list_failed error=%s",
-            _sanitized_error_message(exc),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="beta signup storage unavailable",
-        ) from exc
-    return {"items": items, "next_cursor": next_cursor}
 
 
 async def _proxy_to_gemini(

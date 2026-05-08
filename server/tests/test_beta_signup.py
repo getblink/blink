@@ -40,40 +40,11 @@ class FakeSignupStore:
         )
         return True
 
-    def list_beta_signups(
-        self,
-        *,
-        limit: int,
-        cursor: str | None,
-        verbose: bool = False,
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        start = 0
-        if cursor:
-            ids = [row["id"] for row in self.rows]
-            start = ids.index(cursor) + 1 if cursor in ids else len(self.rows)
-        selected = self.rows[start : start + limit]
-        next_cursor = selected[-1]["id"] if len(self.rows) > start + limit and selected else None
-        items: list[dict[str, Any]] = []
-        for row in selected:
-            item = {
-                "id": row["id"],
-                "email_original": row["email_original"],
-                "source": row["source"],
-                "created_at": row["created_at"],
-            }
-            if verbose:
-                item["ip_hash"] = row["ip_hash"]
-                item["user_agent"] = row["user_agent"]
-            items.append(item)
-        return items, next_cursor
-
-
 class BetaSignupTests(unittest.TestCase):
     def setUp(self) -> None:
         self.env = mock.patch.dict(
             os.environ,
             {
-                "BLINK_ADMIN_TOKEN": "admin-secret",
                 "BLINK_BOOTSTRAP_TOKEN": "bootstrap-secret",
                 "BLINK_IP_HASH_SALT": "test-salt",
                 "BLINK_SIGNUP_RATE_LIMIT_PER_MINUTE": "5",
@@ -160,54 +131,6 @@ class BetaSignupTests(unittest.TestCase):
             response.headers["access-control-allow-origin"],
             "https://useblink.dev",
         )
-
-    def test_admin_lists_rows_and_hides_private_fields_by_default(self) -> None:
-        self.client.post(
-            "/v1/beta-signup",
-            json={"email": "person@example.com", "source": "site"},
-            headers={"user-agent": "unit-test"},
-        )
-        response = self.client.get(
-            "/v1/admin/beta-signups",
-            headers={"Authorization": "Bearer admin-secret"},
-        )
-        self.assertEqual(response.status_code, 200)
-        item = response.json()["items"][0]
-        self.assertEqual(item["email_original"], "person@example.com")
-        self.assertNotIn("ip_hash", item)
-        self.assertNotIn("user_agent", item)
-
-    def test_admin_verbose_can_include_private_operational_fields(self) -> None:
-        self.client.post("/v1/beta-signup", json={"email": "person@example.com"})
-        response = self.client.get(
-            "/v1/admin/beta-signups?verbose=1",
-            headers={"Authorization": "Bearer admin-secret"},
-        )
-        self.assertEqual(response.status_code, 200)
-        item = response.json()["items"][0]
-        self.assertIn("ip_hash", item)
-        self.assertIn("user_agent", item)
-
-    def test_pagination_uses_cursor(self) -> None:
-        for i in range(3):
-            self.client.post("/v1/beta-signup", json={"email": f"{i}@example.com"})
-
-        first = self.client.get(
-            "/v1/admin/beta-signups?limit=2",
-            headers={"Authorization": "Bearer admin-secret"},
-        )
-        self.assertEqual(first.status_code, 200)
-        first_body = first.json()
-        self.assertEqual(len(first_body["items"]), 2)
-        self.assertIsNotNone(first_body["next_cursor"])
-
-        second = self.client.get(
-            f"/v1/admin/beta-signups?limit=2&cursor={first_body['next_cursor']}",
-            headers={"Authorization": "Bearer admin-secret"},
-        )
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(len(second.json()["items"]), 1)
-
 
 if __name__ == "__main__":
     unittest.main()

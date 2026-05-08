@@ -105,10 +105,6 @@ class BootstrapMisconfigured(RuntimeError):
     """Raised when BLINK_BOOTSTRAP_TOKEN is empty so callers can return 500."""
 
 
-class AdminMisconfigured(RuntimeError):
-    """Raised when BLINK_ADMIN_TOKEN is empty so callers can return 500."""
-
-
 def validate_bootstrap_token(token: str) -> str:
     expected = bootstrap_token()
     if not expected:
@@ -125,20 +121,6 @@ def is_bootstrap_token(token: str) -> bool:
     if not expected or not token:
         return False
     return secrets.compare_digest(token, expected)
-
-
-def admin_token() -> str | None:
-    token = (os.environ.get("BLINK_ADMIN_TOKEN") or "").strip()
-    return token or None
-
-
-def validate_admin_token(token: str) -> str:
-    expected = admin_token()
-    if not expected:
-        raise AdminMisconfigured("server misconfigured: BLINK_ADMIN_TOKEN is empty")
-    if not token or not secrets.compare_digest(token, expected):
-        raise ValueError("invalid admin token")
-    return "admin"
 
 
 def trust_proxy_headers() -> bool:
@@ -348,22 +330,6 @@ def _extract_bearer_token(authorization: Optional[str]) -> str:
             detail="invalid bearer token",
         )
     return token.strip()
-
-
-def require_admin_token(authorization: Optional[str] = Header(default=None)) -> str:
-    token = _extract_bearer_token(authorization)
-    try:
-        return validate_admin_token(token)
-    except AdminMisconfigured as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
 
 
 def require_bearer_token(

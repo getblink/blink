@@ -191,7 +191,7 @@ Emitted by `experiments/blink-copy-paste/python/run_once.py`. Mirrors the resear
     "full_target_image_role": "paste" | "extractor"    // only when mode == full_target_image
   },
   "request": {
-    "model": "gemini-3.1-flash-lite-preview",
+    "model": "gemini-3-flash-preview",
     "request_send_at": "ISO-8601",
     "prompt_chars": 612,
     "instruction_chars": 1832,

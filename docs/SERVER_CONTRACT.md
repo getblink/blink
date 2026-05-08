@@ -37,7 +37,7 @@ Success response:
   "tldr": "...",
   "suggestions": ["...", "...", "..."],
   "duration_ms": 1234,
-  "model": "gemini-3.1-flash-lite-preview",
+  "model": "gemini-3-flash-preview",
   "warnings": []
 }
 ```
@@ -177,6 +177,6 @@ Success response:
   "tldr": "...",
   "suggestions": ["...", "...", "..."],
   "duration_ms": 1234,
-  "model": "gemini-3.1-flash-lite-preview"
+  "model": "gemini-3-flash-preview"
 }
 ```
