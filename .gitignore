@@ -16,6 +16,7 @@ DerivedData/
 *.cer
 scratchpad/.venv/
 scratchpad/runs/
+scratchpad/field_runs/
 scratchpad/tldr_runs/
 scratchpad/state/*
 !scratchpad/state/.gitkeep
