@@ -159,7 +159,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         runtimeButton.bezelStyle = .rounded
         let permsButton = NSButton(title: "Permissions…", target: self, action: #selector(openPermissions))
         permsButton.bezelStyle = .rounded
-        let buttonRow = NSStackView(views: [runsButton, runtimeButton, permsButton])
+        let resetPermsButton = NSButton(title: "Reset Permissions…", target: self, action: #selector(resetPermissions))
+        resetPermsButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [runsButton, runtimeButton, permsButton, resetPermsButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
         stack.addArrangedSubview(buttonRow)
@@ -310,6 +312,69 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
 
     @objc private func openPermissions() {
         onShowPermissions()
+    }
+
+    /// Mirror of `tldr_app/scripts/reset_tcc.sh` — clears every TCC service
+    /// the app touches so the next launch re-triggers the system prompts.
+    /// In-process resets don't apply to the currently-running process, so
+    /// we offer to quit on success.
+    @objc private func resetPermissions() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.henryz2004.tldr"
+
+        let confirm = NSAlert()
+        confirm.messageText = "Reset TLDR permissions?"
+        confirm.informativeText = """
+            This clears Accessibility, Screen Recording, Input Monitoring, \
+            and related grants for \(bundleID). You'll be re-prompted on \
+            next launch. TLDR should be quit and relaunched for the reset \
+            to take effect.
+            """
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Reset")
+        confirm.addButton(withTitle: "Cancel")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        let services = [
+            "Accessibility",
+            "ListenEvent",
+            "PostEvent",
+            "ScreenCapture",
+            "SystemPolicyAllFiles",
+            "AppleEvents",
+        ]
+        var failures: [String] = []
+        for service in services {
+            let proc = Process()
+            proc.launchPath = "/usr/bin/tccutil"
+            proc.arguments = ["reset", service, bundleID]
+            proc.standardOutput = Pipe()
+            proc.standardError = Pipe()
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                if proc.terminationStatus != 0 {
+                    failures.append(service)
+                }
+            } catch {
+                failures.append(service)
+            }
+        }
+
+        let result = NSAlert()
+        if failures.isEmpty {
+            result.messageText = "Permissions reset"
+            result.informativeText = "Quit TLDR now and relaunch to re-grant permissions."
+            result.alertStyle = .informational
+        } else {
+            result.messageText = "Reset finished with errors"
+            result.informativeText = "tccutil failed for: \(failures.joined(separator: ", "))."
+            result.alertStyle = .warning
+        }
+        result.addButton(withTitle: "Quit TLDR")
+        result.addButton(withTitle: "Later")
+        if result.runModal() == .alertFirstButtonReturn {
+            NSApp.terminate(nil)
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
