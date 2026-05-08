@@ -6,14 +6,15 @@ experiment. It is intentionally separate from the existing Blink app in
 
 TLDR is a menubar app:
 
-- `Ctrl+Shift+T` captures the frontmost window with ScreenCaptureKit. A
-  single press captures and submits instantly. Pressing the hotkey again
-  within ~400ms cancels the in-flight summary and starts a multi-frame
-  session: every subsequent press appends another frame from whatever
-  window is frontmost at that moment (any app), capped at 8 frames. The
-  request envelope tags each frame with its own `frontmost_app` metadata
-  so the model can reason about cross-app sets like a Slack thread plus
-  the Linear ticket the user just switched to.
+- `Ctrl+Opt+Space` (default) captures the frontmost window with ScreenCaptureKit;
+  the hotkey is configurable via `~/.tldr/settings.json`. A single press
+  captures and submits instantly. Pressing the hotkey again within ~400ms
+  cancels the in-flight summary and starts a multi-frame session: every
+  subsequent press appends another frame from whatever window is frontmost
+  at that moment (any app), capped at 8 frames. The request envelope tags
+  each frame with its own `frontmost_app` metadata so the model can reason
+  about cross-app sets like a Slack thread plus the Linear ticket the user
+  just switched to.
 - Swift builds a request envelope with image diagnostics, focused-context facts,
   pending-run metadata, and behavior events.
 - The bundled Python runtime calls the TLDR server when `BLINK_PROXY_URL` +

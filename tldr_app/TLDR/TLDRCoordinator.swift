@@ -768,6 +768,8 @@ final class TLDRCoordinator {
                     }
                 }
             )
+            let streamCompletedAt = Date()
+            let firstTokenAt = DispatchQueue.main.sync { self.currentStreamingRun?.firstTokenAt }
             DispatchQueue.main.async {
                 if let submission = self.currentSubmission, submission.token == submissionToken {
                     self.currentSubmission = nil
@@ -793,7 +795,9 @@ final class TLDRCoordinator {
                 captureMS: captureMS,
                 pythonMS: pythonMS,
                 totalMS: totalMS,
-                result: result
+                result: result,
+                firstTokenAt: firstTokenAt,
+                streamCompletedAt: streamCompletedAt
             )
 
             lastPhase = "overlay_shown"
@@ -1318,17 +1322,31 @@ final class TLDRCoordinator {
         guard overlayWasVisible || pendingRequestID != nil else { return }
         let resolvedRequestID = currentRequestID ?? pendingRequestID
         let alreadyTerminal = (resolvedRequestID != nil && resolvedRequestID == terminalEmittedRequestID)
+        let streamingRun = currentStreamingRun
+        let cancelledBundleDir = streamingRun?.bundleDir
+        let cancelledFirstTokenAt = streamingRun?.firstTokenAt
+        let cancelledMidStream = streamingRun?.isRunning == true
+            && streamingRun?.finalReceived == false
         if let submission = currentSubmission {
             cancelledSubmissionTokens.insert(submission.token)
             submission.run?.terminate()
             currentSubmission = nil
         }
-        currentStreamingRun?.terminate()
+        streamingRun?.terminate()
         currentStreamingRun = nil
         let dismissedWithoutOverlay = !overlayWasVisible && pendingRequestID != nil
         currentRequestID = nil
         pendingDoubleTapRequestID = nil
         currentBundleDir = nil
+        if cancelledMidStream,
+           let requestID = resolvedRequestID,
+           let bundleDirString = cancelledBundleDir {
+            recordStreamCancelled(
+                bundleDir: URL(fileURLWithPath: bundleDirString),
+                requestID: requestID,
+                firstTokenAt: cancelledFirstTokenAt
+            )
+        }
         choiceState = SuggestionChoiceState(suggestionCount: 0)
         // Coordinator-side pending double-tap state lives on its own queue;
         // tear it down so a follow-on hotkey starts a fresh single-shot
@@ -1487,13 +1505,30 @@ final class TLDRCoordinator {
         return "capture_failed"
     }
 
+    private func recordStreamCancelled(
+        bundleDir: URL,
+        requestID: String,
+        firstTokenAt: Date?
+    ) {
+        let path = bundleDir.appendingPathComponent("host_profile.json")
+        var payload = JSONFiles.readObject(at: path) ?? [:]
+        payload["request_id"] = requestID
+        payload["cancelled_at"] = JSONFiles.isoString()
+        if let firstTokenAt {
+            payload["first_token_at"] = JSONFiles.isoString(firstTokenAt)
+        }
+        try? JSONFiles.writeObject(payload, to: path)
+    }
+
     private func updateRunHostProfile(
         bundleDir: URL,
         requestID: String,
         captureMS: Int,
         pythonMS: Int,
         totalMS: Int,
-        result: PythonRunner.ResultPayload
+        result: PythonRunner.ResultPayload,
+        firstTokenAt: Date?,
+        streamCompletedAt: Date?
     ) throws {
         let path = bundleDir.appendingPathComponent("host_profile.json")
         var payload = JSONFiles.readObject(at: path) ?? [:]
@@ -1505,6 +1540,12 @@ final class TLDRCoordinator {
         payload["model"] = result.model as Any
         payload["warnings"] = result.warnings
         payload["finished_at"] = JSONFiles.isoString()
+        if let firstTokenAt {
+            payload["first_token_at"] = JSONFiles.isoString(firstTokenAt)
+        }
+        if let streamCompletedAt {
+            payload["stream_completed_at"] = JSONFiles.isoString(streamCompletedAt)
+        }
         try JSONFiles.writeObject(payload, to: path)
     }
 

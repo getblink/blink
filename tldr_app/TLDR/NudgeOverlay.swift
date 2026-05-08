@@ -13,12 +13,17 @@ final class NudgeOverlay {
     }
 
     private enum Layout {
-        static let width: CGFloat = 260
-        static let height: CGFloat = 36
-        static let margin: CGFloat = 6
-        static let cornerRadius: CGFloat = 10
-        static let fadeIn: TimeInterval = 0.15
+        static let width: CGFloat = 320
+        static let height: CGFloat = 48
+        static let margin: CGFloat = 8
+        static let cornerRadius: CGFloat = 12
+        static let fadeIn: TimeInterval = 0.18
         static let fadeOut: TimeInterval = 0.25
+        static let iconSize: CGFloat = 24
+        static let iconLeading: CGFloat = 12
+        static let labelLeading: CGFloat = 44  // iconLeading + iconSize + 8 gap
+        static let labelTrailing: CGFloat = 12
+        static let scaleStart: CGFloat = 0.92
     }
 
     private var panel: TipPanel?
@@ -89,13 +94,29 @@ final class NudgeOverlay {
         tint.autoresizingMask = [.width, .height]
         content.addSubview(tint)
 
+        let iconView = NSImageView(frame: NSRect(
+            x: Layout.iconLeading,
+            y: (Layout.height - Layout.iconSize) / 2,
+            width: Layout.iconSize,
+            height: Layout.iconSize
+        ))
+        iconView.image = NSApp.applicationIconImage
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.imageAlignment = .alignCenter
+        content.addSubview(iconView)
+
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .white
-        label.alignment = .center
+        label.alignment = .left
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
-        label.frame = NSRect(x: 12, y: 0, width: Layout.width - 24, height: Layout.height)
+        label.frame = NSRect(
+            x: Layout.labelLeading,
+            y: 0,
+            width: Layout.width - Layout.labelLeading - Layout.labelTrailing,
+            height: Layout.height
+        )
         label.isBordered = false
         label.drawsBackground = false
         label.isSelectable = false
@@ -111,6 +132,24 @@ final class NudgeOverlay {
         self.dismissCallback = onDismiss
 
         panel.orderFrontRegardless()
+
+        // Set anchor point, position, and initial scale atomically so there's no
+        // single-frame visual offset between the anchorPoint and position writes.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        content.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        content.layer?.position = CGPoint(x: Layout.width / 2, y: Layout.height / 2)
+        content.layer?.transform = CATransform3DMakeScale(Layout.scaleStart, Layout.scaleStart, 1)
+        CATransaction.commit()
+
+        let scaleAnim = CABasicAnimation(keyPath: "transform")
+        scaleAnim.fromValue = CATransform3DMakeScale(Layout.scaleStart, Layout.scaleStart, 1)
+        scaleAnim.toValue = CATransform3DIdentity
+        scaleAnim.duration = Layout.fadeIn
+        scaleAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        content.layer?.add(scaleAnim, forKey: "scaleIn")
+        content.layer?.transform = CATransform3DIdentity
+
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Layout.fadeIn
             panel.animator().alphaValue = 1.0

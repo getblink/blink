@@ -780,13 +780,15 @@ class TldrOnceTests(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             events = [json.loads(line) for line in stdout.getvalue().splitlines()]
-            self.assertEqual(events[0]["event"], "phase")
+            self.assertEqual(events[0]["event"], "run_started")
+            bundles = list(out_dir.iterdir())
+            self.assertEqual(len(bundles), 1)
+            self.assertEqual(events[0]["bundle_dir"], str(bundles[0]))
+            self.assertEqual(events[1]["event"], "phase")
             self.assertTrue(any(event["event"] == "partial_tldr" for event in events))
             self.assertEqual(events[-1]["event"], "final")
             self.assertEqual(events[-1]["status"], "ok")
             self.assertEqual(len(events[-1]["suggestions"]), 3)
-            bundles = list(out_dir.iterdir())
-            self.assertEqual(len(bundles), 1)
             self.assertTrue((bundles[0] / "run.json").exists())
 
     def test_build_stateful_context_uses_custom_replies_and_same_surface_history(self) -> None:
