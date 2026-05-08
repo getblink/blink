@@ -1,139 +1,62 @@
 # Blink
 
-Blink is an experiment in local, cross-app intelligent copy-paste. The current goal is narrow on purpose: capture what the user is looking at, infer what belongs in the focused field, and suggest the right paste with low correction effort.
+Blink is a local-first Mac assistant that reads the app in front of you and turns it into a useful next action.
 
-## Quickstart
+The current beta focuses on one workflow: summarize the active window, suggest three replies, and let you copy or insert the right response without switching context.
 
-1. Put `GEMINI_API_KEY=...` in `.env` at the repo root.
-2. Create the local virtualenv and install dependencies:
+<p>
+  <a href="https://useblink.dev">Website</a> ·
+  <a href="https://useblink.dev">Download &amp; demo</a>
+</p>
 
-```bash
-python3.11 -m venv scratchpad/.venv
-scratchpad/.venv/bin/pip install -r scratchpad/requirements.txt
-```
+## Status
 
-3. Start the resident capture runner:
+Blink is early beta software for macOS 14+. Expect rough edges, especially around macOS permissions, model latency, and app-specific text fields.
 
-```bash
-./capture
-```
+The app is source-available under the Elastic License 2.0. It is not OSI open source. See [LICENSE](LICENSE).
 
-4. Press `ctrl+shift+c` on a source window, then `ctrl+shift+v` on a target field to record fixtures under `scratchpad/fixtures/`.
-5. Sweep saved fixtures against config variants:
+## What It Does
 
-```bash
-./sweep --fixtures 'scratchpad/fixtures/*' --configs 'scratchpad/eval_configs/*.json' --out scratchpad/sweeps/<name>
-```
+- Captures the frontmost window with ScreenCaptureKit.
+- Sends the request through the Blink backend or, in local development, directly to Gemini.
+- Shows a small non-activating overlay with a one-line summary and three reply suggestions.
+- Lets number keys expand first, repeat to copy, Return to insert, and Esc to dismiss.
 
-6. Open `compare.html` and `summary.md` in the sweep output directory.
+The v1 client/server protocol intentionally keeps the `/v1/tldr` route and `tldr_*` storage/token names for deployed-client compatibility.
 
-There is also a separate TL;DR + reply-suggestions experiment:
+## Install
 
-```bash
-./blink
-```
+Grab the latest beta DMG from [useblink.dev](https://useblink.dev). Open the DMG, drag Blink into Applications, launch it, and grant the macOS permissions it requests. If you installed an older TLDR build, reinstall Blink — the bundle ID changed and Sparkle won't carry you over.
 
-`./blink` and `./blink-ui` run the experimental Python loop in
-`scratchpad/tldr_reply/`; to run the shipped Blink.app, use
-`bash app/scripts/install_local_app.sh`. The experiment listens for
-`ctrl+shift+t`, captures one selected window, asks Gemini for a one-line summary
-plus three reply candidates, and shows them in a small overlay. Artifacts land
-under `scratchpad/tldr_runs/`; if `BLINK_PROXY_URL` and `BLINK_PROXY_TOKEN` are
-set, the request routes through the standalone Blink server instead of direct
-Gemini. Use `./blink --save-fixture <dir>` plus
-`scratchpad/tldr_reply/eval_sweep.py` for compression/OCR fixture sweeps. See
-[`scratchpad/tldr_reply/`](scratchpad/tldr_reply/README.md).
+## Self-Host The Server
 
-## Blink.app (`app/`)
+The backend is a small FastAPI app that can run on Railway or any Python host with Postgres. See [server/README.md](server/README.md) for environment variables, database schema, and endpoint contracts.
 
-`Blink.app` is the shipped surface for the TL;DR + reply-suggestions loop. It
-lives under [`app/`](app/README.md). The older intelligent copy-paste tester app
-has been archived under [`experiments/blink-copy-paste/`](experiments/blink-copy-paste/README.md),
-and the root `./blink` wrapper remains a scratchpad harness.
+## Build From Source
 
-The Swift app owns the menubar item, permissions, the configurable summary hotkey (default `ctrl+opt+space`),
-ScreenCaptureKit frontmost-window capture, non-activating overlay, numbered
-choice handling, copy, and Return-to-insert behavior. It now also emits a
-server-oriented request envelope, image diagnostics, focused-context metadata,
-pending-run records, and event telemetry. Number keys expand first; pressing
-the same number again copies, Return inserts the expanded suggestion, Return
-with no expanded suggestion falls through to the focused app, and Esc dismisses.
-The bundled Python runner owns the request execution path and per-run artifact
-bundle. Local identity is:
-
-- App: `~/Applications/Blink.app`
-- Bundle ID: `com.henryz2004.blink`
-- Runtime config/secrets: `~/.blink/`
-- Runs: `~/Library/Application Support/Blink/runs/`
-- Pending run records: `~/Library/Application Support/Blink/pending/`
-
-Useful commands:
+The macOS app lives in [app/](app/README.md). Useful commands:
 
 ```bash
 python3 -m unittest discover app/python/tests
 python3 -m compileall app/python
 bash app/scripts/install_local_app.sh
-bash app/scripts/make_dmg.sh
 ```
 
-The installer resets Blink's TCC permissions on every rebuild so Accessibility,
-Input Monitoring, and Screen Recording attach to the fresh binary.
-
-Cutting a Sparkle release (signed, notarized DMG + appcast on Cloudflare R2)
-goes through `app/scripts/release.sh`. Bump
-`app/project.yml`'s `CFBundleShortVersionString`, export the repo-root
-`.env` (which holds Apple/Sparkle/R2 credentials), then run the script. See
-[`app/README.md` → Sparkle Releases](app/README.md#sparkle-releases)
-for the required env vars and known gotchas (Sparkle `sign_update`
-chicken-and-egg, duplicate-cert disambiguation via `BLINK_SIGN_IDENTITY`).
-
-In Conductor workspaces, `scratchpad/fixtures` points at a shared pool in `~/conductor/shared/blink/fixtures/`, so new workspaces inherit the full captured corpus automatically while archived sweeps still remain self-contained.
-
-Conductor hook receipts now make it easy to sanity-check execution: setup writes `.context/conductor/setup-receipt.json`, and archive appends `~/conductor/archive/blink/_archive_runs.jsonl` plus `archive-receipt.json` inside each preserved archive bundle.
-
-## Current focus
-
-- **In scope:** intelligent copy-paste
-- **Out of scope for now:** autocomplete, intent feeds, polished UI, background automation
-- **Working style:** experiments over builds, manual validation before productization
-
-## Documentation Tree
-
-- [AGENTS.md](AGENTS.md): repo operating rules and documentation expectations for coding agents
-- [CLAUDE.md](CLAUDE.md): implementation-oriented repo guide, layout, and current script workflow
-- [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md): product scope, success criteria, constraints, and phase goals
-- [docs/ARTIFACT_SCHEMA.md](docs/ARTIFACT_SCHEMA.md): versioned bundle contract shared by the research loop and archived copy-paste tester
-- [docs/MANUAL_COPY_PASTE_PLAYBOOK.md](docs/MANUAL_COPY_PASTE_PLAYBOOK.md): manual trial framing, prompt structure, and evaluation protocol
-- [docs/DEMO_FIXTURE_PLAN.md](docs/DEMO_FIXTURE_PLAN.md): capture checklist for the one-source / many-targets demo portfolio
-- [docs/DOGFOOD_PLAYBOOK.md](docs/DOGFOOD_PLAYBOOK.md): clean-build + TCC reset + artifact-capture procedure for Blink.app dogfood sessions
-- [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md): durable experiment history and outcomes
-- [scratchpad/README.md](scratchpad/README.md): capture runner, fixture schema, sweep flow, and scratchpad-specific usage
-- [scratchpad/tldr_reply/README.md](scratchpad/tldr_reply/README.md): isolated TL;DR + reply-suggestions hotkey experiment
-- [server/README.md](server/README.md): Railway-ready Blink backend for server-owned prompt/model/key handling plus request/event diagnostics
-- [docs/SERVER_CONTRACT.md](docs/SERVER_CONTRACT.md): HTTP contract for the standalone Blink client
-- [scratchpad/eval_configs/README.md](scratchpad/eval_configs/README.md): config override format for offline sweeps
-- [scratchpad/providers/README.md](scratchpad/providers/README.md): sweep-only provider adapters (Gemini + OpenAI-compatible)
-- [app/README.md](app/README.md): shipped Blink.app surface (Swift app + bundled Python)
-- [experiments/blink-copy-paste/README.md](experiments/blink-copy-paste/README.md): archived intelligent copy-paste tester app
-- [site/README.md](site/README.md): marketing landing page (Astro, static, Cloudflare Pages)
+For release builds, use `app/scripts/release.sh`; it signs and notarizes the app, builds a DMG, signs the Sparkle update, and uploads the DMG/appcast to Cloudflare R2. See [app/README.md](app/README.md#sparkle-releases).
 
 ## Repository Map
 
-- `docs/` contains the product brief, artifact schema, manual playbook, and experiment log
-- `scratchpad/` contains the hotkey runner, shared Gemini request helpers, OCR wrapper, sweep runner, evaluation configs, and the `field_runs/` + `import_field_runs.py` bridge from archived copy-paste tester exports
-- `scratchpad/tldr_reply/` contains an isolated single-screenshot TL;DR + reply-suggestions experiment
-- `server/` contains the standalone Blink backend: FastAPI app, Railway Procfile, Gemini fork, and deploy notes
-- `app/` contains the Blink.app Swift surface, bundled Python runner, resources, build/install/DMG scripts, and XcodeGen spec
-- `experiments/blink-copy-paste/` contains the archived intelligent copy-paste tester app kept buildable for fixture replay
-- `site/` is the standalone marketing landing page (Astro, static, deployed to Cloudflare Pages)
-- `capture` is the repo-root wrapper for the resident capture runner
-- `sweep` is the repo-root wrapper for the offline fixture sweep
-- `blink` is the repo-root wrapper for the TL;DR + reply-suggestions experiment
+- `app/` contains the shipped Blink.app Swift surface and bundled Python runner.
+- `server/` contains the FastAPI backend and Railway deployment notes.
+- `site/` contains the Astro landing page for `useblink.dev`.
+- `scratchpad/` contains experimental capture, fixture, and sweep tooling.
+- `experiments/blink-copy-paste/` contains the archived intelligent copy-paste tester app.
+- `docs/` contains product, dogfood, experiment, and internal contributor notes.
 
-## Working Expectations
+Internal workspace guidance that used to live in this README has moved to [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md).
 
-1. Start with a clear experiment hypothesis.
-2. Prefer the fixture capture + sweep workflow over ad hoc prompt trials.
-3. Keep changes minimal, reversible, and easy to inspect.
-4. Record real experiment outcomes in `docs/EXPERIMENT_LOG.md`.
-5. Update docs whenever the workflow or folder structure changes.
+## Contributing
+
+Blink accepts focused issues and pull requests. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+
+For security reports, email henry@useblink.dev instead of opening a public issue. See [SECURITY.md](SECURITY.md).
