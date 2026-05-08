@@ -20,6 +20,10 @@ enum ScreenCapture {
         let capturedAt: Date
         let windowFramePoints: CGRect
         let windowID: CGWindowID
+        let windowTitle: String?
+        let ownerPID: pid_t
+        let ownerName: String?
+        let ownerBundleID: String?
         let shareableContent: SCShareableContent
     }
 
@@ -120,6 +124,10 @@ enum ScreenCapture {
                     capturedAt: startedAt,
                     windowFramePoints: display.frame,
                     windowID: window.windowID,
+                    windowTitle: window.title,
+                    ownerPID: pid,
+                    ownerName: window.owningApplication?.applicationName ?? ownerName,
+                    ownerBundleID: window.owningApplication?.bundleIdentifier,
                     shareableContent: content
                 )
             } catch {
@@ -143,6 +151,10 @@ enum ScreenCapture {
             capturedAt: startedAt,
             windowFramePoints: window.frame,
             windowID: window.windowID,
+            windowTitle: window.title,
+            ownerPID: pid,
+            ownerName: window.owningApplication?.applicationName ?? ownerName,
+            ownerBundleID: window.owningApplication?.bundleIdentifier,
             shareableContent: content
         )
     }
