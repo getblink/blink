@@ -25,6 +25,8 @@
 		51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */; };
 		51F46FA6BC30A495ECC7994D /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152858893A7EE251AC722A08 /* Inserter.swift */; };
 		52EF239CFE8C625D27328C80 /* NudgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B25C60BF32D1E2E221BFB3 /* NudgeCoordinator.swift */; };
+		54897D459B99D02F705ABDB3 /* CaptureModeDeriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBEA19A9B94B8B0C0A0BCD50 /* CaptureModeDeriver.swift */; };
+		56E7B55FD0C30F7121737629 /* CaptureModeDeriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA0DC0B47A0440CCE4374875 /* CaptureModeDeriverTests.swift */; };
 		59EA9C20D9B306853C21C5A0 /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5056F086C8989A44A91D7C /* PermissionsWindow.swift */; };
 		697884BC80BAC724A9749483 /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0818AFE8B0783C2DC5766F /* ScreenCapture.swift */; };
 		7C7DE9E5DB2E2B812D7518B4 /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */; };
@@ -92,6 +94,7 @@
 		BA7727E861BC77633DF47E71 /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
 		C3AB9DCF40030EF9A9E14243 /* PendingRunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStore.swift; sourceTree = "<group>"; };
 		CAE524E080E5A97C5278E6C9 /* TLDRTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TLDRTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CBEA19A9B94B8B0C0A0BCD50 /* CaptureModeDeriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriver.swift; sourceTree = "<group>"; };
 		CC7282EE495D90BA46111BC9 /* RuntimeEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironment.swift; sourceTree = "<group>"; };
 		CD3858F39EF36830048D4F2D /* RuntimeConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStore.swift; sourceTree = "<group>"; };
 		D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
@@ -104,6 +107,7 @@
 		E9B4A11BE00C4FC73DA334EF /* ApplicationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT; };
 		F5B4CD8BEC92A1A55C45E77D /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
 		F8FC9688321A6AA3C445F2F8 /* TLDRApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDRApp.swift; sourceTree = "<group>"; };
+		FA0DC0B47A0440CCE4374875 /* CaptureModeDeriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriverTests.swift; sourceTree = "<group>"; };
 		FEDEE29EB3EE474AC3ED7550 /* SuggestionChoiceStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceStateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -158,6 +162,7 @@
 		E9A5D49D939397CB17FD4E03 /* TLDRTests */ = {
 			isa = PBXGroup;
 			children = (
+				FA0DC0B47A0440CCE4374875 /* CaptureModeDeriverTests.swift */,
 				B601ED31642980EB32084F09 /* FocusedContextCaptureTests.swift */,
 				BA7727E861BC77633DF47E71 /* HotkeyTests.swift */,
 				DA791A5BC591E82F69A2DE80 /* PendingRunStoreTests.swift */,
@@ -175,6 +180,7 @@
 			children = (
 				D0AD34FDBE793C57E5054925 /* ArtifactWriter.swift */,
 				AC07AAA16D9FE63C2762AD2E /* BackgroundActivityMonitor.swift */,
+				CBEA19A9B94B8B0C0A0BCD50 /* CaptureModeDeriver.swift */,
 				6CD32F3BB2B51896CCB61046 /* Config.swift */,
 				A2C733912AE5D9502C61122F /* ControlWindow.swift */,
 				E1F705DA9969C70BBC405DF0 /* FocusedContextCapture.swift */,
@@ -295,6 +301,7 @@
 			files = (
 				F8803B44FA557188A1D6EB84 /* ArtifactWriter.swift in Sources */,
 				B23E646BE1DB553469F3A7CE /* BackgroundActivityMonitor.swift in Sources */,
+				54897D459B99D02F705ABDB3 /* CaptureModeDeriver.swift in Sources */,
 				D864396819460CA1D5F83202 /* Config.swift in Sources */,
 				43116930AA19430C22CB8756 /* ControlWindow.swift in Sources */,
 				0AAC39909F4CC492D9D22D81 /* FocusedContextCapture.swift in Sources */,
@@ -327,6 +334,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				56E7B55FD0C30F7121737629 /* CaptureModeDeriverTests.swift in Sources */,
 				51CFA528470FE1027CD00B69 /* FocusedContextCaptureTests.swift in Sources */,
 				F65BEFEC7B96C25117515BC5 /* HotkeyTests.swift in Sources */,
 				24B02464DB464CD2EB3812C2 /* PendingRunStoreTests.swift in Sources */,

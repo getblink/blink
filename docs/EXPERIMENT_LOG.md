@@ -26,6 +26,21 @@ See also:
 
 ---
 
+## 2026-05-07 — TLDR instant single-frame + double-tap multi-window
+
+- **Hypothesis:** Splitting the trigger into "single press = submit instantly" and "double tap = collect multiple frames across any windows/apps" makes the most common case (snap one window) feel snappier than the prior 600ms debounce, while still enabling cross-surface summaries (e.g. Slack thread plus the linked Linear ticket) that the same-window guard previously refused.
+- **Setup:**
+  - Replaced the `singlePressDebounceMS = 600` debounce-then-submit path with a `doubleTapWindowMS = 400` submit-then-listen path. First press captures + submits; a second press within 400ms terminates the in-flight Python subprocess (so Gemini stops streaming) and promotes the session into collecting mode.
+  - Dropped the `windowID` guard and `preferredPID` pin from `appendFrameToSession`, refreshed `SCShareableContent` per frame, and now record per-frame `frontmost_app` metadata (`bundle_id`, `app_name`, `pid`, `window_id`, `window_title`) on every captured frame.
+  - Added a new `capture_mode: multi_window` derivation when frames span different windows or apps, kept `frontmost_window_scroll` for the same-window flow, and added a new `capture_promoted_to_multiframe` event keyed on the original requestID.
+  - Updated the bundled prompt to teach the model that multi-frame requests may be a related set across windows/apps, surfaced a "Collecting from N apps" overlay copy variant, and extracted `CaptureModeDeriver` with unit tests.
+- **Input type(s):** Frontmost-window screenshots (single, scroll, and multi-window).
+- **Outcome:** Implemented in `tldr_app/`. Verified via `xcodebuild test` (Swift unit tests pass). Manual dogfood scenarios from the plan still pending.
+- **Decision:** Ship behind the existing TLDR.app channel; no flag.
+- **Next step:** Local install (`bash tldr_app/scripts/install_local_app.sh`) and run through the manual scenarios in the plan (single press latency, double-tap promotion, cross-app frames, dedupe, Esc cleanup, token-burn check, envelope inspection).
+
+---
+
 ## 2026-05-04 — TLDR screenshot compression + OCR sweep harness
 
 - **Hypothesis:** Client-side JPEG/downscale can reduce TLDR screenshot upload time, and a parallel native Vision OCR packet can preserve small-text grounding well enough to justify aggressive compression.

@@ -44,7 +44,11 @@ final class RuntimeConfigStoreTests: XCTestCase {
             allowEventLogging: true,
             allowContentRetention: false,
             soundsEnabled: true,
-            thinkingLevel: nil
+            thinkingLevel: nil,
+            nudgesEnabled: true,
+            lastNudgeAt: nil,
+            recentNudgeDismissals: [],
+            nudgeCooldownMinutes: 30
         )
 
         let encoded = try JSONEncoder().encode(original)
@@ -68,7 +72,11 @@ final class RuntimeConfigStoreTests: XCTestCase {
                 allowEventLogging: true,
                 allowContentRetention: false,
                 soundsEnabled: true,
-                thinkingLevel: level
+                thinkingLevel: level,
+                nudgesEnabled: true,
+                lastNudgeAt: nil,
+                recentNudgeDismissals: [],
+                nudgeCooldownMinutes: 30
             )
 
             let encoded = try JSONEncoder().encode(original)
