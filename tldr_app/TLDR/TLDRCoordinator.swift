@@ -375,7 +375,7 @@ final class TLDRCoordinator {
             )
             let frame = captureResult.frame
             let isDuplicate: Bool
-            if let previous = pending.frames.last, previous.sha256 == frame.sha256 {
+            if let previous = pending.frames.last, previous.windowID == frame.windowID {
                 try replaceFrameFile(at: previous.pngURL, with: frame.pngURL)
                 pending.frames[pending.frames.count - 1] = CapturedFrame(
                     index: previous.index,
