@@ -2,6 +2,10 @@
 const tagline =
   "instant recall across every AI thread for multi‑agent power users";
 const title = "Blink — instant recall across every AI thread";
+const betaSignupUrl =
+  import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
+  "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
+const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL || "";
 ---
 
 <!doctype html>
@@ -32,26 +36,93 @@ const title = "Blink — instant recall across every AI thread";
     <div class="grid-spotlight" aria-hidden="true"></div>
     <div class="vignette" aria-hidden="true"></div>
 
-    <main>
-      <h1 class="wordmark">
-        <span class="wordmark__text">blink</span><span
-          class="cursor"
-          aria-hidden="true"></span>
-      </h1>
-      <p class="tagline">
-        instant recall across every AI thread<br class="tagline__break" /> for
-        multi‑agent power users
-      </p>
-      <p class="more">
-        <a href="/story">learn more →</a>
-      </p>
+    <main class="shell">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero__copy">
+          <h1 class="wordmark" id="hero-title">
+            <span class="wordmark__text">blink</span><span
+              class="cursor"
+              aria-hidden="true"></span>
+          </h1>
+          <p class="tagline">
+            instant recall across every AI thread<br class="tagline__break" />
+            for multi‑agent power users
+          </p>
+        </div>
+
+        <div class="demo">
+          {demoVideoUrl ? (
+            <video
+              class="demo__video"
+              controls
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              src={demoVideoUrl}
+            ></video>
+          ) : (
+            <div class="demo__placeholder" aria-label="Demo video coming soon">
+              demo coming soon
+            </div>
+          )}
+        </div>
+
+        <form class="signup" data-state="idle" data-endpoint={betaSignupUrl}>
+          <label class="signup__label" for="email">Get the beta DMG</label>
+          <div class="signup__row">
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              placeholder="you@example.com"
+              maxlength="320"
+              required
+            />
+            <input
+              class="hp"
+              name="hp"
+              type="text"
+              tabindex="-1"
+              autocomplete="off"
+              aria-hidden="true"
+            />
+            <button type="submit">Join</button>
+          </div>
+          <p class="privacy">
+            We'll only use your email to send the beta DMG. Stored on our
+            server. No marketing.
+          </p>
+          <p class="status status--submitting">Sending…</p>
+          <p class="status status--success">You're on the list.</p>
+          <p class="status status--invalid">That doesn't look like an email.</p>
+          <p class="status status--network">
+            Couldn't reach the server. Try again in a moment.
+          </p>
+          <p class="status status--rate">Too many tries. Give it a minute.</p>
+        </form>
+
+        <p class="more">
+          <a href="/story">learn more →</a>
+        </p>
+      </section>
     </main>
+
+    <footer class="footer">
+      <a href="https://github.com/henryz2004/blink">GitHub</a>
+      <span>Source-available under ELv2</span>
+      <a href="mailto:henry@useblink.dev">henry@useblink.dev</a>
+    </footer>
 
     <style>
       :root {
         --bg: #09090b;
         --fg: #f5f5f7;
-        --fg-muted: rgba(245, 245, 247, 0.86);
+        --fg-muted: rgba(245, 245, 247, 0.82);
+        --line: rgba(245, 245, 247, 0.16);
+        --panel: rgba(245, 245, 247, 0.055);
+        --accent: #8ee6d8;
         --mx: -9999px;
         --my: -9999px;
       }
@@ -66,7 +137,7 @@ const title = "Blink — instant recall across every AI thread";
 
       html,
       body {
-        height: 100%;
+        min-height: 100%;
         background: var(--bg);
         color: var(--fg);
         font-family:
@@ -77,13 +148,11 @@ const title = "Blink — instant recall across every AI thread";
           sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        overflow: hidden;
       }
 
       body {
         position: relative;
-        display: grid;
-        place-items: center;
+        overflow-x: hidden;
       }
 
       .ambient {
@@ -176,21 +245,36 @@ const title = "Blink — instant recall across every AI thread";
         z-index: 0;
       }
 
-      main {
+      .shell {
         position: relative;
         z-index: 1;
-        text-align: center;
-        padding: 0 24px;
-        max-width: 960px;
+        width: 100%;
+        min-height: calc(100svh - 70px);
+        display: grid;
+        align-items: center;
+        padding: 48px 24px 28px;
+      }
+
+      .hero {
+        width: min(1120px, 100%);
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 520px);
+        gap: 40px 56px;
+        align-items: center;
+      }
+
+      .hero__copy {
+        text-align: left;
       }
 
       .wordmark {
         display: inline-flex;
         align-items: baseline;
-        justify-content: center;
+        justify-content: flex-start;
         font-weight: 800;
-        font-size: clamp(88px, 18vw, 168px);
-        letter-spacing: -0.055em;
+        font-size: clamp(5.5rem, 11rem, 11rem);
+        letter-spacing: 0;
         line-height: 0.95;
       }
 
@@ -221,13 +305,13 @@ const title = "Blink — instant recall across every AI thread";
       }
 
       .tagline {
-        margin: 32px auto 0;
+        margin: 28px 0 0;
         max-width: 620px;
-        font-size: clamp(16px, 1.55vw, 20px);
+        font-size: clamp(1rem, 1.25rem, 1.25rem);
         font-weight: 500;
         line-height: 1.5;
         color: var(--fg-muted);
-        letter-spacing: -0.005em;
+        letter-spacing: 0;
         text-wrap: balance;
       }
 
@@ -235,8 +319,126 @@ const title = "Blink — instant recall across every AI thread";
         display: none;
       }
 
+      .demo {
+        width: 100%;
+      }
+
+      .demo__video,
+      .demo__placeholder {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        object-fit: cover;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #111114;
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.35);
+      }
+
+      .demo__placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(245, 245, 247, 0.4);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .signup {
+        grid-column: 1 / -1;
+        width: min(720px, 100%);
+        display: grid;
+        gap: 10px;
+      }
+
+      .signup__label {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: rgba(245, 245, 247, 0.94);
+      }
+
+      .signup__row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 112px;
+        gap: 10px;
+      }
+
+      input,
+      button {
+        height: 46px;
+        border-radius: 8px;
+        font: inherit;
+      }
+
+      input[type="email"] {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--fg);
+        padding: 0 14px;
+        outline: none;
+      }
+
+      input[type="email"]::placeholder {
+        color: rgba(245, 245, 247, 0.42);
+      }
+
+      input[type="email"]:focus {
+        border-color: rgba(142, 230, 216, 0.65);
+        box-shadow: 0 0 0 3px rgba(142, 230, 216, 0.13);
+      }
+
+      button {
+        border: 0;
+        background: var(--fg);
+        color: var(--bg);
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+
+      .hp {
+        position: absolute;
+        left: -10000px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+
+      .privacy,
+      .status {
+        min-height: 20px;
+        font-size: 0.84rem;
+        line-height: 1.45;
+      }
+
+      .privacy {
+        color: rgba(245, 245, 247, 0.62);
+      }
+
+      .status {
+        display: none;
+        color: var(--accent);
+      }
+
+      .signup[data-state="submitting"] .status--submitting,
+      .signup[data-state="success"] .status--success,
+      .signup[data-state="error-invalid"] .status--invalid,
+      .signup[data-state="error-network"] .status--network,
+      .signup[data-state="error-rate-limit"] .status--rate {
+        display: block;
+      }
+
       .more {
-        margin: 28px auto 0;
+        grid-column: 1 / -1;
+        margin: 0;
       }
 
       .more a {
@@ -260,9 +462,81 @@ const title = "Blink — instant recall across every AI thread";
         outline-offset: 2px;
       }
 
+      .footer {
+        position: relative;
+        z-index: 1;
+        width: min(1120px, calc(100% - 48px));
+        min-height: 70px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        color: rgba(245, 245, 247, 0.5);
+        font-size: 0.82rem;
+      }
+
+      .footer a {
+        color: rgba(245, 245, 247, 0.68);
+        text-decoration: none;
+      }
+
+      .footer a:hover {
+        color: var(--fg);
+      }
+
+      @media (max-width: 900px) {
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 28px;
+        }
+
+        .hero__copy {
+          text-align: center;
+        }
+
+        .wordmark {
+          justify-content: center;
+          font-size: clamp(5rem, 7.5rem, 7.5rem);
+        }
+
+        .tagline {
+          margin-left: auto;
+          margin-right: auto;
+        }
+
+        .signup {
+          margin: 0 auto;
+        }
+
+        .more {
+          text-align: center;
+        }
+      }
+
       @media (max-width: 600px) {
+        .shell {
+          padding: 34px 18px 24px;
+        }
+
+        .wordmark {
+          font-size: clamp(4.4rem, 5.8rem, 5.8rem);
+        }
+
         .tagline__break {
           display: inline;
+        }
+
+        .signup__row {
+          grid-template-columns: 1fr;
+        }
+
+        .footer {
+          width: calc(100% - 36px);
+          flex-direction: column;
+          align-items: flex-start;
+          justify-content: center;
+          padding: 20px 0 28px;
         }
       }
 
@@ -304,6 +578,44 @@ const title = "Blink — instant recall across every AI thread";
           { passive: true }
         );
       })();
+    </script>
+
+    <script type="module">
+      const form = document.querySelector(".signup");
+      const endpoint = form?.dataset.endpoint;
+      form?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!endpoint) return;
+        const button = form.querySelector("button");
+        const data = new FormData(form);
+        form.dataset.state = "submitting";
+        button?.setAttribute("disabled", "true");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              email: String(data.get("email") || ""),
+              hp: String(data.get("hp") || ""),
+              source: "useblink.dev",
+            }),
+          });
+          if (response.status === 429) {
+            form.dataset.state = "error-rate-limit";
+            return;
+          }
+          if (response.status === 422) {
+            form.dataset.state = "error-invalid";
+            return;
+          }
+          form.dataset.state = response.ok ? "success" : "error-network";
+          if (response.ok) form.reset();
+        } catch {
+          form.dataset.state = "error-network";
+        } finally {
+          button?.removeAttribute("disabled");
+        }
+      });
     </script>
   </body>
 </html>

@@ -1,40 +1,63 @@
-import AppKit
 import Carbon.HIToolbox
+import CoreGraphics
 import IOKit.hid
 
-/// Global hotkey manager using `CGEventTap`. Default bindings:
-///   ⌃⇧C → onSetSource
-///   ⌃⇧V → onRunTarget
-///   ⌘⌥V → onBatchPaste
-///
-/// Intercepts the events (returns nil from the tap callback) so they don't
-/// reach the frontmost app. Requires Input Monitoring + Accessibility.
 final class HotkeyManager {
-    private let onSetSource: () -> Void
-    private let onRunTarget: () -> Void
-    private let onBatchPaste: () -> Void
+    private let isOverlayActive: () -> Bool
+    private let isCustomInputActive: () -> Bool
+    private let isCollectingActive: () -> Bool
+    private let onSummarize: () -> Void
+    private let onSubmitCollecting: () -> Void
+    private let onCancelCollecting: () -> Void
+    private let onChoice: (Int) -> Void
+    private let onInsert: () -> Bool
+    private let onCustomInsert: () -> Bool
+    private let onLeaveCustomInput: () -> Void
+    private let onTextEditing: (TextEditingShortcut) -> Bool
+    private let onDismiss: () -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    // Cocoa C keyCode = 8, V = 9. ctrl+shift = .maskControl | .maskShift.
-    private let sourceKeyCode: CGKeyCode = 8
-    private let pasteKeyCode: CGKeyCode = 9
-    private let sourceTargetFlags: CGEventFlags = [.maskControl, .maskShift]
-    private let batchPasteFlags: CGEventFlags = [.maskCommand, .maskAlternate]
-    private let relevantModifierFlags: CGEventFlags = [.maskControl, .maskShift, .maskCommand, .maskAlternate]
+    private let summaryKeyCode: CGKeyCode
+    private let summaryFlags: CGEventFlags
+    private let returnKeyCode: CGKeyCode = 36
+    private let escapeKeyCode: CGKeyCode = 53
+    private let relevantFlags: CGEventFlags = [
+        .maskCommand, .maskControl, .maskAlternate, .maskShift,
+        .maskSecondaryFn, .maskNumericPad, .maskHelp, .maskAlphaShift,
+    ]
 
     init(
-        onSetSource: @escaping () -> Void,
-        onRunTarget: @escaping () -> Void,
-        onBatchPaste: @escaping () -> Void
+        summaryHotkey: Hotkey,
+        isOverlayActive: @escaping () -> Bool,
+        isCustomInputActive: @escaping () -> Bool,
+        isCollectingActive: @escaping () -> Bool,
+        onSummarize: @escaping () -> Void,
+        onSubmitCollecting: @escaping () -> Void,
+        onCancelCollecting: @escaping () -> Void,
+        onChoice: @escaping (Int) -> Void,
+        onInsert: @escaping () -> Bool,
+        onCustomInsert: @escaping () -> Bool,
+        onLeaveCustomInput: @escaping () -> Void,
+        onTextEditing: @escaping (TextEditingShortcut) -> Bool,
+        onDismiss: @escaping () -> Void
     ) {
-        self.onSetSource = onSetSource
-        self.onRunTarget = onRunTarget
-        self.onBatchPaste = onBatchPaste
+        self.summaryKeyCode = summaryHotkey.keyCode
+        self.summaryFlags = summaryHotkey.flags
+        self.isOverlayActive = isOverlayActive
+        self.isCustomInputActive = isCustomInputActive
+        self.isCollectingActive = isCollectingActive
+        self.onSummarize = onSummarize
+        self.onSubmitCollecting = onSubmitCollecting
+        self.onCancelCollecting = onCancelCollecting
+        self.onChoice = onChoice
+        self.onInsert = onInsert
+        self.onCustomInsert = onCustomInsert
+        self.onLeaveCustomInput = onLeaveCustomInput
+        self.onTextEditing = onTextEditing
+        self.onDismiss = onDismiss
     }
 
-    /// Returns true if tap installed successfully; false if the OS denied us
-    /// (usually Input Monitoring/Accessibility not granted).
     @discardableResult
     func start() -> Bool {
         stop()
@@ -74,7 +97,7 @@ final class HotkeyManager {
     }
 
     private static let tapCallback: CGEventTapCallBack = { _, type, event, refcon in
-        guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+        guard let refcon else { return Unmanaged.passUnretained(event) }
         let manager = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -83,20 +106,53 @@ final class HotkeyManager {
         }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifiers = event.flags.intersection(manager.relevantModifierFlags)
+        let flags = event.flags.intersection(manager.relevantFlags)
 
-        if modifiers == manager.sourceTargetFlags, keyCode == manager.sourceKeyCode {
-            DispatchQueue.main.async { manager.onSetSource() }
+        if manager.isCollectingActive() {
+            if keyCode == manager.summaryKeyCode && flags == manager.summaryFlags {
+                DispatchQueue.main.async { manager.onSummarize() }
+                return nil
+            }
+            if keyCode == manager.returnKeyCode && flags.isEmpty {
+                DispatchQueue.main.async { manager.onSubmitCollecting() }
+                return nil
+            }
+            if keyCode == manager.escapeKeyCode && flags.isEmpty {
+                DispatchQueue.main.async { manager.onCancelCollecting() }
+                return nil
+            }
+        }
+
+        if manager.isOverlayActive(),
+           let command = OverlayKeyRouter.command(
+            forCGKeyCode: keyCode,
+            flags: event.flags,
+            customInputActive: manager.isCustomInputActive()
+           ) {
+            switch command {
+            case .choice(let index):
+                DispatchQueue.main.async { manager.onChoice(index) }
+                return nil
+            case .dismiss:
+                DispatchQueue.main.async { manager.onDismiss() }
+                return nil
+            case .insert:
+                return manager.onInsert() ? nil : Unmanaged.passUnretained(event)
+            case .insertCustomInput:
+                return manager.onCustomInsert() ? nil : Unmanaged.passUnretained(event)
+            case .leaveCustomInput:
+                DispatchQueue.main.async { manager.onLeaveCustomInput() }
+                return nil
+            case .textEditing(let shortcut):
+                return manager.onTextEditing(shortcut) ? nil : Unmanaged.passUnretained(event)
+            }
+        }
+
+        if keyCode == manager.summaryKeyCode && flags == manager.summaryFlags {
+            DispatchQueue.main.async { manager.onSummarize() }
             return nil
         }
-        if modifiers == manager.sourceTargetFlags, keyCode == manager.pasteKeyCode {
-            DispatchQueue.main.async { manager.onRunTarget() }
-            return nil
-        }
-        if modifiers == manager.batchPasteFlags, keyCode == manager.pasteKeyCode {
-            DispatchQueue.main.async { manager.onBatchPaste() }
-            return nil
-        }
+
         return Unmanaged.passUnretained(event)
     }
 }

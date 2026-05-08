@@ -84,7 +84,7 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     }
     lines = [
         "",
-        "Stateful TLDR context:",
+        "Stateful Blink context:",
         "Use user preference examples to infer which suggestions are useful in this surface.",
         "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
         "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
@@ -146,7 +146,7 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
             chosen_action = _bounded_text(item.get("chosen_action"), 80)
             chosen_index = item.get("chosen_index")
             if tldr:
-                lines.append(f"- Prior TLDR: {tldr}")
+                lines.append(f"- Prior summary: {tldr}")
             if custom_reply:
                 if custom_reply in preference_texts:
                     lines.append("  Prior outcome: user typed a custom reply instead of using the suggestions.")

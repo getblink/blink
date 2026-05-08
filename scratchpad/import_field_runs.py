@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Import a Blink.app run bundle into scratchpad/field_runs/ so `./sweep` can replay it.
+"""Import an archived copy-paste tester bundle into scratchpad/field_runs/.
 
 Accepts either:
-- a zip file exported via Blink.app's `BundleExporter` ("Export last N runs"), or
+- a zip file exported via the archived tester app's `BundleExporter`, or
 - a single already-unpacked bundle directory (under ~/Library/Application Support/Blink/runs/).
 
 Each bundle lands under scratchpad/field_runs/<fixture_id>/ (or <slug> override via
@@ -94,7 +94,7 @@ def _import_one(bundle_dir: Path, dest_root: Path, *, as_name: str | None, force
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Import Blink.app bundles into scratchpad/field_runs/")
+    parser = argparse.ArgumentParser(description="Import archived tester bundles into scratchpad/field_runs/")
     parser.add_argument(
         "source",
         type=Path,

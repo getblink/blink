@@ -21,7 +21,7 @@ class MainTests(unittest.TestCase):
             {
                 "BLINK_API_TOKENS": "dev-token",
                 "GEMINI_API_KEY": "test-key",
-                "TLDR_ALLOWED_MODELS": "gemini-3.1-flash-lite-preview",
+                "BLINK_ALLOWED_MODELS": "gemini-3.1-flash-lite-preview",
             },
             clear=False,
         )

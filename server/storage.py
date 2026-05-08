@@ -119,6 +119,20 @@ CREATE INDEX IF NOT EXISTS tldr_events_created_at_idx
     ON tldr_events (created_at DESC);
 """
 
+BETA_SIGNUPS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS beta_signups (
+    id TEXT PRIMARY KEY,
+    email_normalized TEXT NOT NULL UNIQUE,
+    email_original TEXT NOT NULL,
+    source TEXT,
+    user_agent TEXT,
+    ip_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS beta_signups_created_at_idx
+    ON beta_signups (created_at DESC);
+"""
+
 
 @dataclass
 class TelemetryStore:
@@ -141,6 +155,7 @@ class TelemetryStore:
                 cur.execute(REQUESTS_SCHEMA)
                 cur.execute(EVENTS_SCHEMA)
                 cur.execute(DEVICE_TOKENS_SCHEMA)
+                cur.execute(BETA_SIGNUPS_SCHEMA)
                 # View depends on both base tables existing.
                 cur.execute(REQUESTS_WITH_OUTCOME_VIEW)
             conn.commit()
@@ -317,3 +332,44 @@ class TelemetryStore:
                     (token_hash,),
                 )
                 return cur.fetchone() is not None
+
+    def record_beta_signup(
+        self,
+        *,
+        signup_id: str,
+        email_normalized: str,
+        email_original: str,
+        source: str | None,
+        user_agent: str | None,
+        ip_hash: str,
+    ) -> bool:
+        if not self.enabled or self.database_url is None:
+            raise RuntimeError("beta signup storage is not configured")
+        self._ensure_schema()
+        assert psycopg is not None
+        with psycopg.connect(self.database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO beta_signups (
+                        id,
+                        email_normalized,
+                        email_original,
+                        source,
+                        user_agent,
+                        ip_hash
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (email_normalized) DO NOTHING
+                    """,
+                    (
+                        signup_id,
+                        email_normalized,
+                        email_original,
+                        source,
+                        user_agent,
+                        ip_hash,
+                    ),
+                )
+                inserted = cur.rowcount > 0
+            conn.commit()
+        return inserted

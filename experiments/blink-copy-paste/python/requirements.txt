@@ -1,0 +1,6 @@
+google-genai==1.73.1
+openai==1.107.2
+pyobjc-core==11.1
+pyobjc-framework-Cocoa==11.1
+pyobjc-framework-Quartz==11.1
+pyobjc-framework-Vision==11.1

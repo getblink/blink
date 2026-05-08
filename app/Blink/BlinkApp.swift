@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import IOKit.hid
+import Sparkle
 
 @main
 final class BlinkAppMain {
@@ -8,65 +9,148 @@ final class BlinkAppMain {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.accessory) // menubar-only; no Dock icon
+        app.setActivationPolicy(.regular)
         _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var coordinator: TrialCoordinator!
+    private var coordinator: BlinkCoordinator!
     private var menubar: MenubarController!
     private var hotkeys: HotkeyManager!
     private var permissionsWindow: PermissionsWindowController?
-    private var controlCenterWindow: ControlCenterWindowController?
+    private var controlWindow: ControlWindowController?
     private var runtimeStore: RuntimeConfigStore?
-    private var runStore: RunInspectorStore?
+    private var eventClient: BlinkEventClient?
+    private var nudgeCoordinator: NudgeCoordinator?
     private var hotkeyRetryTimer: Timer?
+    private var updaterController: SPUStandardUpdaterController?
+    private var hotkeyDisplay: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Register Blink in the Screen Recording TCC table as soon as the app
-        // launches. Without a real request, Blink may not appear in System
-        // Settings, and CGPreflightScreenCaptureAccess only reports state for
-        // entries that already exist.
         _ = CGRequestScreenCaptureAccess()
-
-        // Register for Input Monitoring the same way. CGEventTap creation does
-        // not reliably register the app in TCC; IOHIDRequestAccess does.
         _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
 
         let config = Config.load()
+        let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
+        self.hotkeyDisplay = summaryHotkey.displayString
         let runtimeStore = RuntimeConfigStore()
-        let runStore = RunInspectorStore()
         self.runtimeStore = runtimeStore
-        self.runStore = runStore
-        coordinator = TrialCoordinator(config: config, runtimeStore: runtimeStore)
-        coordinator.onArtifactsChange = { [weak self] in
-            self?.runStore?.refresh()
-        }
+        DeviceTokenManager.mintIfNeeded(proxyConfig: RuntimeEnvironment.bootstrapProxyConfig())
+        let eventClient = BlinkEventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
+        self.eventClient = eventClient
+        let soundEffects = SoundEffects(runtimeStore: runtimeStore)
+
+        PendingRunStore.sweepAbandonedRuns(
+            eventClient: eventClient,
+            allowLogging: runtimeStore.allowEventLogging,
+            clientMetadata: BlinkCoordinator.clientMetadata()
+        )
+
+        coordinator = BlinkCoordinator(
+            config: config,
+            runtimeStore: runtimeStore,
+            eventClient: eventClient,
+            summaryHotkey: summaryHotkey,
+            soundEffects: soundEffects
+        )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)
         }
-        menubar = MenubarController(coordinator: coordinator, onShowPermissions: { [weak self] in
-            self?.showPermissionsWindow()
-        }, onShowControlCenter: { [weak self] in
-            self?.showControlCenter()
-        })
+
+        menubar = MenubarController(
+            coordinator: coordinator,
+            runtimeStore: runtimeStore,
+            hotkeyDisplay: summaryHotkey.displayString,
+            onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
+            onShowControlWindow: { [weak self] in self?.showControlWindow() }
+        )
         menubar.install()
+        if Self.hasUsableSparkleConfig {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: true,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+            menubar.setUpdater(updaterController)
+        }
+
+        let nudges = NudgeCoordinator(
+            runtimeStore: runtimeStore,
+            eventClient: eventClient,
+            hotkeyDisplay: summaryHotkey.displayString,
+            menubarFrame: { [weak menubar] in menubar?.statusItemScreenFrame() },
+            pulseMenubar: { [weak menubar] in menubar?.pulseForNudge() },
+            isCoordinatorBusy: { [weak coordinator] in
+                guard let coordinator else { return true }
+                return coordinator.isOverlayActive
+                    || coordinator.isCustomInputActive
+                    || coordinator.isCollectingActive
+            }
+        )
+        self.nudgeCoordinator = nudges
+        nudges.start()
 
         hotkeys = HotkeyManager(
-            onSetSource: { [weak self] in self?.coordinator.setSource() },
-            onRunTarget: { [weak self] in self?.coordinator.runTarget() },
-            onBatchPaste: { [weak self] in self?.coordinator.runBatchClipboardPasteAll() }
+            summaryHotkey: summaryHotkey,
+            isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
+            isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
+            isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
+            onSummarize: { [weak coordinator, weak nudges] in
+                Task { @MainActor in nudges?.noteHotkeyInvoked() }
+                coordinator?.summarizeFrontmostWindow()
+            },
+            onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
+            onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
+            onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
+            onInsert: { [weak coordinator] in
+                if Thread.isMainThread {
+                    return coordinator?.insertExpandedSuggestion() ?? false
+                }
+                var consumed = false
+                DispatchQueue.main.sync {
+                    consumed = coordinator?.insertExpandedSuggestion() ?? false
+                }
+                return consumed
+            },
+            onCustomInsert: { [weak coordinator] in
+                if Thread.isMainThread {
+                    _ = coordinator?.insertCustomReplyFromInput()
+                    return true
+                }
+                DispatchQueue.main.sync {
+                    _ = coordinator?.insertCustomReplyFromInput()
+                }
+                return true
+            },
+            onLeaveCustomInput: { [weak coordinator] in coordinator?.leaveCustomInput() },
+            onTextEditing: { [weak coordinator] shortcut in
+                if Thread.isMainThread {
+                    return coordinator?.performCustomInputShortcut(shortcut) ?? false
+                }
+                var consumed = false
+                DispatchQueue.main.sync {
+                    consumed = coordinator?.performCustomInputShortcut(shortcut) ?? false
+                }
+                return consumed
+            },
+            onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
-        coordinator.startBatchClipboardHistory()
-        showPermissionsWindow()
+
+        showControlWindow()
         if !hotkeys.start() {
-            // Retry periodically — the user often grants Input Monitoring /
-            // Accessibility after the first failed install, and we shouldn't
-            // require a restart for the tap to come alive.
             startHotkeyRetry()
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        // Dock-icon click while no windows are visible should reopen the
+        // control window — same role the menubar item plays.
+        if !hasVisibleWindows {
+            showControlWindow()
+        }
+        return true
     }
 
     private func startHotkeyRetry() {
@@ -90,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyRetryTimer?.invalidate()
         hotkeyRetryTimer = nil
         hotkeys?.stop()
-        coordinator?.stopBatchClipboardHistory()
+        nudgeCoordinator?.stop()
     }
 
     func showPermissionsWindow() {
@@ -100,15 +184,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionsWindow?.show()
     }
 
-    func showControlCenter() {
-        guard let runtimeStore, let runStore else { return }
-        if controlCenterWindow == nil {
-            controlCenterWindow = ControlCenterWindowController(
+    func showControlWindow() {
+        guard let runtimeStore else { return }
+        if controlWindow == nil {
+            controlWindow = ControlWindowController(
+                coordinator: coordinator,
                 runtimeStore: runtimeStore,
-                runStore: runStore
+                hotkeyDisplay: hotkeyDisplay,
+                onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
             )
         }
-        controlCenterWindow?.show()
+        controlWindow?.show()
     }
 
     private func showFailureAlert(title: String, message: String) {
@@ -119,5 +205,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private static var hasUsableSparkleConfig: Bool {
+        guard
+            let feedURL = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String,
+            let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        else {
+            return false
+        }
+        return feedURL.hasPrefix("https://")
+            && !feedURL.contains("example.com")
+            && !publicKey.isEmpty
+            && !publicKey.contains("REPLACE_WITH")
     }
 }

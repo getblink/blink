@@ -1,107 +1,353 @@
 import AppKit
+import Combine
+import Sparkle
 
+@MainActor
 final class MenubarController: NSObject {
-    private let coordinator: TrialCoordinator
+    private let coordinator: BlinkCoordinator
+    private let runtimeStore: RuntimeConfigStore
     private let onShowPermissions: () -> Void
-    private let onShowControlCenter: () -> Void
+    private let onShowControlWindow: () -> Void
+    private let hotkeyDisplay: String
     private var statusItem: NSStatusItem!
     private var statusLabel: NSMenuItem!
+    private var modelMenu: NSMenu?
+    private var modelObserver: AnyCancellable?
+    private var soundsObserver: AnyCancellable?
+    private var soundsMenuItem: NSMenuItem?
+    private var nudgesObserver: AnyCancellable?
+    private var nudgesMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
+    private weak var updaterController: SPUStandardUpdaterController?
+    private var thinkingTimer: Timer?
+    private var thinkingTick = 0
+    private var statusPulseGeneration = 0
+
+    deinit {
+        thinkingTimer?.invalidate()
+    }
 
     init(
-        coordinator: TrialCoordinator,
+        coordinator: BlinkCoordinator,
+        runtimeStore: RuntimeConfigStore,
+        hotkeyDisplay: String,
         onShowPermissions: @escaping () -> Void,
-        onShowControlCenter: @escaping () -> Void
+        onShowControlWindow: @escaping () -> Void
     ) {
         self.coordinator = coordinator
+        self.runtimeStore = runtimeStore
+        self.hotkeyDisplay = hotkeyDisplay
         self.onShowPermissions = onShowPermissions
-        self.onShowControlCenter = onShowControlCenter
+        self.onShowControlWindow = onShowControlWindow
     }
 
     func install() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "⎈"
-        statusItem.button?.toolTip = "Blink copy-paste assistant"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        configureStatusButton()
         statusItem.menu = buildMenu()
 
         coordinator.onStatusChange = { [weak self] text in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self?.statusLabel.title = text
                 self?.updateIndicator(for: text)
             }
         }
+
+        modelObserver = runtimeStore.$model.sink { [weak self] selected in
+            Task { @MainActor in
+                self?.refreshModelMenuStates(selected: selected)
+            }
+        }
+        soundsObserver = runtimeStore.$soundsEnabled.sink { [weak self] enabled in
+            Task { @MainActor in
+                self?.soundsMenuItem?.state = enabled ? .on : .off
+            }
+        }
+        nudgesObserver = runtimeStore.$nudgesEnabled.sink { [weak self] enabled in
+            Task { @MainActor in
+                self?.nudgesMenuItem?.state = enabled ? .on : .off
+            }
+        }
+    }
+
+    private func configureStatusButton() {
+        guard let button = statusItem.button else { return }
+        button.toolTip = "Blink reply assistant"
+
+        guard let image = NSImage(named: "MenuBarIcon") else {
+            button.title = "Blink"
+            return
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        button.image = image
+        button.imagePosition = .imageOnly
+    }
+
+    /// Screen-space frame of the status item button, used to anchor a nudge
+    /// tip just below it. Returns `nil` if the button has no window yet
+    /// (rare — only before `install()` finishes attaching the status item).
+    func statusItemScreenFrame() -> NSRect? {
+        guard let button = statusItem?.button,
+              let window = button.window else { return nil }
+        let inWindow = button.convert(button.bounds, to: nil)
+        return window.convertToScreen(inWindow)
+    }
+
+    /// Brief subtle pulse to draw attention to the menubar icon.
+    /// Bypasses thinking-animation generation so it can run while idle.
+    func pulseForNudge() {
+        guard let button = statusItem?.button else { return }
+        button.wantsLayer = true
+        pulseButtonScale(to: 1.18, duration: 0.18) { [weak self] in
+            Task { @MainActor in
+                self?.pulseButtonScale(to: 1.0, duration: 0.32, completion: nil)
+            }
+        }
+    }
+
+    func setUpdater(_ updaterController: SPUStandardUpdaterController?) {
+        self.updaterController = updaterController
+        updateMenuItem?.isEnabled = updaterController != nil
     }
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        statusLabel = NSMenuItem(title: "Idle — press ⌃⇧C to set source", action: nil, keyEquivalent: "")
+        statusLabel = NSMenuItem(title: "Idle - press \(hotkeyDisplay)", action: nil, keyEquivalent: "")
         statusLabel.isEnabled = false
         menu.addItem(statusLabel)
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Capture source (⌃⇧C)", action: #selector(triggerSource), keyEquivalent: "")
+        menu.addItem(withTitle: "Open Blink Window…", action: #selector(openControlWindow), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Capture target + paste (⌃⇧V)", action: #selector(triggerTarget), keyEquivalent: "")
+        menu.addItem(withTitle: "Summarize frontmost window (\(hotkeyDisplay))", action: #selector(triggerSummarize), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Batch paste all (⌘⌥V)", action: #selector(triggerBatchPaste), keyEquivalent: "")
-            .target = self
-        menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Export last 10 runs…", action: #selector(exportRuns), keyEquivalent: "")
-            .target = self
         menu.addItem(withTitle: "Open runs folder", action: #selector(openRunsFolder), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Control Center…", action: #selector(openControlCenter), keyEquivalent: "")
+        menu.addItem(withTitle: "Open ~/.blink", action: #selector(openRuntimeFolder), keyEquivalent: "")
             .target = self
-        menu.addItem(.separator())
+        menu.addItem(withTitle: "Permissions...", action: #selector(openPermissions), keyEquivalent: "")
+            .target = self
+        let soundsItem = NSMenuItem(title: "Sounds", action: #selector(toggleSounds(_:)), keyEquivalent: "")
+        soundsItem.target = self
+        soundsItem.state = runtimeStore.soundsEnabled ? .on : .off
+        soundsMenuItem = soundsItem
+        menu.addItem(soundsItem)
+        let nudgesItem = NSMenuItem(title: "Nudges", action: #selector(toggleNudges(_:)), keyEquivalent: "")
+        nudgesItem.target = self
+        nudgesItem.state = runtimeStore.nudgesEnabled ? .on : .off
+        nudgesItem.toolTip = "Briefly remind you to use Blink when you're shuttling between apps"
+        nudgesMenuItem = nudgesItem
+        menu.addItem(nudgesItem)
+        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = self
+        updateItem.isEnabled = updaterController != nil
+        updateMenuItem = updateItem
+        menu.addItem(updateItem)
 
-        menu.addItem(withTitle: "Permissions…", action: #selector(openPermissions), keyEquivalent: "")
-            .target = self
+        let retentionItem = NSMenuItem(
+            title: "Summaries and suggestions are stored to improve Blink; screenshots are not retained.",
+            action: nil,
+            keyEquivalent: ""
+        )
+        retentionItem.isEnabled = false
+        menu.addItem(retentionItem)
+
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        modelItem.submenu = buildModelMenu()
+        menu.addItem(modelItem)
+
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Quit Blink", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
     }
 
-    @objc private func triggerSource() { coordinator.setSource() }
-    @objc private func triggerTarget() { coordinator.runTarget() }
-    @objc private func triggerBatchPaste() { coordinator.runBatchClipboardPasteAll() }
-    @objc private func exportRuns() {
-        BundleExporter.exportLastNToDesktop(n: 10) { result in
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                switch result {
-                case .success(let url):
-                    alert.messageText = "Exported"
-                    alert.informativeText = "Wrote \(url.path)"
-                case .failure(let err):
-                    alert.alertStyle = .warning
-                    alert.messageText = "Export failed"
-                    alert.informativeText = "\(err)"
-                }
-                alert.runModal()
+    private func buildModelMenu() -> NSMenu {
+        let menu = NSMenu()
+        let current = runtimeStore.model
+        var seen = Set<String>()
+        for name in ModelChoices.optionsIncluding(current: current)
+        where seen.insert(name).inserted {
+            let item = NSMenuItem(title: name, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = name
+            item.state = (name == current) ? .on : .off
+            menu.addItem(item)
+        }
+        modelMenu = menu
+        return menu
+    }
+
+    private func refreshModelMenuStates(selected: String) {
+        guard let menu = modelMenu else { return }
+        var matched = false
+        for item in menu.items {
+            if let name = item.representedObject as? String {
+                let isSelected = (name == selected)
+                item.state = isSelected ? .on : .off
+                matched = matched || isSelected
             }
         }
+        if !matched {
+            let item = NSMenuItem(title: selected, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = selected
+            item.state = .on
+            menu.insertItem(item, at: 0)
+        }
     }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        runtimeStore.model = name
+    }
+
+    @objc private func triggerSummarize() {
+        coordinator.summarizeFrontmostWindow()
+    }
+
     @objc private func openRunsFolder() {
         NSWorkspace.shared.open(Paths.runsDir)
     }
-    @objc private func openControlCenter() { onShowControlCenter() }
-    @objc private func openPermissions() { onShowPermissions() }
+
+    @objc private func openRuntimeFolder() {
+        NSWorkspace.shared.open(Paths.runtimeDir)
+    }
+
+    @objc private func openPermissions() {
+        onShowPermissions()
+    }
+
+    @objc private func openControlWindow() {
+        onShowControlWindow()
+    }
+
+    @objc private func toggleSounds(_ sender: NSMenuItem) {
+        runtimeStore.soundsEnabled.toggle()
+    }
+
+    @objc private func toggleNudges(_ sender: NSMenuItem) {
+        runtimeStore.nudgesEnabled.toggle()
+    }
+
+    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        updaterController?.checkForUpdates(sender)
+    }
 
     private func updateIndicator(for status: String) {
         let normalized = status.lowercased()
-        let indicator: String
-        if normalized.contains("failed") || normalized.contains("empty output") || normalized.contains("no source") || normalized.contains("python failed") {
-            indicator = "⎈!"
-        } else if normalized.contains("done") || normalized.contains("source captured") || normalized.contains("packet prepared") {
-            indicator = "⎈✓"
-        } else if normalized.contains("capturing") || normalized.contains("preparing") || normalized.contains("calling") || normalized.contains("inserting") {
-            indicator = "⎈…"
+        let title: String
+        let pulse: (color: NSColor, duration: TimeInterval)?
+        if normalized.contains("failed") || normalized.contains("empty") {
+            stopThinkingAnimation()
+            title = "Blink!"
+            pulse = (.systemRed, 0.4)
+        } else if normalized.contains("ready")
+            || normalized.contains("copied")
+            || normalized.contains("inserted")
+            || normalized.contains("pasted") {
+            stopThinkingAnimation()
+            title = "Blink"
+            if normalized.contains("ready") {
+                pulse = (.controlAccentColor, 0.3)
+            } else {
+                pulse = nil
+            }
+        } else if normalized.contains("capturing") || normalized.contains("calling") || normalized.contains("thinking") {
+            startThinkingAnimation()
+            title = "Blink..."
+            pulse = nil
         } else {
-            indicator = "⎈"
+            stopThinkingAnimation()
+            title = "Blink"
+            pulse = nil
         }
-        statusItem.button?.title = indicator
+        if statusItem.button?.image == nil {
+            statusItem.button?.title = title
+        }
         statusItem.button?.toolTip = "Blink: \(status)"
+        if let pulse {
+            pulseStatusItem(color: pulse.color, duration: pulse.duration)
+        }
+    }
+
+    private func startThinkingAnimation() {
+        guard thinkingTimer == nil else { return }
+        thinkingTick = 0
+        statusItem.button?.wantsLayer = true
+        thinkingTimer = Timer.scheduledTimer(withTimeInterval: 0.32, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceThinkingAnimation()
+            }
+        }
+    }
+
+    private func advanceThinkingAnimation() {
+        if statusItem.button?.image == nil {
+            let dots = String(repeating: ".", count: thinkingTick % 4)
+            statusItem.button?.title = "Blink\(dots)"
+        }
+        pulseButtonScale(to: 0.94, duration: 0.13) { [weak self] in
+            Task { @MainActor in
+                self?.pulseButtonScale(to: 1.0, duration: 0.16, completion: nil)
+            }
+        }
+        thinkingTick += 1
+    }
+
+    private func stopThinkingAnimation() {
+        thinkingTimer?.invalidate()
+        thinkingTimer = nil
+        thinkingTick = 0
+        statusPulseGeneration += 1
+        statusItem.button?.layer?.removeAllAnimations()
+        statusItem.button?.layer?.transform = CATransform3DIdentity
+    }
+
+    private func pulseButtonScale(to scale: CGFloat, duration: TimeInterval, completion: (() -> Void)?) {
+        guard let button = statusItem.button else {
+            completion?()
+            return
+        }
+        button.wantsLayer = true
+        let from = button.layer?.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? 1.0
+        let animation = CABasicAnimation(keyPath: "transform.scale")
+        animation.fromValue = from
+        animation.toValue = scale
+        animation.duration = duration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        button.layer?.add(animation, forKey: "statusScale")
+        button.layer?.transform = CATransform3DMakeScale(scale, scale, 1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            completion?()
+        }
+    }
+
+    private func pulseStatusItem(color: NSColor, duration: TimeInterval) {
+        guard let button = statusItem.button else { return }
+        statusPulseGeneration += 1
+        let generation = statusPulseGeneration
+        let normalTitle = button.title
+        let normalTint = button.contentTintColor
+        if button.image == nil {
+            let highlighted = NSAttributedString(
+                string: normalTitle,
+                attributes: [.foregroundColor: color]
+            )
+            button.attributedTitle = highlighted
+        } else {
+            button.contentTintColor = color
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            guard generation == self.statusPulseGeneration else { return }
+            if button.image == nil {
+                button.attributedTitle = NSAttributedString(string: self.statusItem.button?.title ?? normalTitle)
+            } else {
+                button.contentTintColor = normalTint
+            }
+        }
     }
 }

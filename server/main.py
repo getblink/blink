@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from functools import lru_cache
 from hashlib import sha256
@@ -12,17 +13,31 @@ from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 
 try:
     from . import gemini
-    from .auth import generate_device_token, require_bearer_token, token_hash_for
+    from .auth import (
+        check_signup_rate_limit,
+        client_ip_for,
+        generate_device_token,
+        require_bearer_token,
+        token_hash_for,
+    )
     from .cache import ResponseCache
     from .env_loader import load_workspace_env
     from .storage import TelemetryStore
 except ImportError:
     import gemini  # type: ignore[no-redef]
-    from auth import generate_device_token, require_bearer_token, token_hash_for  # type: ignore[no-redef]
+    from auth import (  # type: ignore[no-redef]
+        check_signup_rate_limit,
+        client_ip_for,
+        generate_device_token,
+        require_bearer_token,
+        token_hash_for,
+    )
     from cache import ResponseCache  # type: ignore[no-redef]
     from env_loader import load_workspace_env  # type: ignore[no-redef]
     from storage import TelemetryStore  # type: ignore[no-redef]
@@ -51,8 +66,20 @@ _HOP_BY_HOP = {
     "content-length",
 }
 
-app = FastAPI(title="Blink TLDR Server")
+app = FastAPI(title="Blink Server")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://useblink.dev",
+        "https://www.useblink.dev",
+        "http://localhost:4321",
+    ],
+    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_headers=["content-type", "authorization"],
+    allow_credentials=False,
+)
 logger = logging.getLogger("blink.tldr.server")
+_DEPRECATION_WARNED: set[str] = set()
 REDACTED_CONTENT_KEYS = {
     "text",
     "value",
@@ -62,6 +89,21 @@ REDACTED_CONTENT_KEYS = {
     "chosen_text",
     "tldr",
 }
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class BetaSignupRequest(BaseModel):
+    email: str = Field(min_length=1, max_length=320)
+    source: Optional[str] = Field(default=None, max_length=120)
+    hp: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        candidate = value.strip()
+        if len(candidate) > 320 or not EMAIL_RE.match(candidate):
+            raise ValueError("invalid email")
+        return value
 
 
 @lru_cache(maxsize=1)
@@ -98,15 +140,43 @@ def _telemetry_store() -> TelemetryStore:
     return TelemetryStore.from_env()
 
 
+def _ip_hash_for(ip: str) -> str:
+    salt = (os.environ.get("BLINK_IP_HASH_SALT") or "").strip()
+    if not salt:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="server misconfigured: BLINK_IP_HASH_SALT is empty",
+        )
+    material = f"{salt}{ip or 'unknown'}"
+    return sha256(material.encode("utf-8")).hexdigest()
+
+
+def _env(name: str, deprecated: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if deprecated is None:
+        return None
+    value = os.environ.get(deprecated)
+    if value is not None and deprecated not in _DEPRECATION_WARNED:
+        _DEPRECATION_WARNED.add(deprecated)
+        logger.warning("%s is deprecated, use %s", deprecated, name)
+    return value
+
+
 def _bool_env(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
+    legacy = name.replace("BLINK_", "TLDR_", 1) if name.startswith("BLINK_") else None
+    raw = _env(name, legacy)
     if raw is None:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 def _allowed_models() -> set[str]:
-    raw = (os.environ.get("TLDR_ALLOWED_MODELS") or DEFAULT_ALLOWED_MODELS).strip()
+    raw = (
+        _env("BLINK_ALLOWED_MODELS", "TLDR_ALLOWED_MODELS")
+        or DEFAULT_ALLOWED_MODELS
+    ).strip()
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
@@ -872,7 +942,7 @@ async def tldr_events(
         ) from exc
 
     stored = False
-    if _bool_env("TLDR_EVENT_LOGGING", True):
+    if _bool_env("BLINK_EVENT_LOGGING", True):
         try:
             stored = _telemetry_store().record_event(
                 token_id=token_id,
@@ -893,6 +963,41 @@ async def tldr_events(
         payload["event_type"],
     )
     return {"ok": True, "stored": stored}
+
+
+@app.post("/v1/beta-signup")
+async def beta_signup(
+    payload: BetaSignupRequest,
+    request: Request,
+) -> dict[str, bool]:
+    if payload.hp and payload.hp.strip():
+        return {"ok": True}
+
+    email_original = payload.email.strip()
+    email_normalized = email_original.lower()
+    ip_hash = _ip_hash_for(client_ip_for(request))
+    check_signup_rate_limit(ip_hash)
+
+    try:
+        _telemetry_store().record_beta_signup(
+            signup_id=uuid4().hex,
+            email_normalized=email_normalized,
+            email_original=email_original,
+            source=payload.source.strip() if payload.source else None,
+            user_agent=request.headers.get("user-agent"),
+            ip_hash=ip_hash,
+        )
+    except Exception as exc:
+        logger.warning(
+            "beta_signup_storage_failed source=%s error=%s",
+            payload.source,
+            _sanitized_error_message(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="beta signup storage unavailable",
+        ) from exc
+    return {"ok": True}
 
 
 async def _proxy_to_gemini(

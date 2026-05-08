@@ -2,10 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>BlinkProxyToken</key>
-	<string></string>
-	<key>BlinkProxyURL</key>
-	<string></string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -13,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Blink</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.blink.tester.Blink</string>
+	<string>com.henryz2004.blink</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -21,18 +17,28 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.1.7</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Blink uses accessibility events to read the focused field and paste text.</string>
+	<string>Blink uses accessibility events to paste selected suggestions.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Henry Zhang. All rights reserved.</string>
 	<key>NSInputMonitoringUsageDescription</key>
-	<string>Blink listens for the source/target hotkeys you configure.</string>
+	<string>Blink listens for the summary hotkey and numbered overlay choices.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Blink captures the window you target to understand which field to fill.</string>
+	<string>Blink captures the active window to summarize it and suggest replies.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://downloads.useblink.dev/blink/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
