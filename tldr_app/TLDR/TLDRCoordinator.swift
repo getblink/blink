@@ -15,6 +15,7 @@ final class TLDRCoordinator {
         let imageDiagnostics: [String: Any]
         let sha256: String
         let thumbnail: NSImage?
+        let frontmostApp: [String: Any]
     }
 
     private struct CaptureSession {
@@ -26,8 +27,6 @@ final class TLDRCoordinator {
         var frontmostApp: [String: Any]
         let staging: URL
         var frames: [CapturedFrame]
-        var shareableContent: SCShareableContent?
-        var debounceTimer: DispatchSourceTimer?
         var collectingTimer: DispatchSourceTimer?
     }
 
@@ -36,12 +35,19 @@ final class TLDRCoordinator {
         let shareableContent: SCShareableContent
     }
 
+    private struct InflightSubmission {
+        let token: UUID
+        let requestID: String
+        var run: PythonRunner.StreamingRun?
+    }
+
     private let config: Config
     private let runtimeStore: RuntimeConfigStore
     private let eventClient: TLDREventClient
     private let summaryHotkey: Hotkey
     private let soundEffects: SoundEffects
     private let queue = DispatchQueue(label: "tldr.coordinator", qos: .userInitiated)
+    private let submitQueue = DispatchQueue(label: "tldr.coordinator.submit", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
     private var currentSuggestions: [String] = []
     private var currentBundleDir: URL?
@@ -52,12 +58,20 @@ final class TLDRCoordinator {
     // suggestion_dismissed and overwrite the server-side outcome.
     private var terminalEmittedRequestID: String?
     private var currentStreamingRun: PythonRunner.StreamingRun?
+    // Token for the in-flight Python submission. Used by the double-tap
+    // promotion path to mark a specific submission as cancelled without
+    // affecting any later submission that reuses the same requestID.
+    private var currentSubmission: InflightSubmission?
+    private var cancelledSubmissionTokens: Set<UUID> = []
     private var choiceState = SuggestionChoiceState(suggestionCount: 0)
     private var running = false
     private var session: CaptureSession?
+    private var pendingDoubleTap: CaptureSession?
+    private var doubleTapTimer: DispatchSourceTimer?
+    private var pendingDoubleTapRequestID: String?
     private let collectingStateLock = NSLock()
     private var collectingState = false
-    private let singlePressDebounceMS = 600
+    private let doubleTapWindowMS = 400
     private let collectingTimeoutSeconds = 8
     private let maxCapturedFrames = 8
 
@@ -116,6 +130,10 @@ final class TLDRCoordinator {
 
     func summarizeFrontmostWindow() {
         queue.async { [self] in
+            if pendingDoubleTap != nil {
+                promoteToMultiFrame()
+                return
+            }
             guard !running else {
                 status("already working")
                 return
@@ -140,6 +158,21 @@ final class TLDRCoordinator {
         }
     }
 
+    /// Called from `dismissOverlay` (main) to clean up coordinator-owned
+    /// pending double-tap state when the user dismisses while a single-shot
+    /// submission is in flight but still inside the double-tap window.
+    /// Does NOT remove the staging directory: the Python subprocess may
+    /// still be reading the request envelope and screenshot files until
+    /// SIGTERM lands. Orphans in `/tmp` get cleaned up by the OS.
+    func clearPendingDoubleTap() {
+        queue.async { [self] in
+            guard pendingDoubleTap != nil else { return }
+            doubleTapTimer?.cancel()
+            doubleTapTimer = nil
+            pendingDoubleTap = nil
+        }
+    }
+
     private func setCollectingActive(_ active: Bool) {
         collectingStateLock.lock()
         collectingState = active
@@ -148,10 +181,23 @@ final class TLDRCoordinator {
 
     private func cancelActiveSession(statusText: String) {
         guard let active = session else { return }
-        active.debounceTimer?.cancel()
         active.collectingTimer?.cancel()
         session = nil
+        // Defensive: a future caller could reach this path while a pending
+        // double-tap is also armed (e.g. cancelling a freshly-promoted
+        // session). Tear that down so the timer doesn't outlive us.
+        doubleTapTimer?.cancel()
+        doubleTapTimer = nil
+        pendingDoubleTap = nil
         setCollectingActive(false)
+        DispatchQueue.main.sync {
+            if let submission = self.currentSubmission, submission.requestID == active.requestID {
+                self.cancelledSubmissionTokens.insert(submission.token)
+                submission.run?.terminate()
+                self.currentSubmission = nil
+            }
+            self.currentStreamingRun = nil
+        }
         try? FileManager.default.removeItem(at: active.staging)
         PendingRunStore.finish(requestID: active.requestID)
         emitEvent(
@@ -213,24 +259,38 @@ final class TLDRCoordinator {
             }
             let captureResult = try captureFrame(index: 0, staging: staging)
             let frame = captureResult.frame
-            var appWithWindow = frontmostApp
-            appWithWindow["window_id"] = Int(frame.windowID)
-            session = CaptureSession(
+            var sessionFrontmost = frame.frontmostApp
+            if sessionFrontmost["bundle_id"] == nil, let bundle = frontmostApp["bundle_id"] {
+                sessionFrontmost["bundle_id"] = bundle
+            }
+            if sessionFrontmost["app_name"] == nil, let name = frontmostApp["app_name"] {
+                sessionFrontmost["app_name"] = name
+            }
+            let active = CaptureSession(
                 requestID: requestID,
                 startedAt: startedAt,
                 startedPerf: monotonicNow(),
                 runtime: runtime,
                 clientMetadata: clientMetadata,
-                frontmostApp: appWithWindow,
+                frontmostApp: sessionFrontmost,
                 staging: staging,
                 frames: [frame],
-                shareableContent: captureResult.shareableContent,
-                debounceTimer: nil,
                 collectingTimer: nil
             )
-            recordFrameCaptured(frame, mode: "frontmost_window")
-            armDebounceTimer(requestID: requestID)
+            recordFrameCaptured(active, frame: frame, mode: "frontmost_window")
             status("captured frame 1")
+            // Single press is the most common case, so submit the session
+            // immediately. The double-tap timer keeps the submission
+            // promotable into multi-frame mode if a second tap arrives
+            // within `doubleTapWindowMS`. Set the coord-queue and main
+            // mirrors of the pending state together so dismissOverlay
+            // (main) can never observe one without the other.
+            pendingDoubleTap = active
+            DispatchQueue.main.sync {
+                self.pendingDoubleTapRequestID = requestID
+            }
+            armDoubleTapTimer(requestID: requestID)
+            dispatchSubmit(active)
         } catch {
             try? FileManager.default.removeItem(at: staging)
             PendingRunStore.finish(requestID: requestID)
@@ -246,6 +306,145 @@ final class TLDRCoordinator {
                 statusText: "failed: \(shortErrorSummary(error))",
                 detail: detailedErrorMessage(error)
             )
+        }
+    }
+
+    private func dispatchSubmit(_ active: CaptureSession) {
+        let token = UUID()
+        DispatchQueue.main.sync {
+            // If an earlier submission is still streaming, abandon it so
+            // it doesn't head-of-line-block this submit on the serial
+            // submitQueue (and so its tail main blocks don't briefly
+            // overwrite this submission's overlay state).
+            if let inflight = self.currentSubmission {
+                self.cancelledSubmissionTokens.insert(inflight.token)
+                inflight.run?.terminate()
+            }
+            self.currentSubmission = InflightSubmission(
+                token: token,
+                requestID: active.requestID,
+                run: nil
+            )
+        }
+        submitQueue.async { [self] in
+            submitCapturedSession(active, submissionToken: token)
+        }
+    }
+
+    private func promoteToMultiFrame() {
+        guard var pending = pendingDoubleTap else { return }
+        let requestID = pending.requestID
+        doubleTapTimer?.cancel()
+        doubleTapTimer = nil
+        pendingDoubleTap = nil
+
+        // Mark the in-flight submission cancelled and tear down its UI
+        // state so the original submit's still-pending main blocks bail
+        // out instead of clobbering the collecting overlay.
+        DispatchQueue.main.sync {
+            if let submission = self.currentSubmission, submission.requestID == requestID {
+                self.cancelledSubmissionTokens.insert(submission.token)
+                submission.run?.terminate()
+                self.currentSubmission = nil
+            }
+            self.currentStreamingRun = nil
+            self.currentRequestID = nil
+            self.pendingDoubleTapRequestID = nil
+        }
+
+        emitEvent(
+            requestID: requestID,
+            type: "capture_promoted_to_multiframe",
+            allowLogging: pending.runtime.allowEventLogging,
+            clientMetadata: pending.clientMetadata,
+            details: ["frame_count": pending.frames.count]
+        )
+
+        running = true
+        defer { running = false }
+        do {
+            status("capturing frame \(pending.frames.count + 1)...")
+            DispatchQueue.main.async {
+                self.soundEffects.play(.capture)
+            }
+            let captureResult = try captureFrame(
+                index: pending.frames.count,
+                staging: pending.staging,
+                shareableContent: nil,
+                preferredPID: nil
+            )
+            let frame = captureResult.frame
+            let isDuplicate: Bool
+            if let previous = pending.frames.last, previous.sha256 == frame.sha256 {
+                try replaceFrameFile(at: previous.pngURL, with: frame.pngURL)
+                pending.frames[pending.frames.count - 1] = CapturedFrame(
+                    index: previous.index,
+                    pngURL: previous.pngURL,
+                    capturedAt: frame.capturedAt,
+                    captureMS: frame.captureMS,
+                    windowID: frame.windowID,
+                    screenshotMeta: frame.screenshotMeta,
+                    imageDiagnostics: frame.imageDiagnostics,
+                    sha256: frame.sha256,
+                    thumbnail: frame.thumbnail,
+                    frontmostApp: frame.frontmostApp
+                )
+                status("no new content — scroll first")
+                isDuplicate = true
+            } else {
+                pending.frames.append(frame)
+                status("collecting \(pending.frames.count) frames")
+                isDuplicate = false
+            }
+            session = pending
+            updatePendingFrames(pending)
+            recordFrameCaptured(pending, frame: frame, mode: deriveCaptureMode(frames: pending.frames))
+            let thumbnails = pending.frames.compactMap(\.thumbnail)
+            let collectingMessage = collectingMessage(
+                frames: pending.frames,
+                duplicate: isDuplicate
+            )
+            DispatchQueue.main.async {
+                self.overlay.showCollecting(
+                    frameCount: pending.frames.count,
+                    maxFrames: self.maxCapturedFrames,
+                    hotkeyDisplay: self.summaryHotkey.displayString,
+                    thumbnails: thumbnails,
+                    message: collectingMessage,
+                    flashLastThumbnail: isDuplicate
+                )
+            }
+            armCollectingTimer(requestID: requestID)
+        } catch {
+            session = pending
+            cancelActiveSession(statusText: "capture failed")
+            reportFailure(
+                title: "TLDR Failed",
+                statusText: "failed: \(shortErrorSummary(error))",
+                detail: detailedErrorMessage(error)
+            )
+        }
+    }
+
+    private func armDoubleTapTimer(requestID: String) {
+        doubleTapTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(doubleTapWindowMS))
+        timer.setEventHandler { [weak self] in
+            self?.doubleTapWindowExpired(requestID: requestID)
+        }
+        doubleTapTimer = timer
+        timer.resume()
+    }
+
+    private func doubleTapWindowExpired(requestID: String) {
+        guard let pending = pendingDoubleTap, pending.requestID == requestID else { return }
+        pendingDoubleTap = nil
+        doubleTapTimer = nil
+        DispatchQueue.main.async {
+            if self.pendingDoubleTapRequestID == requestID {
+                self.pendingDoubleTapRequestID = nil
+            }
         }
     }
 
@@ -269,55 +468,23 @@ final class TLDRCoordinator {
         }
         running = true
         defer { running = false }
-        active.debounceTimer?.cancel()
-        active.debounceTimer = nil
         do {
             status("capturing frame \(active.frames.count + 1)...")
             DispatchQueue.main.async {
                 self.soundEffects.play(.capture)
             }
-            // Pin to the source app captured at frame 0. Without this, if
-            // the overlay ever momentarily activates TLDR, `NSWorkspace`
-            // reports TLDR as frontmost and capture would target our own
-            // panel — which surfaces as a misleading "permission denied"
-            // through SCK.
-            let pinnedPID: pid_t? = (active.frontmostApp["pid"] as? Int).map(pid_t.init)
+            // Multi-frame is now an explicit double-tap mode that may span
+            // any frontmost window or app. Re-query SCShareableContent on
+            // every frame so windows from a different app surface as
+            // capturable, and let `ScreenCapture` pick whatever is
+            // frontmost right now.
             let captureResult = try captureFrame(
                 index: active.frames.count,
                 staging: active.staging,
-                shareableContent: active.shareableContent,
-                preferredPID: pinnedPID
+                shareableContent: nil,
+                preferredPID: nil
             )
             let frame = captureResult.frame
-            active.shareableContent = captureResult.shareableContent
-            guard frame.windowID == active.frames[0].windowID else {
-                status("different window ignored")
-                emitEvent(
-                    requestID: active.requestID,
-                    type: "capture_frame_dropped",
-                    allowLogging: active.runtime.allowEventLogging,
-                    clientMetadata: active.clientMetadata,
-                    details: [
-                        "reason": "window_id_mismatch",
-                        "expected_window_id": Int(active.frames[0].windowID),
-                        "actual_window_id": Int(frame.windowID),
-                    ]
-                )
-                try? FileManager.default.removeItem(at: frame.pngURL)
-                session = active
-                let thumbnails = active.frames.compactMap(\.thumbnail)
-                DispatchQueue.main.async {
-                    self.overlay.showCollecting(
-                        frameCount: active.frames.count,
-                        maxFrames: self.maxCapturedFrames,
-                        hotkeyDisplay: self.summaryHotkey.displayString,
-                        thumbnails: thumbnails,
-                        message: "Different window ignored"
-                    )
-                }
-                armCollectingTimer(requestID: active.requestID)
-                return
-            }
             let isDuplicate: Bool
             if let previous = active.frames.last, previous.sha256 == frame.sha256 {
                 do {
@@ -335,7 +502,8 @@ final class TLDRCoordinator {
                     screenshotMeta: frame.screenshotMeta,
                     imageDiagnostics: frame.imageDiagnostics,
                     sha256: frame.sha256,
-                    thumbnail: frame.thumbnail
+                    thumbnail: frame.thumbnail,
+                    frontmostApp: frame.frontmostApp
                 )
                 status("no new content — scroll first")
                 isDuplicate = true
@@ -349,13 +517,14 @@ final class TLDRCoordinator {
                 updatePendingFrames(current)
             }
             let thumbnails = active.frames.compactMap(\.thumbnail)
+            let collectingMsg = collectingMessage(frames: active.frames, duplicate: isDuplicate)
             DispatchQueue.main.async {
                 self.overlay.showCollecting(
                     frameCount: active.frames.count,
                     maxFrames: self.maxCapturedFrames,
                     hotkeyDisplay: self.summaryHotkey.displayString,
                     thumbnails: thumbnails,
-                    message: isDuplicate ? "Same content. Scroll first" : nil,
+                    message: collectingMsg,
                     flashLastThumbnail: isDuplicate
                 )
             }
@@ -369,14 +538,10 @@ final class TLDRCoordinator {
 
     private func submitSession() {
         guard let active = session else { return }
-        guard !running else { return }
-        running = true
-        defer { running = false }
-        active.debounceTimer?.cancel()
         active.collectingTimer?.cancel()
         session = nil
         setCollectingActive(false)
-        submitCapturedSession(active)
+        dispatchSubmit(active)
     }
 
     private func captureFrame(
@@ -396,6 +561,19 @@ final class TLDRCoordinator {
         }
         let frameURL = staging.appendingPathComponent("screenshot_\(index).png")
         try capture.pngData.write(to: frameURL, options: .atomic)
+        var frontmostApp: [String: Any] = [
+            "pid": Int(capture.ownerPID),
+            "window_id": Int(capture.windowID),
+        ]
+        if let bundleID = capture.ownerBundleID {
+            frontmostApp["bundle_id"] = bundleID
+        }
+        if let name = capture.ownerName {
+            frontmostApp["app_name"] = name
+        }
+        if let title = capture.windowTitle, !title.isEmpty {
+            frontmostApp["window_title"] = title
+        }
         return CapturedFrameResult(
             frame: CapturedFrame(
                 index: index,
@@ -406,25 +584,11 @@ final class TLDRCoordinator {
                 screenshotMeta: capturePayload.screenshot,
                 imageDiagnostics: capturePayload.diagnostics,
                 sha256: sha256Hex(capture.pngData),
-                thumbnail: Self.makeThumbnail(from: capture.pngData)
+                thumbnail: Self.makeThumbnail(from: capture.pngData),
+                frontmostApp: frontmostApp
             ),
             shareableContent: capture.shareableContent
         )
-    }
-
-    private func armDebounceTimer(requestID: String) {
-        guard var active = session, active.requestID == requestID else { return }
-        active.debounceTimer?.cancel()
-        active.collectingTimer?.cancel()
-        setCollectingActive(false)
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(singlePressDebounceMS))
-        timer.setEventHandler { [weak self] in
-            self?.submitSession()
-        }
-        active.debounceTimer = timer
-        session = active
-        timer.resume()
     }
 
     private func armCollectingTimer(requestID: String) {
@@ -441,12 +605,32 @@ final class TLDRCoordinator {
         timer.resume()
     }
 
-    private func submitCapturedSession(_ active: CaptureSession) {
+    private func frameInfo(_ frame: CapturedFrame) -> CaptureModeDeriver.FrameInfo {
+        CaptureModeDeriver.FrameInfo(
+            windowID: frame.windowID,
+            pid: frame.frontmostApp["pid"] as? Int,
+            appName: frame.frontmostApp["app_name"] as? String,
+            bundleID: frame.frontmostApp["bundle_id"] as? String
+        )
+    }
+
+    private func deriveCaptureMode(frames: [CapturedFrame]) -> String {
+        CaptureModeDeriver.captureMode(for: frames.map(frameInfo))
+    }
+
+    private func collectingMessage(frames: [CapturedFrame], duplicate: Bool) -> String? {
+        CaptureModeDeriver.collectingMessage(
+            frames: frames.map(frameInfo),
+            duplicate: duplicate
+        )
+    }
+
+    private func submitCapturedSession(_ active: CaptureSession, submissionToken: UUID) {
         guard let firstFrame = active.frames.first else { return }
         let requestID = active.requestID
         let runtime = active.runtime
         let clientMetadata = active.clientMetadata
-        let captureMode = active.frames.count > 1 ? "frontmost_window_scroll" : "frontmost_window"
+        let captureMode = deriveCaptureMode(frames: active.frames)
         var lastPhase = "capture_succeeded"
         do {
             let focusedSnapshot = FocusedContextCapture.captureSnapshot(
@@ -526,6 +710,7 @@ final class TLDRCoordinator {
 
             status("calling TLDR backend...")
             DispatchQueue.main.async {
+                guard !self.cancelledSubmissionTokens.contains(submissionToken) else { return }
                 self.currentRequestID = requestID
                 self.currentSuggestions = []
                 self.currentBundleDir = nil
@@ -557,11 +742,20 @@ final class TLDRCoordinator {
                 hostProfileJSON: hostProfileURL,
                 onRunStarted: { run in
                     DispatchQueue.main.async {
+                        if self.cancelledSubmissionTokens.contains(submissionToken) {
+                            run.terminate()
+                            return
+                        }
+                        if var submission = self.currentSubmission, submission.token == submissionToken {
+                            submission.run = run
+                            self.currentSubmission = submission
+                        }
                         self.currentStreamingRun = run
                     }
                 },
                 onEvent: { event in
                     DispatchQueue.main.async {
+                        guard !self.cancelledSubmissionTokens.contains(submissionToken) else { return }
                         guard self.currentRequestID == requestID else { return }
                         switch event {
                         case .phase(let message):
@@ -577,11 +771,20 @@ final class TLDRCoordinator {
             let streamCompletedAt = Date()
             let firstTokenAt = DispatchQueue.main.sync { self.currentStreamingRun?.firstTokenAt }
             DispatchQueue.main.async {
+                if let submission = self.currentSubmission, submission.token == submissionToken {
+                    self.currentSubmission = nil
+                }
                 if self.currentRequestID == requestID {
                     self.currentStreamingRun = nil
                 }
             }
-            guard isCurrentRequest(requestID) else { return }
+            let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
+                if self.cancelledSubmissionTokens.remove(submissionToken) != nil {
+                    return true
+                }
+                return self.currentRequestID != requestID
+            }
+            if wasAbandoned { return }
             let pythonMS = durationMS(since: pythonStartedPerf)
             let totalMS = durationMS(since: active.startedPerf)
 
@@ -680,10 +883,13 @@ final class TLDRCoordinator {
                 )
             }
         } catch {
-            let wasDismissed = DispatchQueue.main.sync {
-                self.currentRequestID != requestID
+            let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
+                if self.cancelledSubmissionTokens.remove(submissionToken) != nil {
+                    return true
+                }
+                return self.currentRequestID != requestID
             }
-            if wasDismissed {
+            if wasAbandoned {
                 return
             }
             PendingRunStore.update(requestID: requestID) { payload in
@@ -709,8 +915,7 @@ final class TLDRCoordinator {
         }
     }
 
-    private func recordFrameCaptured(_ frame: CapturedFrame, mode: String) {
-        guard let active = session else { return }
+    private func recordFrameCaptured(_ active: CaptureSession, frame: CapturedFrame, mode: String) {
         updatePendingFrames(active, phase: "capture_succeeded")
         emitEvent(
             requestID: active.requestID,
@@ -724,6 +929,7 @@ final class TLDRCoordinator {
                 "capture_ms": frame.captureMS,
                 "screenshot": frame.screenshotMeta,
                 "image_diagnostics": frame.imageDiagnostics,
+                "frontmost_app": frame.frontmostApp,
             ]
         )
     }
@@ -737,7 +943,7 @@ final class TLDRCoordinator {
             if let phase {
                 payload["last_phase"] = phase
             }
-            payload["capture_mode"] = active.frames.count > 1 ? "frontmost_window_scroll" : "frontmost_window"
+            payload["capture_mode"] = self.deriveCaptureMode(frames: active.frames)
             payload["frontmost_app"] = active.frontmostApp
             payload["screenshot"] = active.frames.first?.screenshotMeta
             payload["image_diagnostics"] = active.frames.first?.imageDiagnostics
@@ -756,6 +962,7 @@ final class TLDRCoordinator {
                 "image_diagnostics": frame.imageDiagnostics,
                 "captured_at": JSONFiles.isoString(frame.capturedAt),
                 "sha256": frame.sha256,
+                "frontmost_app": frame.frontmostApp,
             ]
         }
     }
@@ -1110,19 +1317,30 @@ final class TLDRCoordinator {
             cancelCollectingSession()
             return
         }
-        guard overlay.isVisible else { return }
-        let requestID = currentRequestID
-        let alreadyTerminal = (requestID != nil && requestID == terminalEmittedRequestID)
+        let pendingRequestID = pendingDoubleTapRequestID
+        let overlayWasVisible = overlay.isVisible
+        guard overlayWasVisible || pendingRequestID != nil else { return }
+        let resolvedRequestID = currentRequestID ?? pendingRequestID
+        let alreadyTerminal = (resolvedRequestID != nil && resolvedRequestID == terminalEmittedRequestID)
         let streamingRun = currentStreamingRun
         let cancelledBundleDir = streamingRun?.bundleDir
         let cancelledFirstTokenAt = streamingRun?.firstTokenAt
         let cancelledMidStream = streamingRun?.isRunning == true
             && streamingRun?.finalReceived == false
+        if let submission = currentSubmission {
+            cancelledSubmissionTokens.insert(submission.token)
+            submission.run?.terminate()
+            currentSubmission = nil
+        }
         streamingRun?.terminate()
         currentStreamingRun = nil
+        let dismissedWithoutOverlay = !overlayWasVisible && pendingRequestID != nil
         currentRequestID = nil
+        pendingDoubleTapRequestID = nil
         currentBundleDir = nil
-        if cancelledMidStream, let requestID, let bundleDirString = cancelledBundleDir {
+        if cancelledMidStream,
+           let requestID = resolvedRequestID,
+           let bundleDirString = cancelledBundleDir {
             recordStreamCancelled(
                 bundleDir: URL(fileURLWithPath: bundleDirString),
                 requestID: requestID,
@@ -1130,26 +1348,52 @@ final class TLDRCoordinator {
             )
         }
         choiceState = SuggestionChoiceState(suggestionCount: 0)
+        // Coordinator-side pending double-tap state lives on its own queue;
+        // tear it down so a follow-on hotkey starts a fresh single-shot
+        // session instead of trying to promote a session whose UI was
+        // already dismissed.
+        clearPendingDoubleTap()
         status("dismissed")
-        if !alreadyTerminal {
+        if !alreadyTerminal && !dismissedWithoutOverlay {
             recordDismiss()
         }
-        if let requestID, !alreadyTerminal {
+        if let requestID = resolvedRequestID, !alreadyTerminal {
             let clientMetadata = Self.clientMetadata()
-            emitEvent(
-                requestID: requestID,
-                type: "suggestion_dismissed",
-                allowLogging: runtimeStore.allowEventLogging,
-                clientMetadata: clientMetadata,
-                details: [:]
-            )
-            emitEvent(
-                requestID: requestID,
-                type: "run_completed",
-                allowLogging: runtimeStore.allowEventLogging,
-                clientMetadata: clientMetadata,
-                details: ["outcome": "dismissed"]
-            )
+            // Esc inside the double-tap window cancels a submission that
+            // never rendered a suggestion to the user. Reporting it as a
+            // suggestion_dismissed misleads downstream analytics, so emit
+            // the cancellation event family instead.
+            if dismissedWithoutOverlay {
+                emitEvent(
+                    requestID: requestID,
+                    type: "capture_cancelled",
+                    allowLogging: runtimeStore.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: ["phase": "double_tap_window"]
+                )
+                emitEvent(
+                    requestID: requestID,
+                    type: "run_completed",
+                    allowLogging: runtimeStore.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: ["outcome": "cancelled"]
+                )
+            } else {
+                emitEvent(
+                    requestID: requestID,
+                    type: "suggestion_dismissed",
+                    allowLogging: runtimeStore.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: [:]
+                )
+                emitEvent(
+                    requestID: requestID,
+                    type: "run_completed",
+                    allowLogging: runtimeStore.allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: ["outcome": "dismissed"]
+                )
+            }
             PendingRunStore.finish(requestID: requestID)
         }
         overlay.dismissAnimated { [weak self] in
