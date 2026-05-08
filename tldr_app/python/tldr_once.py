@@ -1472,6 +1472,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.stream_events:
+            emit_stream_event("run_started", {"bundle_dir": str(run_dir)})
             emit_stream_event("phase", {"phase": "model_started", "message": "Reading this screen..."})
         if args.skip_gemini:
             response = {

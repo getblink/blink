@@ -47,9 +47,47 @@ enum PythonRunner {
 
     final class StreamingRun {
         fileprivate let process: Process
+        private let stateLock = NSLock()
+        private var _bundleDir: String?
+        private var _firstTokenAt: Date?
+        private var _finalReceived = false
 
         fileprivate init(process: Process) {
             self.process = process
+        }
+
+        var bundleDir: String? {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _bundleDir
+        }
+
+        var firstTokenAt: Date? {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _firstTokenAt
+        }
+
+        var finalReceived: Bool {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _finalReceived
+        }
+
+        fileprivate func setBundleDir(_ dir: String) {
+            stateLock.lock(); defer { stateLock.unlock() }
+            if _bundleDir == nil { _bundleDir = dir }
+        }
+
+        fileprivate func markFirstToken(_ date: Date) {
+            stateLock.lock(); defer { stateLock.unlock() }
+            if _firstTokenAt == nil { _firstTokenAt = date }
+        }
+
+        fileprivate func markFinalReceived() {
+            stateLock.lock(); defer { stateLock.unlock() }
+            _finalReceived = true
+        }
+
+        var isRunning: Bool {
+            process.isRunning
         }
 
         func terminate() {
@@ -207,6 +245,7 @@ enum PythonRunner {
         var stderrText = ""
         var finalPayload: ResultPayload?
         var streamError: Error?
+        let streamingRun = StreamingRun(process: process)
 
         func handleLine(_ rawLine: String) {
             let line = rawLine.trimmingCharacters(in: .newlines)
@@ -219,15 +258,21 @@ enum PythonRunner {
                 return
             }
             switch event {
+            case "run_started":
+                if let bundleDir = object["bundle_dir"] as? String, !bundleDir.isEmpty {
+                    streamingRun.setBundleDir(bundleDir)
+                }
             case "phase":
                 let message = (object["message"] as? String) ?? (object["phase"] as? String) ?? "Working..."
                 onEvent(.phase(message))
             case "partial_tldr":
                 if let text = object["tldr"] as? String, !text.isEmpty {
+                    streamingRun.markFirstToken(Date())
                     onEvent(.partialTLDR(text))
                 }
             case "partial_suggestions":
                 if let list = object["suggestions"] as? [String], !list.isEmpty {
+                    streamingRun.markFirstToken(Date())
                     onEvent(.partialSuggestions(list))
                 }
             case "final":
@@ -238,6 +283,7 @@ enum PythonRunner {
                     streamError = RunError.invalidStreamEvent(line)
                     return
                 }
+                streamingRun.markFinalReceived()
                 finalPayload = ResultPayload(
                     status: status,
                     bundleDir: bundleDir,
@@ -304,7 +350,7 @@ enum PythonRunner {
         }
 
         try process.run()
-        onRunStarted(StreamingRun(process: process))
+        onRunStarted(streamingRun)
         finished.wait()
 
         if process.terminationStatus != 0 {

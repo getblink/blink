@@ -574,6 +574,8 @@ final class TLDRCoordinator {
                     }
                 }
             )
+            let streamCompletedAt = Date()
+            let firstTokenAt = DispatchQueue.main.sync { self.currentStreamingRun?.firstTokenAt }
             DispatchQueue.main.async {
                 if self.currentRequestID == requestID {
                     self.currentStreamingRun = nil
@@ -590,7 +592,9 @@ final class TLDRCoordinator {
                 captureMS: captureMS,
                 pythonMS: pythonMS,
                 totalMS: totalMS,
-                result: result
+                result: result,
+                firstTokenAt: firstTokenAt,
+                streamCompletedAt: streamCompletedAt
             )
 
             lastPhase = "overlay_shown"
@@ -1109,10 +1113,22 @@ final class TLDRCoordinator {
         guard overlay.isVisible else { return }
         let requestID = currentRequestID
         let alreadyTerminal = (requestID != nil && requestID == terminalEmittedRequestID)
-        currentStreamingRun?.terminate()
+        let streamingRun = currentStreamingRun
+        let cancelledBundleDir = streamingRun?.bundleDir
+        let cancelledFirstTokenAt = streamingRun?.firstTokenAt
+        let cancelledMidStream = streamingRun?.isRunning == true
+            && streamingRun?.finalReceived == false
+        streamingRun?.terminate()
         currentStreamingRun = nil
         currentRequestID = nil
         currentBundleDir = nil
+        if cancelledMidStream, let requestID, let bundleDirString = cancelledBundleDir {
+            recordStreamCancelled(
+                bundleDir: URL(fileURLWithPath: bundleDirString),
+                requestID: requestID,
+                firstTokenAt: cancelledFirstTokenAt
+            )
+        }
         choiceState = SuggestionChoiceState(suggestionCount: 0)
         status("dismissed")
         if !alreadyTerminal {
@@ -1245,13 +1261,30 @@ final class TLDRCoordinator {
         return "capture_failed"
     }
 
+    private func recordStreamCancelled(
+        bundleDir: URL,
+        requestID: String,
+        firstTokenAt: Date?
+    ) {
+        let path = bundleDir.appendingPathComponent("host_profile.json")
+        var payload = JSONFiles.readObject(at: path) ?? [:]
+        payload["request_id"] = requestID
+        payload["cancelled_at"] = JSONFiles.isoString()
+        if let firstTokenAt {
+            payload["first_token_at"] = JSONFiles.isoString(firstTokenAt)
+        }
+        try? JSONFiles.writeObject(payload, to: path)
+    }
+
     private func updateRunHostProfile(
         bundleDir: URL,
         requestID: String,
         captureMS: Int,
         pythonMS: Int,
         totalMS: Int,
-        result: PythonRunner.ResultPayload
+        result: PythonRunner.ResultPayload,
+        firstTokenAt: Date?,
+        streamCompletedAt: Date?
     ) throws {
         let path = bundleDir.appendingPathComponent("host_profile.json")
         var payload = JSONFiles.readObject(at: path) ?? [:]
@@ -1263,6 +1296,12 @@ final class TLDRCoordinator {
         payload["model"] = result.model as Any
         payload["warnings"] = result.warnings
         payload["finished_at"] = JSONFiles.isoString()
+        if let firstTokenAt {
+            payload["first_token_at"] = JSONFiles.isoString(firstTokenAt)
+        }
+        if let streamCompletedAt {
+            payload["stream_completed_at"] = JSONFiles.isoString(streamCompletedAt)
+        }
         try JSONFiles.writeObject(payload, to: path)
     }
 

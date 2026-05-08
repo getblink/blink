@@ -6,7 +6,7 @@ experiment. It is intentionally separate from the existing Blink app in
 
 TLDR is a menubar app:
 
-- `Ctrl+Shift+T` captures the frontmost window with ScreenCaptureKit.
+- `Ctrl+Opt+Space` (default) captures the frontmost window with ScreenCaptureKit. The hotkey is configurable via `~/.tldr/settings.json`.
 - Swift builds a request envelope with image diagnostics, focused-context facts,
   pending-run metadata, and behavior events.
 - The bundled Python runtime calls the TLDR server when `BLINK_PROXY_URL` +

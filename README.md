@@ -48,7 +48,7 @@ a new sibling app package under [`tldr_app/`](tldr_app/README.md), separate from
 the Blink tester app in `app/` and separate from the root `./tldr` scratchpad
 harness.
 
-The Swift app owns the menubar item, permissions, `ctrl+shift+t` hotkey,
+The Swift app owns the menubar item, permissions, the configurable summary hotkey (default `ctrl+opt+space`),
 ScreenCaptureKit frontmost-window capture, non-activating overlay, numbered
 choice handling, copy, and Return-to-insert behavior. It now also emits a
 server-oriented request envelope, image diagnostics, focused-context metadata,
