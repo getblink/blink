@@ -1,0 +1,24 @@
+---
+interface Props {
+  size?: number;
+}
+
+const { size = 18 } = Astro.props;
+---
+
+<img
+  class="brand-mark"
+  src="/blink-icon.png"
+  alt=""
+  width={size}
+  height={size}
+  aria-hidden="true"
+/>
+
+<style>
+  .brand-mark {
+    display: inline-block;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+</style>
