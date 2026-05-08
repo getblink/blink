@@ -46,7 +46,7 @@ class AuthTests(unittest.TestCase):
 
     def test_check_token_rate_limit_allows_configured_limit_per_window(self) -> None:
         token_id = token_id_for("alpha")
-        with mock.patch.dict(os.environ, {"TLDR_TOKEN_RATE_LIMIT_PER_MINUTE": "2"}):
+        with mock.patch.dict(os.environ, {"BLINK_TOKEN_RATE_LIMIT_PER_MINUTE": "2"}):
             check_token_rate_limit(token_id, now=1000)
             check_token_rate_limit(token_id, now=1001)
             with self.assertRaises(HTTPException) as ctx:
@@ -55,12 +55,12 @@ class AuthTests(unittest.TestCase):
 
     def test_check_token_rate_limit_resets_after_one_minute(self) -> None:
         token_id = token_id_for("beta")
-        with mock.patch.dict(os.environ, {"TLDR_TOKEN_RATE_LIMIT_PER_MINUTE": "1"}):
+        with mock.patch.dict(os.environ, {"BLINK_TOKEN_RATE_LIMIT_PER_MINUTE": "1"}):
             check_token_rate_limit(token_id, now=2000)
             check_token_rate_limit(token_id, now=2060)
 
     def test_check_mint_rate_limit_is_per_client(self) -> None:
-        with mock.patch.dict(os.environ, {"TLDR_MINT_RATE_LIMIT_PER_MINUTE": "1"}):
+        with mock.patch.dict(os.environ, {"BLINK_MINT_RATE_LIMIT_PER_MINUTE": "1"}):
             check_mint_rate_limit("127.0.0.1", now=3000)
             check_mint_rate_limit("127.0.0.2", now=3001)
             with self.assertRaises(HTTPException) as ctx:
@@ -76,14 +76,14 @@ class AuthTests(unittest.TestCase):
         request = mock.Mock()
         request.headers = {"x-forwarded-for": "203.0.113.5, 10.0.0.1"}
         request.client = mock.Mock(host="10.0.0.99")
-        with mock.patch.dict(os.environ, {"TLDR_TRUST_PROXY_HEADERS": "false"}, clear=False):
+        with mock.patch.dict(os.environ, {"BLINK_TRUST_PROXY_HEADERS": "false"}, clear=False):
             self.assertEqual(client_ip_for(request), "10.0.0.99")
 
     def test_client_ip_for_uses_xff_first_hop_when_trusted(self) -> None:
         request = mock.Mock()
         request.headers = {"x-forwarded-for": "203.0.113.5, 10.0.0.1"}
         request.client = mock.Mock(host="10.0.0.99")
-        with mock.patch.dict(os.environ, {"TLDR_TRUST_PROXY_HEADERS": "true"}, clear=False):
+        with mock.patch.dict(os.environ, {"BLINK_TRUST_PROXY_HEADERS": "true"}, clear=False):
             self.assertEqual(client_ip_for(request), "203.0.113.5")
 
 

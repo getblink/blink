@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import threading
@@ -32,10 +33,26 @@ _RATE_LIMIT_BUCKETS: dict[str, _TokenBucket] = {}
 _RATE_LIMIT_REDIS_CLIENT: object | None = None
 _RATE_LIMIT_REDIS_URL: str | None = None
 _MINT_RATE_LIMIT_BUCKETS: dict[str, _TokenBucket] = {}
+_LOGGER = logging.getLogger("blink.tldr.auth")
+_DEPRECATION_WARNED: set[str] = set()
+
+
+def _env(name: str, deprecated: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if deprecated is None:
+        return None
+    value = os.environ.get(deprecated)
+    if value is not None and deprecated not in _DEPRECATION_WARNED:
+        _DEPRECATION_WARNED.add(deprecated)
+        _LOGGER.warning("%s is deprecated, use %s", deprecated, name)
+    return value
 
 
 def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name)
+    legacy = name.replace("BLINK_", "TLDR_", 1) if name.startswith("BLINK_") else None
+    raw = _env(name, legacy)
     if raw is None or not raw.strip():
         return default
     try:
@@ -105,7 +122,7 @@ def is_bootstrap_token(token: str) -> bool:
 
 
 def trust_proxy_headers() -> bool:
-    raw = os.environ.get("TLDR_TRUST_PROXY_HEADERS")
+    raw = _env("BLINK_TRUST_PROXY_HEADERS", "TLDR_TRUST_PROXY_HEADERS")
     if raw is None:
         return False
     return raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -135,7 +152,7 @@ def validate_device_token(token: str) -> str:
 def _rate_limit_redis_client() -> object | None:
     global _RATE_LIMIT_REDIS_CLIENT, _RATE_LIMIT_REDIS_URL
     redis_url = (
-        os.environ.get("TLDR_RATE_LIMIT_REDIS_URL")
+        _env("BLINK_RATE_LIMIT_REDIS_URL", "TLDR_RATE_LIMIT_REDIS_URL")
         or os.environ.get("REDIS_URL")
         or ""
     ).strip()
@@ -171,7 +188,7 @@ def _check_redis_rate_limit(token_id: str, limit: int) -> bool:
 
 
 def check_token_rate_limit(token_id: str, now: float | None = None) -> None:
-    limit = _int_env("TLDR_TOKEN_RATE_LIMIT_PER_MINUTE", 60)
+    limit = _int_env("BLINK_TOKEN_RATE_LIMIT_PER_MINUTE", 60)
     if limit <= 0:
         return
     if now is None and _check_redis_rate_limit(token_id, limit):
@@ -194,7 +211,7 @@ def check_token_rate_limit(token_id: str, now: float | None = None) -> None:
 
 
 def check_mint_rate_limit(client_id: str, now: float | None = None) -> None:
-    limit = _int_env("TLDR_MINT_RATE_LIMIT_PER_MINUTE", 5)
+    limit = _int_env("BLINK_MINT_RATE_LIMIT_PER_MINUTE", 5)
     if limit <= 0:
         return
     current_time = time.monotonic() if now is None else now

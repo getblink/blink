@@ -1,1 +1,1 @@
-"""Blink TLDR server package."""
+"""Blink server package."""

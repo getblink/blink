@@ -9,7 +9,7 @@ the procedure. See also:
 
 - [`README.md`](../README.md) — repo entrypoint and quickstart
 - [`CLAUDE.md`](../CLAUDE.md) — repo layout and implementation guide
-- [`app/README.md`](../app/README.md) — tester-deployment channel overview
+- [`app/README.md`](../app/README.md) — shipped Blink.app overview
 - [`docs/ARTIFACT_SCHEMA.md`](ARTIFACT_SCHEMA.md) — v1 bundle contract emitted per trial
 - [`scratchpad/import_field_runs.py`](../scratchpad/import_field_runs.py) — bridge back to the research loop
 
@@ -52,7 +52,7 @@ None of that needs to be redone per dogfood session.
 4. Copy `python-dist/` and `app/python/*` into `Blink.app/Contents/Resources/`.
 5. With `--reset-tcc`: kill Blink, remove the old canonical
    `~/Applications/Blink.app`, reset TCC entries for
-   `com.blink.tester.Blink` (All, Accessibility, ScreenCapture, ListenEvent,
+   `com.henryz2004.blink` (All, Accessibility, ScreenCapture, ListenEvent,
    PostEvent, AppleEvents, SystemPolicyAllFiles), and nudge LaunchServices to
    forget the old binary. This is the safe default after Swift app-code changes,
    because macOS can keep permissions visually enabled while still binding the
@@ -75,54 +75,52 @@ Pass `--no-launch` to install without relaunching.
 
 ```bash
 pgrep -lf 'Applications/Blink.app/Contents/MacOS/Blink'
-ls ~/Applications/Blink.app/Contents/Resources/run_once.py
+ls ~/Applications/Blink.app/Contents/Resources/blink_once.py
 ls ~/Applications/Blink.app/Contents/Resources/python/bin/python3
 ls .context/disabled-apps/    # should contain any stashed duplicates
 ```
 
 ## Where artifacts land (machine-wide, not per-workspace)
 
-Every trial writes a v1 bundle to:
+Every trial writes a run bundle to:
 
 ```
 ~/Library/Application Support/Blink/runs/<YYYYMMDD-HHMMSS-mmm>/
-  fixture.json          # sweep-replayable manifest
-  source.png            # source screenshot
-  target.png            # target screenshot
-  target_metadata.json  # accessibility tree
-  settings.json         # capture settings snapshot
-  run.json              # request/response log + Python timings (+ mirrored host_* timings)
-  host_profile.json     # Swift-side wall-clock profiling for capture / prep / Python / paste
-  output.txt            # generated text
-  stderr.log            # run_once.py stderr (added by PythonRunner.swift)
+  screenshot.png        # first captured frame, for quick preview
+  screenshot_0.png      # one file per captured frame
+  frames.json           # frame list plus image diagnostics when available
+  request.json          # Swift-built server request envelope
+  model_input.txt       # rendered prompt/context preview
+  model_context.json    # redacted request/model context diagnostics
+  response.json         # raw packaged-runner or proxy response
+  run.json              # request/response log + summary fields
+  host_profile.json     # Swift-side wall-clock profiling
+  stderr.log            # blink_once.py stderr (added by PythonRunner.swift)
 ```
 
 Nothing in the workspace needs to be configured for this — capture is on by
-default. `run.json` already includes `request_build_ms`,
-`source/target_image_prepare_ms`, `ttft_ms`, `stream_duration_ms`,
-`model_latency_ms`, and `end_to_end_ms`, plus mirrored `host_*` timing keys once
-the Swift side finishes the trial. `host_profile.json` is the fuller wall-clock
-breakdown for source capture, target capture, artifact prep, Python wall time,
-and paste insertion. No profiling flag exists or is needed.
+default. `run.json` includes status, request id, runtime/settings, frame count,
+response summary, suggestions, model, warnings, image-prep diagnostics, and
+proxy diagnostics when applicable. `host_profile.json` is the fuller wall-clock
+breakdown around capture, request prep, Python wall time, overlay interaction,
+copy, and insert. No profiling flag exists or is needed.
 
 Because the runs directory is machine-wide, bundles from multiple workspaces
-interleave by timestamp. Fixture IDs stay unique so sweeps don't collide, but
-worktree provenance is not tracked automatically — note it at export time if
-you need it.
+interleave by timestamp. Worktree provenance is not tracked automatically, so
+note the workspace in any dogfood write-up when it matters.
 
-## Pulling a run back into the research loop
+## Inspecting a run
 
-From the Blink menubar: "Export last N runs…" → `~/Desktop/Blink-runs-<ts>.zip`.
-Then, in the workspace you want to replay from:
+Open the newest run bundle directly:
 
 ```bash
-python scratchpad/import_field_runs.py ~/Desktop/Blink-runs-<ts>.zip
-./sweep --fixtures 'scratchpad/field_runs/*' \
-        --configs 'scratchpad/eval_configs/*.json' \
-        --out scratchpad/sweeps/<name>
+ls -td "$HOME/Library/Application Support/Blink/runs"/* | head -1
+open "$(ls -td "$HOME/Library/Application Support/Blink/runs"/* | head -1)"
 ```
 
-`compare.html` and `summary.md` land in the sweep out-dir.
+For archived copy-paste tester exports that still emit `fixture.json`, use
+`python scratchpad/import_field_runs.py <zip-or-dir>` and replay through
+`./sweep`.
 
 ## Troubleshooting
 
@@ -140,7 +138,7 @@ python scratchpad/import_field_runs.py ~/Desktop/Blink-runs-<ts>.zip
 - **Spotlight shows two Blinks / TCC shows a stale entry**: look in
   `.context/disabled-apps/`. If a stash is missing, re-run the installer —
   `disable_app_bundle` only runs on install.
-- **`stderr.log` is empty or missing**: only written when `run_once.py` actually
+- **`stderr.log` is empty or missing**: only written when `blink_once.py` actually
   emits stderr. A successful run with no progress lines (e.g. very old build
   from before the sidecar wiring) leaves no file. Rebuild to pick up
   `PythonRunner.swift`'s stderr persistence.

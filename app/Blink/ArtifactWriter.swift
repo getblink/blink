@@ -1,6 +1,6 @@
 import Foundation
 
-/// Minimal file I/O helpers for the Swift side. `run_once.py` owns the bundle
+/// Minimal file I/O helpers for the Swift side. `blink_once.py` owns the bundle
 /// dir under `runs/<bundleId>/`; Swift stages PNGs + metadata in a tmp dir and
 /// passes those paths to Python.
 enum ArtifactWriter {

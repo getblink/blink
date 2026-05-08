@@ -1,10 +1,18 @@
-# TLDR Server
+# Blink Server
 
-Small FastAPI backend for the standalone TLDR app experiment. It owns the
+Small FastAPI backend for the standalone Blink app experiment. It owns the
 Gemini call so the shipped client never carries `GEMINI_API_KEY`, and it
 reuses Blink's capability-token convention for closed dogfood.
 
 Railway should deploy this service with the service root set to `server/`.
+
+## Protocol naming carve-out
+
+Blink is the product name, but the v1 wire/storage protocol keeps its original
+`tldr` identifiers for compatibility with deployed clients and existing data:
+`/v1/tldr`, `/v1/tldr/events`, the `tldr_*` Postgres tables/view, the
+`tldr:v1:` cache prefix, and `tldr_dt_` device tokens. New user-facing docs,
+apps, paths, and env vars should say Blink.
 
 See also:
 
@@ -92,15 +100,15 @@ response shape for existing clients.
 The server does not write screenshots or response bodies to disk. It may use
 OCR/focused-context/stateful-context content transiently for Gemini context even
 when content retention is off, but stored telemetry is redacted unless the
-client opts into content retention. `stateful_context` is the local TLDR memory
+client opts into content retention. `stateful_context` is the local Blink memory
 POC: user-typed voice samples plus bounded same-surface recent history supplied
 by the app from prior run artifacts. When `DATABASE_URL` is configured it
 persists structured request/event diagnostics; when `REDIS_URL` is configured it
 may cache response JSON keyed by input hash only for requests that opted into
 content retention.
 
-Each TLDR install sends an anonymous `client.install_id` UUID generated on the
-device and persisted at `~/.tldr/install_id`. When Postgres telemetry is
+Each Blink install sends an anonymous `client.install_id` UUID generated on the
+device and persisted at `~/.blink/install_id`. When Postgres telemetry is
 enabled, the server stores it on both `tldr_requests.install_id` and
 `tldr_events.install_id` so per-install trajectories can be reconstructed
 without relying on bearer-token uniqueness:
@@ -113,9 +121,9 @@ WHERE tldr_requests.install_id = $1
 ORDER BY tldr_requests.created_at, tldr_events.created_at;
 ```
 
-The shipped app also stores its minted bearer token at `~/.tldr/device_token`
-with mode `0600`. Deleting `~/.tldr/device_token` causes the app to mint a
-replacement token on the next launch. Deleting `~/.tldr/install_id` rotates the
+The shipped app also stores its minted bearer token at `~/.blink/device_token`
+with mode `0600`. Deleting `~/.blink/device_token` causes the app to mint a
+replacement token on the next launch. Deleting `~/.blink/install_id` rotates the
 anonymous identifier.
 
 ## Environment
@@ -129,17 +137,17 @@ Copy [`server/.env.example`](.env.example) into the repo-root `.env` or
 - `BLINK_LEGACY_TOKEN_ALLOWED` — defaults to `true`; set `false` after legacy builds age out
 - `DATABASE_URL` — optional Postgres telemetry storage
 - `REDIS_URL` — optional Redis cache endpoint
-- `TLDR_ALLOWED_MODELS` — comma-separated server allowlist
-- `TLDR_EVENT_LOGGING` — defaults to `true`
-- `TLDR_CACHE_RESPONSES` — defaults to `true`
-- `TLDR_RESPONSE_CACHE_TTL_SECONDS` — defaults to `86400`
-- `TLDR_MINT_RATE_LIMIT_PER_MINUTE` — defaults to `5` per client IP
+- `BLINK_ALLOWED_MODELS` — comma-separated server allowlist
+- `BLINK_EVENT_LOGGING` — defaults to `true`
+- `BLINK_CACHE_RESPONSES` — defaults to `true`
+- `BLINK_RESPONSE_CACHE_TTL_SECONDS` — defaults to `86400`
+- `BLINK_MINT_RATE_LIMIT_PER_MINUTE` — defaults to `5` per client IP
 
-Client-side variables used by the local TLDR runner and future Swift app:
+Client-side variables used by the local Blink runner and future Swift app:
 
 - `BLINK_PROXY_URL` — base URL of this server, for example `http://localhost:8000`
 - `BLINK_PROXY_TOKEN` — bootstrap token for packaged builds; device tokens in
-  `~/.tldr/device_token` take precedence once minted
+  `~/.blink/device_token` take precedence once minted
 
 ## Local development
 
@@ -191,7 +199,7 @@ this repo the service should deploy; the repeatable build and deploy behavior is
 then sourced from `server/railway.json`.
 
 The backend config includes a `/server/**` watch pattern so changes to the
-separate landing-page service under `site/` do not redeploy the TLDR API.
+separate landing-page service under `site/` do not redeploy the Blink API.
 
 ## Fork note
 

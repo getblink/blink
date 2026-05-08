@@ -1,775 +1,387 @@
 import Foundation
 
-/// Spawns the bundled (or dev) Python helper scripts.
 enum PythonRunner {
-    struct PreparedSource {
-        let payload: [String: Any]
-
-        var packetText: String {
-            payload["packet_text"] as? String ?? ""
-        }
-    }
-
-    /// A pre-warmed Python worker process that's already finished imports and
-    /// is blocked on stdin waiting for a single JSON request. Created at
-    /// ⌃⇧C source-prep time; consumed at ⌃⇧V paste time.
-    final class WarmWorker {
-        let process: Process
-        let stdin: FileHandle
-        let stdout: FileHandle
-        let stderr: FileHandle
-        let readyElapsedMS: Double?
-        let stdoutBuffer = StdoutBuffer()
-        private let lock = NSLock()
-        private var consumed = false
-
-        init(process: Process, stdin: FileHandle, stdout: FileHandle, stderr: FileHandle, readyElapsedMS: Double? = nil) {
-            self.process = process
-            self.stdin = stdin
-            self.stdout = stdout
-            self.stderr = stderr
-            self.readyElapsedMS = readyElapsedMS
-        }
-
-        /// True if no caller has tried to use this worker yet. Used by the
-        /// coordinator to decide whether to consume or discard.
-        var isAvailable: Bool {
-            lock.lock(); defer { lock.unlock() }
-            return !consumed && process.isRunning
-        }
-
-        /// Atomically take ownership; returns false if another caller already did.
-        func tryConsume() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            guard !consumed, process.isRunning else { return false }
-            consumed = true
-            return true
-        }
-
-        /// Best-effort termination — used when a fresh ⌃⇧C arrives while a
-        /// previous worker is still alive but unconsumed.
-        func discard() {
-            lock.lock()
-            consumed = true
-            lock.unlock()
-            try? stdin.close()
-            if process.isRunning {
-                process.terminate()
-            }
-        }
-    }
-
-    /// Tiny actor-style buffer for the bytes emitted by the worker before it
-    /// printed READY. ``startWarmWorker`` reads stdout on a background queue;
-    /// the post-READY bytes are fed back here so ``runOnceUsingWorker`` can
-    /// pick them up after writing the request.
-    final class StdoutBuffer {
-        private let lock = NSLock()
-        private var data = Data()
-
-        func append(_ chunk: Data) {
-            lock.lock(); defer { lock.unlock() }
-            data.append(chunk)
-        }
-
-        func drain() -> Data {
-            lock.lock(); defer { lock.unlock() }
-            let copy = data
-            data.removeAll(keepingCapacity: false)
-            return copy
-        }
+    struct ResultPayload {
+        let status: String
+        let bundleDir: String
+        let tldr: String
+        let suggestions: [String]
+        let requestID: String?
+        let durationMS: Int?
+        let warnings: [String]
+        let model: String?
+        let stderr: String
     }
 
     enum RunError: LocalizedError {
         case noPythonBinary
-        case noRunOnceScript
-        case noPrepareSourceScript
-        case noBatchModelSelectScript
-        case invalidJSONOutput
+        case noScript
+        case invalidJSONOutput(String)
+        case invalidStreamEvent(String)
+        case missingFinalStreamEvent(String)
         case nonZeroExit(status: Int32, stderr: String)
 
         var errorDescription: String? {
             switch self {
             case .noPythonBinary:
                 return "Python binary not found; set BLINK_DEV_PYTHON or rebuild with bundled python-dist."
-            case .noRunOnceScript:
-                return "run_once.py not found in app bundle"
-            case .noPrepareSourceScript:
-                return "prepare_source.py not found in app bundle"
-            case .noBatchModelSelectScript:
-                return "batch_model_select.py not found in app bundle"
-            case .invalidJSONOutput:
-                return "Python returned invalid JSON"
+            case .noScript:
+                return "blink_once.py not found in app bundle."
+            case .invalidJSONOutput(let output):
+                return "Python returned invalid JSON: \(output)"
+            case .invalidStreamEvent(let line):
+                return "Python returned invalid stream event: \(line)"
+            case .missingFinalStreamEvent(let output):
+                return "Python stream ended without a final event: \(output)"
             case .nonZeroExit(let status, let stderr):
-                return "python exited \(status): \(stderr)"
+                return "Python exited \(status): \(stderr)"
             }
         }
     }
 
-    struct BatchModelSelectResult {
-        var output: String
-        var viaWarmWorker: Bool
-        var workerReadyMS: Double?
-        var fallbackReason: String?
+    enum StreamEvent {
+        case phase(String)
+        case partialSummary(String)
+        case partialSuggestions([String])
     }
 
-    static func prepareSourceSync(
+    final class StreamingRun {
+        fileprivate let process: Process
+        private let stateLock = NSLock()
+        private var _bundleDir: String?
+        private var _firstTokenAt: Date?
+        private var _finalReceived = false
+
+        fileprivate init(process: Process) {
+            self.process = process
+        }
+
+        var bundleDir: String? {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _bundleDir
+        }
+
+        var firstTokenAt: Date? {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _firstTokenAt
+        }
+
+        var finalReceived: Bool {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return _finalReceived
+        }
+
+        fileprivate func setBundleDir(_ dir: String) {
+            stateLock.lock(); defer { stateLock.unlock() }
+            if _bundleDir == nil { _bundleDir = dir }
+        }
+
+        fileprivate func markFirstToken(_ date: Date) {
+            stateLock.lock(); defer { stateLock.unlock() }
+            if _firstTokenAt == nil { _firstTokenAt = date }
+        }
+
+        fileprivate func markFinalReceived() {
+            stateLock.lock(); defer { stateLock.unlock() }
+            _finalReceived = true
+        }
+
+        var isRunning: Bool {
+            process.isRunning
+        }
+
+        func terminate() {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+    }
+
+    static func runOnceSync(
         config: Config,
-        sourcePNG: URL,
+        screenshotPNG: URL,
+        screenshotPNGs: [URL]? = nil,
         runtimeJSON: URL,
-        sourceTextJSON: URL?,
-        settingsJSON: URL?
-    ) throws -> PreparedSource {
+        settingsJSON: URL?,
+        prompt: URL?,
+        requestJSON: URL?,
+        outputParent: URL,
+        hostProfileJSON: URL?,
+        skipGemini: Bool = false
+    ) throws -> ResultPayload {
         guard let python = Paths.pythonBinary(config: config) else {
             throw RunError.noPythonBinary
         }
-        guard let prepareSource = Paths.prepareSourcePath else {
-            throw RunError.noPrepareSourceScript
+        guard let script = Paths.blinkOncePath else {
+            throw RunError.noScript
         }
 
         let process = Process()
         process.executableURL = python
-        var args: [String] = [
-            prepareSource.path,
-            "--source", sourcePNG.path,
+        let screenshots = screenshotPNGs ?? [screenshotPNG]
+        var args = [
+            script.path,
             "--runtime", runtimeJSON.path,
+            "--out-dir", outputParent.path,
         ]
-        if let sourceTextJSON {
-            args += ["--source-text", sourceTextJSON.path]
+        for screenshot in screenshots {
+            args += ["--screenshot", screenshot.path]
         }
         if let settingsJSON {
             args += ["--settings", settingsJSON.path]
         }
+        if let prompt {
+            args += ["--prompt", prompt.path]
+        }
+        if let requestJSON {
+            args += ["--request-json", requestJSON.path]
+        }
+        if let hostProfileJSON {
+            args += ["--host-profile", hostProfileJSON.path]
+        }
+        if skipGemini {
+            args.append("--skip-gemini")
+        }
         process.arguments = args
         process.environment = buildEnvironment(config: config)
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
 
         try process.run()
         process.waitUntilExit()
 
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let stdoutText = String(data: outData, encoding: .utf8) ?? ""
         let stderrText = String(data: errData, encoding: .utf8) ?? ""
+
         guard process.terminationStatus == 0 else {
             throw RunError.nonZeroExit(status: process.terminationStatus, stderr: stderrText)
         }
-        guard let object = try JSONSerialization.jsonObject(with: outData) as? [String: Any] else {
-            throw RunError.invalidJSONOutput
-        }
-        return PreparedSource(payload: object)
-    }
-
-    static func runBatchModelSelectSync(
-        config: Config,
-        requestJSON: URL,
-        settingsJSON: URL?,
-        rawOutput: URL,
-        targetPNG: URL? = nil,
-        modelTargetPNG: URL? = nil,
-        targetMetadataJSON: URL? = nil,
-        geometryJSON: URL? = nil,
-        targetPacketOutput: URL? = nil,
-        targetBuildOutput: URL? = nil,
-        requestOutput: URL? = nil,
-        runLogOutput: URL? = nil,
-        warmWorker: WarmWorker? = nil
-    ) throws -> BatchModelSelectResult {
-        if let warmWorker, warmWorker.tryConsume() {
-            do {
-                let output = try runBatchModelSelectUsingWorker(
-                    worker: warmWorker,
-                    requestJSON: requestJSON,
-                    settingsJSON: settingsJSON,
-                    rawOutput: rawOutput,
-                    targetPNG: targetPNG,
-                    modelTargetPNG: modelTargetPNG,
-                    targetMetadataJSON: targetMetadataJSON,
-                    geometryJSON: geometryJSON,
-                    targetPacketOutput: targetPacketOutput,
-                    targetBuildOutput: targetBuildOutput,
-                    requestOutput: requestOutput,
-                    runLogOutput: runLogOutput
-                )
-                return BatchModelSelectResult(
-                    output: output,
-                    viaWarmWorker: true,
-                    workerReadyMS: warmWorker.readyElapsedMS,
-                    fallbackReason: nil
-                )
-            } catch {
-                NSLog("[blink] batch selector warm worker failed (%@); falling back to fresh spawn", "\(error)")
-                let output = try runBatchModelSelectFresh(
-                    config: config,
-                    requestJSON: requestJSON,
-                    settingsJSON: settingsJSON,
-                    rawOutput: rawOutput,
-                    targetPNG: targetPNG,
-                    modelTargetPNG: modelTargetPNG,
-                    targetMetadataJSON: targetMetadataJSON,
-                    geometryJSON: geometryJSON,
-                    targetPacketOutput: targetPacketOutput,
-                    targetBuildOutput: targetBuildOutput,
-                    requestOutput: requestOutput,
-                    runLogOutput: runLogOutput
-                )
-                return BatchModelSelectResult(
-                    output: output,
-                    viaWarmWorker: false,
-                    workerReadyMS: warmWorker.readyElapsedMS,
-                    fallbackReason: summarizedError(error)
-                )
-            }
+        guard let object = try JSONSerialization.jsonObject(with: outData) as? [String: Any],
+              let status = object["status"] as? String,
+              let bundleDir = object["bundle_dir"] as? String,
+              let tldr = object["tldr"] as? String,
+              let suggestions = object["suggestions"] as? [String] else {
+            throw RunError.invalidJSONOutput(stdoutText)
         }
 
-        let output = try runBatchModelSelectFresh(
-            config: config,
-            requestJSON: requestJSON,
-            settingsJSON: settingsJSON,
-            rawOutput: rawOutput,
-            targetPNG: targetPNG,
-            modelTargetPNG: modelTargetPNG,
-            targetMetadataJSON: targetMetadataJSON,
-            geometryJSON: geometryJSON,
-            targetPacketOutput: targetPacketOutput,
-            targetBuildOutput: targetBuildOutput,
-            requestOutput: requestOutput,
-            runLogOutput: runLogOutput
-        )
-        return BatchModelSelectResult(
-            output: output,
-            viaWarmWorker: false,
-            workerReadyMS: nil,
-            fallbackReason: warmWorker == nil ? "no_worker" : "worker_unavailable"
+        return ResultPayload(
+            status: status,
+            bundleDir: bundleDir,
+            tldr: tldr,
+            suggestions: suggestions,
+            requestID: object["request_id"] as? String,
+            durationMS: object["duration_ms"] as? Int,
+            warnings: object["warnings"] as? [String] ?? [],
+            model: object["model"] as? String,
+            stderr: stderrText
         )
     }
 
-    private static func runBatchModelSelectFresh(
+    static func runOnceStreaming(
         config: Config,
-        requestJSON: URL,
+        screenshotPNG: URL? = nil,
+        screenshotPNGs: [URL]? = nil,
+        runtimeJSON: URL,
         settingsJSON: URL?,
-        rawOutput: URL,
-        targetPNG: URL?,
-        modelTargetPNG: URL?,
-        targetMetadataJSON: URL?,
-        geometryJSON: URL?,
-        targetPacketOutput: URL?,
-        targetBuildOutput: URL?,
-        requestOutput: URL?,
-        runLogOutput: URL?
-    ) throws -> String {
+        prompt: URL?,
+        requestJSON: URL?,
+        outputParent: URL,
+        hostProfileJSON: URL?,
+        skipGemini: Bool = false,
+        onRunStarted: @escaping (StreamingRun) -> Void,
+        onEvent: @escaping (StreamEvent) -> Void
+    ) throws -> ResultPayload {
         guard let python = Paths.pythonBinary(config: config) else {
             throw RunError.noPythonBinary
         }
-        guard let script = Paths.batchModelSelectPath else {
-            throw RunError.noBatchModelSelectScript
+        guard let script = Paths.blinkOncePath else {
+            throw RunError.noScript
         }
 
         let process = Process()
         process.executableURL = python
+        let screenshots = screenshotPNGs ?? screenshotPNG.map { [$0] } ?? []
         var args = [
             script.path,
-            "--request", requestJSON.path,
+            "--runtime", runtimeJSON.path,
+            "--out-dir", outputParent.path,
+            "--stream-events",
         ]
+        for screenshot in screenshots {
+            args += ["--screenshot", screenshot.path]
+        }
         if let settingsJSON {
             args += ["--settings", settingsJSON.path]
         }
-        if let targetPNG {
-            args += ["--target", targetPNG.path]
+        if let prompt {
+            args += ["--prompt", prompt.path]
         }
-        if let modelTargetPNG {
-            args += ["--model-target", modelTargetPNG.path]
+        if let requestJSON {
+            args += ["--request-json", requestJSON.path]
         }
-        if let targetMetadataJSON {
-            args += ["--target-meta", targetMetadataJSON.path]
+        if let hostProfileJSON {
+            args += ["--host-profile", hostProfileJSON.path]
         }
-        if let geometryJSON {
-            args += ["--geometry", geometryJSON.path]
-        }
-        if let targetPacketOutput {
-            args += ["--target-packet-out", targetPacketOutput.path]
-        }
-        if let targetBuildOutput {
-            args += ["--target-build-out", targetBuildOutput.path]
-        }
-        if let requestOutput {
-            args += ["--request-out", requestOutput.path]
-        }
-        if let runLogOutput {
-            args += ["--run-log-out", runLogOutput.path]
+        if skipGemini {
+            args.append("--skip-gemini")
         }
         process.arguments = args
         process.environment = buildEnvironment(config: config)
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        let stateQueue = DispatchQueue(label: "blink.python.stream")
+        let finished = DispatchSemaphore(value: 0)
+        var buffer = Data()
+        var stdoutText = ""
+        var stderrText = ""
+        var finalPayload: ResultPayload?
+        var streamError: Error?
+        let streamingRun = StreamingRun(process: process)
+
+        func handleLine(_ rawLine: String) {
+            let line = rawLine.trimmingCharacters(in: .newlines)
+            guard !line.isEmpty else { return }
+            stdoutText += line + "\n"
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let event = object["event"] as? String else {
+                streamError = RunError.invalidStreamEvent(line)
+                return
+            }
+            switch event {
+            case "run_started":
+                if let bundleDir = object["bundle_dir"] as? String, !bundleDir.isEmpty {
+                    streamingRun.setBundleDir(bundleDir)
+                }
+            case "phase":
+                let message = (object["message"] as? String) ?? (object["phase"] as? String) ?? "Working..."
+                onEvent(.phase(message))
+            case "partial_tldr":
+                if let text = object["tldr"] as? String, !text.isEmpty {
+                    streamingRun.markFirstToken(Date())
+                    onEvent(.partialSummary(text))
+                }
+            case "partial_suggestions":
+                if let list = object["suggestions"] as? [String], !list.isEmpty {
+                    streamingRun.markFirstToken(Date())
+                    onEvent(.partialSuggestions(list))
+                }
+            case "final":
+                guard let status = object["status"] as? String,
+                      let bundleDir = object["bundle_dir"] as? String,
+                      let tldr = object["tldr"] as? String,
+                      let suggestions = object["suggestions"] as? [String] else {
+                    streamError = RunError.invalidStreamEvent(line)
+                    return
+                }
+                streamingRun.markFinalReceived()
+                finalPayload = ResultPayload(
+                    status: status,
+                    bundleDir: bundleDir,
+                    tldr: tldr,
+                    suggestions: suggestions,
+                    requestID: object["request_id"] as? String,
+                    durationMS: object["duration_ms"] as? Int,
+                    warnings: object["warnings"] as? [String] ?? [],
+                    model: object["model"] as? String,
+                    stderr: ""
+                )
+            case "error":
+                let message = (object["message"] as? String) ?? line
+                streamError = RunError.invalidStreamEvent(message)
+            default:
+                streamError = RunError.invalidStreamEvent(line)
+            }
+        }
+
+        func drainCompleteLines() {
+            while let newline = buffer.firstIndex(of: 10) {
+                let lineData = buffer[..<newline]
+                buffer.removeSubrange(...newline)
+                if let line = String(data: lineData, encoding: .utf8) {
+                    handleLine(line)
+                } else {
+                    streamError = RunError.invalidStreamEvent("<non-utf8>")
+                }
+            }
+        }
+
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            stateQueue.async {
+                if data.isEmpty {
+                    return
+                }
+                buffer.append(data)
+                drainCompleteLines()
+            }
+        }
+
+        process.terminationHandler = { _ in
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+            stateQueue.async {
+                if !outData.isEmpty {
+                    buffer.append(outData)
+                }
+                stderrText = String(data: errData, encoding: .utf8) ?? ""
+                drainCompleteLines()
+                if !buffer.isEmpty {
+                    if let line = String(data: buffer, encoding: .utf8) {
+                        handleLine(line)
+                    } else {
+                        streamError = RunError.invalidStreamEvent("<non-utf8>")
+                    }
+                    buffer.removeAll()
+                }
+                finished.signal()
+            }
+        }
 
         try process.run()
-        process.waitUntilExit()
+        onRunStarted(streamingRun)
+        finished.wait()
 
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outData, encoding: .utf8) ?? ""
-        let stderrText = String(data: errData, encoding: .utf8) ?? ""
-        let rawText = output + (stderrText.isEmpty ? "" : "\n[stderr]\n\(stderrText)")
-        try rawText.write(to: rawOutput, atomically: true, encoding: .utf8)
-
-        guard process.terminationStatus == 0 else {
-            throw RunError.nonZeroExit(
-                status: process.terminationStatus,
-                stderr: stderrText.isEmpty ? "see \(rawOutput.path)" : stderrText
-            )
+        if process.terminationStatus != 0 {
+            throw RunError.nonZeroExit(status: process.terminationStatus, stderr: stderrText)
         }
-        return output
-    }
-
-    static func startBatchModelSelectWorker(config: Config) -> WarmWorker? {
-        guard let python = Paths.pythonBinary(config: config) else { return nil }
-        guard let script = Paths.batchModelSelectPath else { return nil }
-        return startJSONLineWorker(
-            python: python,
-            arguments: [script.path, "--wait-on-stdin"],
-            environment: buildEnvironment(config: config),
-            logLabel: "batch selector warm worker"
+        if let streamError {
+            throw streamError
+        }
+        guard let finalPayload else {
+            throw RunError.missingFinalStreamEvent(stdoutText)
+        }
+        return ResultPayload(
+            status: finalPayload.status,
+            bundleDir: finalPayload.bundleDir,
+            tldr: finalPayload.tldr,
+            suggestions: finalPayload.suggestions,
+            requestID: finalPayload.requestID,
+            durationMS: finalPayload.durationMS,
+            warnings: finalPayload.warnings,
+            model: finalPayload.model,
+            stderr: stderrText
         )
-    }
-
-    /// Spawn `run_once.py --wait-on-stdin`, wait up to 5 s for the `READY`
-    /// line on stdout, and return a handle the coordinator can hand to a
-    /// later ⌃⇧V. Returns nil if the worker fails to come up cleanly; the
-    /// fresh-spawn path will pick up the slack.
-    static func startWarmWorker(config: Config) -> WarmWorker? {
-        guard let python = Paths.pythonBinary(config: config) else { return nil }
-        guard let runOnce = Paths.runOncePath else { return nil }
-
-        return startJSONLineWorker(
-            python: python,
-            arguments: [runOnce.path, "--wait-on-stdin", "--silent-stderr"],
-            environment: buildEnvironment(config: config),
-            logLabel: "warm worker"
-        )
-    }
-
-    private static func startJSONLineWorker(
-        python: URL,
-        arguments: [String],
-        environment: [String: String],
-        logLabel: String
-    ) -> WarmWorker? {
-        let started = ProcessInfo.processInfo.systemUptime
-        let process = Process()
-        process.executableURL = python
-        process.arguments = arguments
-        process.environment = environment
-
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        do {
-            try process.run()
-        } catch {
-            NSLog("[blink] %@ spawn failed: %@", logLabel, error.localizedDescription)
-            return nil
-        }
-
-        let worker = WarmWorker(
-            process: process,
-            stdin: stdinPipe.fileHandleForWriting,
-            stdout: stdoutPipe.fileHandleForReading,
-            stderr: stderrPipe.fileHandleForReading,
-            readyElapsedMS: nil
-        )
-
-        // Wait for "READY <pid>\n" with a 5 s deadline. The first chunk
-        // typically holds the entire READY line; if not, keep reading until
-        // we see a newline.
-        let deadline = DispatchTime.now() + .seconds(5)
-        let signaller = DispatchSemaphore(value: 0)
-        var readyHolder: Bool = false
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            var buffer = Data()
-            while DispatchTime.now() < deadline {
-                let chunk = worker.stdout.availableData
-                if chunk.isEmpty {
-                    // EOF — process died.
-                    break
-                }
-                buffer.append(chunk)
-                if let newlineIdx = buffer.firstIndex(of: 0x0A) {
-                    let line = buffer.prefix(upTo: newlineIdx)
-                    let lineString = String(data: line, encoding: .utf8) ?? ""
-                    if lineString.hasPrefix("READY ") {
-                        // Stash any bytes that arrived after the newline
-                        // (none expected, but be defensive).
-                        let remainder = buffer.suffix(from: buffer.index(after: newlineIdx))
-                        if !remainder.isEmpty {
-                            worker.stdoutBuffer.append(Data(remainder))
-                        }
-                        readyHolder = true
-                    }
-                    break
-                }
-            }
-            signaller.signal()
-        }
-
-        let result = signaller.wait(timeout: deadline)
-        if result == .timedOut || !readyHolder {
-            worker.discard()
-            return nil
-        }
-        return WarmWorker(
-            process: process,
-            stdin: stdinPipe.fileHandleForWriting,
-            stdout: stdoutPipe.fileHandleForReading,
-            stderr: stderrPipe.fileHandleForReading,
-            readyElapsedMS: roundedMS(ProcessInfo.processInfo.systemUptime - started)
-        )
-    }
-
-    static func runOnce(
-        config: Config,
-        sourcePNG: URL,
-        targetPNG: URL,
-        targetMetadataJSON: URL,
-        caretJSON: URL?,
-        geometryJSON: URL?,
-        runtimeJSON: URL?,
-        preparedSourceJSON: URL?,
-        sourceTextJSON: URL?,
-        settingsJSON: URL?,
-        outputParent: URL,
-        bundleId: String,
-        extraEnvironment: [String: String] = [:],
-        warmWorker: WarmWorker? = nil,
-        completion: @escaping (Result<String, Error>) -> Void
-    ) {
-        if let warmWorker, warmWorker.tryConsume() {
-            runOnceUsingWorker(
-                worker: warmWorker,
-                sourcePNG: sourcePNG,
-                targetPNG: targetPNG,
-                targetMetadataJSON: targetMetadataJSON,
-                caretJSON: caretJSON,
-                geometryJSON: geometryJSON,
-                runtimeJSON: runtimeJSON,
-                preparedSourceJSON: preparedSourceJSON,
-                sourceTextJSON: sourceTextJSON,
-                settingsJSON: settingsJSON,
-                outputParent: outputParent,
-                bundleId: bundleId,
-                extraEnvironment: extraEnvironment
-            ) { result in
-                switch result {
-                case .success(let text):
-                    completion(.success(text))
-                case .failure(let err):
-                    NSLog("[blink] warm worker run failed (%@); falling back to fresh spawn", "\(err)")
-                    // Wipe any partial bundle the warm worker may have
-                    // started before crashing — the fresh-spawn path will
-                    // re-create the directory from scratch.
-                    let bundleDir = outputParent.appendingPathComponent(bundleId, isDirectory: true)
-                    if FileManager.default.fileExists(atPath: bundleDir.path) {
-                        try? FileManager.default.removeItem(at: bundleDir)
-                    }
-                    runOnceFresh(
-                        config: config,
-                        sourcePNG: sourcePNG,
-                        targetPNG: targetPNG,
-                        targetMetadataJSON: targetMetadataJSON,
-                        caretJSON: caretJSON,
-                        geometryJSON: geometryJSON,
-                        runtimeJSON: runtimeJSON,
-                        preparedSourceJSON: preparedSourceJSON,
-                        sourceTextJSON: sourceTextJSON,
-                        settingsJSON: settingsJSON,
-                        outputParent: outputParent,
-                        bundleId: bundleId,
-                        extraEnvironment: extraEnvironment,
-                        completion: completion
-                    )
-                }
-            }
-            return
-        }
-
-        runOnceFresh(
-            config: config,
-            sourcePNG: sourcePNG,
-            targetPNG: targetPNG,
-            targetMetadataJSON: targetMetadataJSON,
-            caretJSON: caretJSON,
-            geometryJSON: geometryJSON,
-            runtimeJSON: runtimeJSON,
-            preparedSourceJSON: preparedSourceJSON,
-            sourceTextJSON: sourceTextJSON,
-            settingsJSON: settingsJSON,
-            outputParent: outputParent,
-            bundleId: bundleId,
-            extraEnvironment: extraEnvironment,
-            completion: completion
-        )
-    }
-
-    private static func runOnceFresh(
-        config: Config,
-        sourcePNG: URL,
-        targetPNG: URL,
-        targetMetadataJSON: URL,
-        caretJSON: URL?,
-        geometryJSON: URL?,
-        runtimeJSON: URL?,
-        preparedSourceJSON: URL?,
-        sourceTextJSON: URL?,
-        settingsJSON: URL?,
-        outputParent: URL,
-        bundleId: String,
-        extraEnvironment: [String: String],
-        completion: @escaping (Result<String, Error>) -> Void
-    ) {
-        guard let python = Paths.pythonBinary(config: config) else {
-            completion(.failure(RunError.noPythonBinary))
-            return
-        }
-        guard let runOnce = Paths.runOncePath else {
-            completion(.failure(RunError.noRunOnceScript))
-            return
-        }
-
-        let process = Process()
-        process.executableURL = python
-
-        var args: [String] = [
-            runOnce.path,
-            "--source", sourcePNG.path,
-            "--target", targetPNG.path,
-            "--target-meta", targetMetadataJSON.path,
-            "--out-dir", outputParent.path,
-            "--bundle-id", bundleId,
-        ]
-        if let caretJSON {
-            args += ["--caret", caretJSON.path]
-        }
-        if let geometryJSON {
-            args += ["--geometry", geometryJSON.path]
-        }
-        if let runtimeJSON {
-            args += ["--runtime", runtimeJSON.path]
-        }
-        if let preparedSourceJSON {
-            args += ["--prepared-source", preparedSourceJSON.path]
-        }
-        if let sourceTextJSON {
-            args += ["--source-text", sourceTextJSON.path]
-        }
-        if let settingsJSON {
-            args += ["--settings", settingsJSON.path]
-        }
-        process.arguments = args
-        var env = buildEnvironment(config: config)
-        env["BLINK_SPAWN_NS"] = String(DispatchTime.now().uptimeNanoseconds)
-        for (key, value) in extraEnvironment {
-            env[key] = value
-        }
-        process.environment = env
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let bundleDir = outputParent.appendingPathComponent(bundleId, isDirectory: true)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try process.run()
-            } catch {
-                completion(.failure(error))
-                return
-            }
-            process.waitUntilExit()
-            let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrText = String(data: errData, encoding: .utf8) ?? ""
-
-            persistStderrIfNeeded(errData: errData, bundleDir: bundleDir)
-            if process.terminationStatus != 0 {
-                completion(.failure(RunError.nonZeroExit(
-                    status: process.terminationStatus, stderr: stderrText)))
-                return
-            }
-            let text = String(data: outData, encoding: .utf8) ?? ""
-            completion(.success(text))
-        }
-    }
-
-    /// Submit a JSON request to a warm worker over its stdin pipe and
-    /// collect the rest of stdout as the pasted text.
-    private static func runOnceUsingWorker(
-        worker: WarmWorker,
-        sourcePNG: URL,
-        targetPNG: URL,
-        targetMetadataJSON: URL,
-        caretJSON: URL?,
-        geometryJSON: URL?,
-        runtimeJSON: URL?,
-        preparedSourceJSON: URL?,
-        sourceTextJSON: URL?,
-        settingsJSON: URL?,
-        outputParent: URL,
-        bundleId: String,
-        extraEnvironment: [String: String],
-        completion: @escaping (Result<String, Error>) -> Void
-    ) {
-        var payload: [String: Any] = [
-            "source": sourcePNG.path,
-            "target": targetPNG.path,
-            "target_meta": targetMetadataJSON.path,
-            "out_dir": outputParent.path,
-            "bundle_id": bundleId,
-            "silent_stderr": true,
-        ]
-        if let caretJSON { payload["caret"] = caretJSON.path }
-        if let geometryJSON { payload["geometry"] = geometryJSON.path }
-        if let runtimeJSON { payload["runtime"] = runtimeJSON.path }
-        if let preparedSourceJSON { payload["prepared_source"] = preparedSourceJSON.path }
-        if let sourceTextJSON { payload["source_text"] = sourceTextJSON.path }
-        if let settingsJSON { payload["settings"] = settingsJSON.path }
-        if !extraEnvironment.isEmpty {
-            payload["env"] = extraEnvironment
-        }
-
-        guard var requestData = try? JSONSerialization.data(withJSONObject: payload) else {
-            completion(.failure(RunError.invalidJSONOutput))
-            return
-        }
-        requestData.append(0x0A) // newline-terminated, the worker reads one line.
-
-        let bundleDir = outputParent.appendingPathComponent(bundleId, isDirectory: true)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try worker.stdin.write(contentsOf: requestData)
-                try worker.stdin.close()
-            } catch {
-                completion(.failure(error))
-                return
-            }
-
-            // Drain any pre-buffered stdout bytes (collected during the
-            // READY-wait phase), then read until EOF.
-            var output = worker.stdoutBuffer.drain()
-            output.append(worker.stdout.readDataToEndOfFile())
-            let errData = worker.stderr.readDataToEndOfFile()
-            worker.process.waitUntilExit()
-
-            let stderrText = String(data: errData, encoding: .utf8) ?? ""
-            persistStderrIfNeeded(errData: errData, bundleDir: bundleDir)
-
-            if worker.process.terminationStatus != 0 {
-                completion(.failure(RunError.nonZeroExit(
-                    status: worker.process.terminationStatus, stderr: stderrText)))
-                return
-            }
-            let text = String(data: output, encoding: .utf8) ?? ""
-            completion(.success(text))
-        }
-    }
-
-    private static func runBatchModelSelectUsingWorker(
-        worker: WarmWorker,
-        requestJSON: URL,
-        settingsJSON: URL?,
-        rawOutput: URL,
-        targetPNG: URL?,
-        modelTargetPNG: URL?,
-        targetMetadataJSON: URL?,
-        geometryJSON: URL?,
-        targetPacketOutput: URL?,
-        targetBuildOutput: URL?,
-        requestOutput: URL?,
-        runLogOutput: URL?
-    ) throws -> String {
-        var payload: [String: Any] = ["request": requestJSON.path]
-        if let settingsJSON { payload["settings"] = settingsJSON.path }
-        if let targetPNG { payload["target"] = targetPNG.path }
-        if let modelTargetPNG { payload["model_target"] = modelTargetPNG.path }
-        if let targetMetadataJSON { payload["target_meta"] = targetMetadataJSON.path }
-        if let geometryJSON { payload["geometry"] = geometryJSON.path }
-        if let targetPacketOutput { payload["target_packet_out"] = targetPacketOutput.path }
-        if let targetBuildOutput { payload["target_build_out"] = targetBuildOutput.path }
-        if let requestOutput { payload["request_out"] = requestOutput.path }
-        if let runLogOutput { payload["run_log_out"] = runLogOutput.path }
-
-        var requestData = try JSONSerialization.data(withJSONObject: payload)
-        requestData.append(0x0A)
-
-        try worker.stdin.write(contentsOf: requestData)
-        try worker.stdin.close()
-        var outputData = worker.stdoutBuffer.drain()
-        outputData.append(worker.stdout.readDataToEndOfFile())
-        let errData = worker.stderr.readDataToEndOfFile()
-        worker.process.waitUntilExit()
-
-        let output = String(data: outputData, encoding: .utf8) ?? ""
-        let stderrText = String(data: errData, encoding: .utf8) ?? ""
-        let rawText = output + (stderrText.isEmpty ? "" : "\n[stderr]\n\(stderrText)")
-        try rawText.write(to: rawOutput, atomically: true, encoding: .utf8)
-
-        guard worker.process.terminationStatus == 0 else {
-            throw RunError.nonZeroExit(
-                status: worker.process.terminationStatus,
-                stderr: stderrText.isEmpty ? "see \(rawOutput.path)" : stderrText
-            )
-        }
-        return output
-    }
-
-    private static func persistStderrIfNeeded(errData: Data, bundleDir: URL) {
-        var bundleIsDir: ObjCBool = false
-        if !errData.isEmpty,
-           FileManager.default.fileExists(atPath: bundleDir.path, isDirectory: &bundleIsDir),
-           bundleIsDir.boolValue {
-            try? errData.write(to: bundleDir.appendingPathComponent("stderr.log"))
-        }
     }
 
     private static func buildEnvironment(config: Config) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        if let url = config.proxyURL { env["BLINK_PROXY_URL"] = url }
-        if let token = config.proxyToken { env["BLINK_PROXY_TOKEN"] = token }
-        if let key = config.geminiApiKey { env["GEMINI_API_KEY"] = key }
-        return env
-    }
-
-    private static func summarizedError(_ error: Error) -> String {
-        if let runError = error as? RunError {
-            switch runError {
-            case .nonZeroExit(let status, let stderr):
-                let firstLine = stderr
-                    .split(whereSeparator: \.isNewline)
-                    .map { String($0).trimmingCharacters(in: .whitespaces) }
-                    .first { !$0.isEmpty } ?? ""
-                return firstLine.isEmpty ? "python exited \(status)" : "python exited \(status): \(firstLine)"
-            default:
-                return runError.localizedDescription
-            }
+        var env = RuntimeEnvironment.mergedEnvironment()
+        if let key = config.geminiApiKey {
+            env["GEMINI_API_KEY"] = key
         }
-        return error.localizedDescription
-    }
-
-    private static func roundedMS(_ seconds: TimeInterval) -> Double {
-        ((seconds * 1000.0) * 100.0).rounded() / 100.0
+        env["BLINK_RUNTIME_DIR"] = Paths.runtimeDir.path
+        env["TLDR_RUNTIME_DIR"] = Paths.runtimeDir.path
+        return env
     }
 }

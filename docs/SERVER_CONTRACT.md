@@ -1,7 +1,11 @@
-# TLDR Server Contract
+# Blink Server Contract
 
-This document defines the HTTP contract for the standalone TLDR app backend.
+This document defines the HTTP contract for the standalone Blink app backend.
 Implementation lives in [`server/`](../server/README.md).
+
+The product is Blink, but v1 protocol identifiers intentionally keep their
+original `tldr` names for compatibility: endpoint paths, Postgres tables/view,
+cache prefix, device-token prefix, and JSON fields such as `tldr`.
 
 ## `GET /healthz`
 
@@ -82,7 +86,7 @@ Body:
   "event_type": "capture_started",
   "created_at": "2026-04-29T17:00:00.000-07:00",
   "client": {
-    "app_name": "TLDR",
+    "app_name": "Blink",
     "app_version": "0.1.0"
   },
   "details": {
@@ -138,7 +142,7 @@ bricked between launch and a successful mint round-trip. When
 `install_id` is capped at 128 characters.
 
 The mint endpoint's per-IP rate limit reads `X-Forwarded-For` only when
-`TLDR_TRUST_PROXY_HEADERS=true`. Set this when the server runs behind a
+`BLINK_TRUST_PROXY_HEADERS=true`. Set this when the server runs behind a
 trusted reverse proxy (Railway, Cloudflare, etc.); otherwise the limit
 falls back to `request.client.host`.
 
@@ -148,7 +152,7 @@ Error responses:
 - `422` — request body is not valid JSON, missing `install_id`, or
   `install_id` exceeds 128 characters
 - `429` — per-IP mint rate limit exceeded (default 5/minute, configurable
-  via `TLDR_MINT_RATE_LIMIT_PER_MINUTE`)
+  via `BLINK_MINT_RATE_LIMIT_PER_MINUTE`)
 - `500` — `BLINK_BOOTSTRAP_TOKEN` is empty (server misconfigured)
 - `503` — device token storage is unavailable
 

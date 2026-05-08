@@ -1,6 +1,6 @@
 name: Blink
 options:
-  bundleIdPrefix: com.blink.tester
+  bundleIdPrefix: com.henryz2004
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -11,7 +11,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: $(BLINK_DEVELOPMENT_TEAM)
-    PRODUCT_BUNDLE_IDENTIFIER: com.blink.tester.Blink
+    PRODUCT_BUNDLE_IDENTIFIER: com.henryz2004.blink
     PRODUCT_NAME: Blink
     GENERATE_INFOPLIST_FILE: NO
     INFOPLIST_FILE: Blink/Info.plist
@@ -19,13 +19,17 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     OTHER_CODE_SIGN_FLAGS: "--options=runtime"
 
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+
 targets:
   Blink:
     type: application
     platform: macOS
     sources:
       - Blink
-      - ../experiments/pasteboard_logger/Sources/PasteboardReplayCore
     resources:
       - Resources
     dependencies:
@@ -34,20 +38,36 @@ targets:
       - sdk: ScreenCaptureKit.framework
       - sdk: Carbon.framework
       - sdk: IOKit.framework
-      - sdk: UniformTypeIdentifiers.framework
+      - package: Sparkle
     info:
       path: Blink/Info.plist
       properties:
         CFBundleName: Blink
         CFBundleDisplayName: Blink
-        CFBundleIdentifier: com.blink.tester.Blink
-        CFBundleShortVersionString: "0.1.0"
+        CFBundleIdentifier: com.henryz2004.blink
+        CFBundleShortVersionString: "0.1.7"
         CFBundleVersion: "1"
         CFBundleExecutable: Blink
         LSMinimumSystemVersion: "14.0"
-        LSUIElement: true
-        NSAppleEventsUsageDescription: "Blink uses accessibility events to read the focused field and paste text."
-        NSScreenCaptureUsageDescription: "Blink captures the window you target to understand which field to fill."
-        NSInputMonitoringUsageDescription: "Blink listens for the source/target hotkeys you configure."
-        BlinkProxyURL: ""
-        BlinkProxyToken: ""
+        SUFeedURL: "https://downloads.useblink.dev/blink/appcast.xml"
+        SUPublicEDKey: "REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY"
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUEnableInstallerLauncherService: true
+        NSHumanReadableCopyright: "© 2026 Henry Zhang. All rights reserved."
+        NSAppleEventsUsageDescription: "Blink uses accessibility events to paste selected suggestions."
+        NSScreenCaptureUsageDescription: "Blink captures the active window to summarize it and suggest replies."
+        NSInputMonitoringUsageDescription: "Blink listens for the summary hotkey and numbered overlay choices."
+
+  BlinkTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - BlinkTests
+    dependencies:
+      - target: Blink
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: BlinkTests
+        PRODUCT_MODULE_NAME: BlinkTests

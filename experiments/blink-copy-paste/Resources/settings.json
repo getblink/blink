@@ -1,0 +1,19 @@
+{
+  "model": "gemini-3.1-flash-lite-preview",
+  "temperature": 0.0,
+  "max_output_tokens": 512,
+  "media_resolution": "MEDIA_RESOLUTION_LOW",
+  "thinking_level": "MINIMAL",
+  "timeout_seconds": 120,
+  "stream_to_terminal": false,
+  "copy_to_clipboard": false,
+  "preprocess_request_images": true,
+  "request_image_format": "jpeg",
+  "request_image_max_dimension": 1600,
+  "request_image_jpeg_quality": 80,
+  "hotkeys": {
+    "set_source": "ctrl+shift+c",
+    "run_target": "ctrl+shift+v",
+    "batch_paste_all": "cmd+option+v"
+  }
+}

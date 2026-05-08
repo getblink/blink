@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -10,9 +11,26 @@ try:
 except ImportError:  # pragma: no cover - optional dependency for local dev
     redis = None  # type: ignore[assignment]
 
+_LOGGER = logging.getLogger("blink.tldr.cache")
+_DEPRECATION_WARNED: set[str] = set()
+
+
+def _env(name: str, deprecated: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if deprecated is None:
+        return None
+    value = os.environ.get(deprecated)
+    if value is not None and deprecated not in _DEPRECATION_WARNED:
+        _DEPRECATION_WARNED.add(deprecated)
+        _LOGGER.warning("%s is deprecated, use %s", deprecated, name)
+    return value
+
 
 def _bool_env(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
+    legacy = name.replace("BLINK_", "TLDR_", 1) if name.startswith("BLINK_") else None
+    raw = _env(name, legacy)
     if raw is None:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
@@ -27,9 +45,9 @@ class ResponseCache:
 
     @classmethod
     def from_env(cls) -> "ResponseCache":
-        enabled = _bool_env("TLDR_CACHE_RESPONSES", True)
+        enabled = _bool_env("BLINK_CACHE_RESPONSES", True)
         redis_url = (os.environ.get("REDIS_URL") or "").strip()
-        ttl_seconds = int(os.environ.get("TLDR_RESPONSE_CACHE_TTL_SECONDS", "86400") or "86400")
+        ttl_seconds = int(_env("BLINK_RESPONSE_CACHE_TTL_SECONDS", "TLDR_RESPONSE_CACHE_TTL_SECONDS") or "86400")
         if not enabled or not redis_url or redis is None:
             return cls(client=None, ttl_seconds=ttl_seconds, enabled=False)
         try:

@@ -16,6 +16,19 @@ BUILD="${BUILD:-apple-darwin-install_only}"
 
 TARBALL="cpython-${PYTHON_VERSION}+${PBS_RELEASE}-${ARCH}-${BUILD}.tar.gz"
 URL="https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/${TARBALL}"
+PIN_KEY="${PYTHON_VERSION}|${PBS_RELEASE}|${ARCH}|${BUILD}"
+
+case "$PIN_KEY" in
+    "3.11.9|20240415|aarch64|apple-darwin-install_only")
+        EXPECTED_SHA256="7af7058f7c268b4d87ed7e08c2c7844ef8460863b3e679db3afdce8bb1eedfae"
+        ;;
+    *)
+        echo "[blink] error: no pinned SHA256 for python-build-standalone tuple: $PIN_KEY" >&2
+        echo "[blink] update this script from the upstream release asset before downloading:" >&2
+        echo "[blink] https://github.com/indygreg/python-build-standalone/releases/tag/$PBS_RELEASE" >&2
+        exit 1
+        ;;
+esac
 
 echo "[blink] fetching $TARBALL"
 echo "[blink] from   $URL"
@@ -24,6 +37,8 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 curl -fsSL --retry 3 -o "$TMP_DIR/$TARBALL" "$URL"
+echo "[blink] verifying SHA256"
+echo "$EXPECTED_SHA256  $TMP_DIR/$TARBALL" | shasum -a 256 -c -
 
 echo "[blink] extracting → $DIST_DIR"
 rm -rf "$DIST_DIR"

@@ -1,0 +1,53 @@
+name: Blink
+options:
+  bundleIdPrefix: com.blink.tester
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: $(BLINK_DEVELOPMENT_TEAM)
+    PRODUCT_BUNDLE_IDENTIFIER: com.blink.tester.Blink
+    PRODUCT_NAME: Blink
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: Blink/Info.plist
+    CODE_SIGN_ENTITLEMENTS: Blink/Blink.entitlements
+    ENABLE_HARDENED_RUNTIME: YES
+    OTHER_CODE_SIGN_FLAGS: "--options=runtime"
+
+targets:
+  Blink:
+    type: application
+    platform: macOS
+    sources:
+      - Blink
+      - ../pasteboard_logger/Sources/PasteboardReplayCore
+    resources:
+      - Resources
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: ApplicationServices.framework
+      - sdk: ScreenCaptureKit.framework
+      - sdk: Carbon.framework
+      - sdk: IOKit.framework
+      - sdk: UniformTypeIdentifiers.framework
+    info:
+      path: Blink/Info.plist
+      properties:
+        CFBundleName: Blink
+        CFBundleDisplayName: Blink
+        CFBundleIdentifier: com.blink.tester.Blink
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        CFBundleExecutable: Blink
+        LSMinimumSystemVersion: "14.0"
+        LSUIElement: true
+        NSAppleEventsUsageDescription: "Blink uses accessibility events to read the focused field and paste text."
+        NSScreenCaptureUsageDescription: "Blink captures the window you target to understand which field to fill."
+        NSInputMonitoringUsageDescription: "Blink listens for the source/target hotkeys you configure."
+        BlinkProxyURL: ""
+        BlinkProxyToken: ""

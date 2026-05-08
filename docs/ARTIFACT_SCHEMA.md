@@ -5,20 +5,20 @@ See also:
 - `README.md` for the repo entrypoint and quickstart
 - `CLAUDE.md` for the implementation-oriented repo guide
 - `scratchpad/README.md` for how the research loop emits v1 bundles
-- `app/README.md` for how the tester-deployment loop emits v1 bundles
+- `experiments/blink-copy-paste/README.md` for how the archived tester loop emits v1 bundles
 - `docs/DOGFOOD_PLAYBOOK.md` for the clean-build procedure that exercises the tester-loop emitter end-to-end
 
-The versioned contract that bridges Blink's two independent loops:
+The versioned contract that bridges Blink's research loop and archived tester loop:
 
 - **Research loop** — `./capture` (scratchpad runtime) writes fixtures under `scratchpad/fixtures/<ts-slug>/` and runs under `scratchpad/runs/<ts>/`.
-- **Tester-deployment loop** — `Blink.app` writes bundles under `~/Library/Application Support/Blink/runs/<ts>/`, which are exported, imported into `scratchpad/field_runs/`, and replayed by `./sweep`.
+- **Archived tester loop** — `experiments/blink-copy-paste/` writes bundles under `~/Library/Application Support/Blink/runs/<ts>/`, which are exported, imported into `scratchpad/field_runs/`, and replayed by `./sweep`.
 
 Both loops emit bundles that conform to this schema. `./sweep` must consume either without code changes.
 
 ## Schema version
 
 - Current: `schema_version: 1`
-- Source constant: `FIXTURE_SCHEMA_VERSION = 1` in `scratchpad/run_gemini_trial.py` and mirrored in `app/python/run_once.py`.
+- Source constant: `FIXTURE_SCHEMA_VERSION = 1` in `scratchpad/run_gemini_trial.py` and mirrored in `experiments/blink-copy-paste/python/run_once.py`.
 - Any change to required fields, field types, or file layout below bumps the version.
 
 ## Bundle layout
@@ -32,7 +32,7 @@ Every bundle is a flat directory keyed by timestamp. For a bundle at `<bundle_di
 | `target.png` | yes | Target screenshot (PNG). Referenced by `fixture.json.target.image_path`. |
 | `output.txt` | yes | Raw generated text from the live trial, trailing newline when non-empty. Empty file when no live call ran. Paste-normalized text is recorded separately in `run.json.paste.text` when available. |
 | `run.json` | yes* | Live-trial request/response log. *Required for tester-loop bundles; optional for sweep-replay outputs because sweep writes its own run.json per cell.* |
-| `host_profile.json` | no | Swift-side wall-clock profiling for `Blink.app` runs: capture, artifact prep, Python wall time, and paste timing. Tester loop only. |
+| `host_profile.json` | no | Swift-side wall-clock profiling for archived tester-app runs: capture, artifact prep, Python wall time, and paste timing. Tester loop only. |
 | `settings.json` | no | Snapshot of the capture settings used at trial time. Mirrors `fixture.json.capture_settings`. Tester loop writes this; research loop may skip. |
 | `target_metadata.json` | no | Raw, unshortened target metadata captured at trial time. Mirrors `fixture.json.target_metadata`. Present when the emitter captures a full AX tree. |
 | `prepared_source.json` | no | Cached source-packet record captured at source time. Present for request modes that precompute source context. |
@@ -116,7 +116,7 @@ All other fields are informational but should still validate. Emitters that can'
 ### `bundle_source`
 
 - `"research"` — emitted by `scratchpad/run_gemini_trial.py` (the hotkey runner). Not currently emitted by the runner; missing `bundle_source` is treated as `"research"` by convention.
-- `"blink_app"` — emitted by `app/python/run_once.py` invoked from `Blink.app` or manually.
+- `"blink_app"` — emitted by `experiments/blink-copy-paste/python/run_once.py` invoked from the archived tester app or manually.
 
 Use this to segment sweep outputs by origin without inspecting the directory path. Consumers that branch on origin MUST tolerate the missing-field case.
 
@@ -165,7 +165,7 @@ Rules:
 
 ## `run.json` schema (tester loop)
 
-Emitted by `app/python/run_once.py`. Mirrors the research-loop `run.json` shape (see `scratchpad/run_gemini_trial.py:_persist_run_artifacts`) but narrower — no hotkey timings, no clipboard timings, no permissions snapshot.
+Emitted by `experiments/blink-copy-paste/python/run_once.py`. Mirrors the research-loop `run.json` shape (see `scratchpad/run_gemini_trial.py:_persist_run_artifacts`) but narrower — no hotkey timings, no clipboard timings, no permissions snapshot.
 
 ```jsonc
 {
@@ -272,7 +272,7 @@ Notes:
 
 ## `host_profile.json` schema (tester loop, optional)
 
-Emitted by the Swift side of `Blink.app` after each trial. This file records the
+Emitted by the Swift side of the archived tester app after each trial. This file records the
 wall-clock phases around the Python helper and paste insertion, and mirrors the
 headline timing numbers into `run.json.timings`.
 
@@ -363,4 +363,4 @@ headline timing numbers into `run.json.timings`.
 1. Any change that removes a field, renames a field, or narrows a type bumps `schema_version`.
 2. Adding a new optional field without a default is allowed at v1 — consumers must tolerate unknown fields.
 3. Swift and Python emitters must cut the same schema version simultaneously. Don't let them drift.
-4. When bumping: update `FIXTURE_SCHEMA_VERSION` in `scratchpad/run_gemini_trial.py` and `app/python/run_once.py`, update this doc, add a migration note to `docs/EXPERIMENT_LOG.md`.
+4. When bumping: update `FIXTURE_SCHEMA_VERSION` in `scratchpad/run_gemini_trial.py` and `experiments/blink-copy-paste/python/run_once.py`, update this doc, add a migration note to `docs/EXPERIMENT_LOG.md`.

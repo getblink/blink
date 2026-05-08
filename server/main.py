@@ -51,8 +51,9 @@ _HOP_BY_HOP = {
     "content-length",
 }
 
-app = FastAPI(title="Blink TLDR Server")
+app = FastAPI(title="Blink Server")
 logger = logging.getLogger("blink.tldr.server")
+_DEPRECATION_WARNED: set[str] = set()
 REDACTED_CONTENT_KEYS = {
     "text",
     "value",
@@ -98,15 +99,32 @@ def _telemetry_store() -> TelemetryStore:
     return TelemetryStore.from_env()
 
 
+def _env(name: str, deprecated: str | None = None) -> str | None:
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if deprecated is None:
+        return None
+    value = os.environ.get(deprecated)
+    if value is not None and deprecated not in _DEPRECATION_WARNED:
+        _DEPRECATION_WARNED.add(deprecated)
+        logger.warning("%s is deprecated, use %s", deprecated, name)
+    return value
+
+
 def _bool_env(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
+    legacy = name.replace("BLINK_", "TLDR_", 1) if name.startswith("BLINK_") else None
+    raw = _env(name, legacy)
     if raw is None:
         return default
     return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 def _allowed_models() -> set[str]:
-    raw = (os.environ.get("TLDR_ALLOWED_MODELS") or DEFAULT_ALLOWED_MODELS).strip()
+    raw = (
+        _env("BLINK_ALLOWED_MODELS", "TLDR_ALLOWED_MODELS")
+        or DEFAULT_ALLOWED_MODELS
+    ).strip()
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
@@ -872,7 +890,7 @@ async def tldr_events(
         ) from exc
 
     stored = False
-    if _bool_env("TLDR_EVENT_LOGGING", True):
+    if _bool_env("BLINK_EVENT_LOGGING", True):
         try:
             stored = _telemetry_store().record_event(
                 token_id=token_id,

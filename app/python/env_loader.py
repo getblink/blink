@@ -4,9 +4,6 @@ import os
 from pathlib import Path
 
 
-RUNTIME_DIR = Path.home() / ".blink"
-
-
 def _parse_env_line(raw_line: str) -> tuple[str, str] | None:
     line = raw_line.strip()
     if not line or line.startswith("#"):
@@ -25,10 +22,15 @@ def _parse_env_line(raw_line: str) -> tuple[str, str] | None:
     return key, value
 
 
-def load_runtime_env() -> list[Path]:
+def load_runtime_env(runtime_dir: Path | None = None) -> list[Path]:
     loaded_paths: list[Path] = []
+    runtime_dir = runtime_dir or Path(
+        os.environ.get("BLINK_RUNTIME_DIR")
+        or os.environ.get("TLDR_RUNTIME_DIR")
+        or "~/.blink"
+    ).expanduser()
     preserved_keys = set(os.environ.keys())
-    for candidate in (RUNTIME_DIR / ".env", RUNTIME_DIR / ".env.local"):
+    for candidate in (runtime_dir / ".env", runtime_dir / ".env.local"):
         if not candidate.exists():
             continue
         for raw_line in candidate.read_text(encoding="utf-8").splitlines():
