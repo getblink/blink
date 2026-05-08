@@ -62,9 +62,23 @@ a:focus-visible {
   border-bottom-color: transparent;
 }
 
+@property --shell-inset {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 28px;
+}
+
+@keyframes pull-in-edges {
+  from {
+    --shell-inset: 0px;
+    border-radius: 0;
+    border-color: transparent;
+  }
+}
+
 /* Outer frame shared by every page */
 .shell {
-  margin: 20px;
+  margin: var(--shell-inset);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-shell);
@@ -72,17 +86,21 @@ a:focus-visible {
   display: grid;
 }
 
+html:not(.no-shell-animate) .shell--animate-in {
+  animation: pull-in-edges 1200ms cubic-bezier(0.16, 1, 0.3, 1) 150ms backwards;
+}
+
 .shell--fixed {
   grid-template-rows: 44px 1fr 44px;
-  height: calc(100vh - 40px);
-  height: calc(100svh - 40px);
+  height: calc(100vh - 2 * var(--shell-inset));
+  height: calc(100svh - 2 * var(--shell-inset));
   overflow: hidden;
 }
 
 .shell--scroll {
   grid-template-rows: 44px 1fr 44px;
-  min-height: calc(100vh - 40px);
-  min-height: calc(100svh - 40px);
+  min-height: calc(100vh - 2 * var(--shell-inset));
+  min-height: calc(100svh - 2 * var(--shell-inset));
 }
 
 /* Row + cell primitives */
@@ -135,19 +153,14 @@ a:focus-visible {
   }
 
   .shell {
-    margin: 12px;
+    --shell-inset: 18px;
   }
 
   .shell--fixed {
     grid-template-rows: 44px auto 44px;
     height: auto;
-    min-height: calc(100vh - 24px);
-    min-height: calc(100svh - 24px);
-  }
-
-  .shell--scroll {
-    min-height: calc(100vh - 24px);
-    min-height: calc(100svh - 24px);
+    min-height: calc(100vh - 2 * var(--shell-inset));
+    min-height: calc(100svh - 2 * var(--shell-inset));
   }
 
   .meta {
@@ -157,5 +170,11 @@ a:focus-visible {
   .meta .cell:nth-child(2),
   .meta .cell:nth-child(3) {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell--animate-in {
+    animation: none;
   }
 }
