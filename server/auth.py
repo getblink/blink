@@ -33,6 +33,8 @@ _RATE_LIMIT_BUCKETS: dict[str, _TokenBucket] = {}
 _RATE_LIMIT_REDIS_CLIENT: object | None = None
 _RATE_LIMIT_REDIS_URL: str | None = None
 _MINT_RATE_LIMIT_BUCKETS: dict[str, _TokenBucket] = {}
+_SIGNUP_RATE_LIMIT_MINUTE_BUCKETS: dict[str, _TokenBucket] = {}
+_SIGNUP_RATE_LIMIT_DAY_BUCKETS: dict[str, _TokenBucket] = {}
 _LOGGER = logging.getLogger("blink.tldr.auth")
 _DEPRECATION_WARNED: set[str] = set()
 
@@ -103,6 +105,10 @@ class BootstrapMisconfigured(RuntimeError):
     """Raised when BLINK_BOOTSTRAP_TOKEN is empty so callers can return 500."""
 
 
+class AdminMisconfigured(RuntimeError):
+    """Raised when BLINK_ADMIN_TOKEN is empty so callers can return 500."""
+
+
 def validate_bootstrap_token(token: str) -> str:
     expected = bootstrap_token()
     if not expected:
@@ -119,6 +125,20 @@ def is_bootstrap_token(token: str) -> bool:
     if not expected or not token:
         return False
     return secrets.compare_digest(token, expected)
+
+
+def admin_token() -> str | None:
+    token = (os.environ.get("BLINK_ADMIN_TOKEN") or "").strip()
+    return token or None
+
+
+def validate_admin_token(token: str) -> str:
+    expected = admin_token()
+    if not expected:
+        raise AdminMisconfigured("server misconfigured: BLINK_ADMIN_TOKEN is empty")
+    if not token or not secrets.compare_digest(token, expected):
+        raise ValueError("invalid admin token")
+    return "admin"
 
 
 def trust_proxy_headers() -> bool:
@@ -187,6 +207,34 @@ def _check_redis_rate_limit(token_id: str, limit: int) -> bool:
     return True
 
 
+def _check_redis_signup_rate_limit(ip_hash: str, *, minute_limit: int, day_limit: int) -> bool:
+    client = _rate_limit_redis_client()
+    if client is None:
+        return False
+    now = int(time.time())
+    checks = [
+        (f"tldr:v1:signup_rate:minute:{ip_hash}:{now // 60}", minute_limit, 120, "signup rate limit exceeded"),
+        (f"tldr:v1:signup_rate:day:{ip_hash}:{now // 86400}", day_limit, 172800, "signup daily limit exceeded"),
+    ]
+    try:
+        for key, limit, ttl, detail in checks:
+            if limit <= 0:
+                continue
+            count = int(client.incr(key))  # type: ignore[attr-defined]
+            if count == 1:
+                client.expire(key, ttl)  # type: ignore[attr-defined]
+            if count > limit:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=detail,
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        return False
+    return True
+
+
 def check_token_rate_limit(token_id: str, now: float | None = None) -> None:
     limit = _int_env("BLINK_TOKEN_RATE_LIMIT_PER_MINUTE", 60)
     if limit <= 0:
@@ -232,6 +280,61 @@ def check_mint_rate_limit(client_id: str, now: float | None = None) -> None:
         bucket.count += 1
 
 
+def _check_bucket(
+    buckets: dict[str, _TokenBucket],
+    *,
+    key: str,
+    limit: int,
+    window_seconds: int,
+    detail: str,
+    now: float,
+) -> None:
+    if limit <= 0:
+        return
+    bucket = buckets.get(key)
+    if bucket is None or now - bucket.window_started_at >= window_seconds:
+        buckets[key] = _TokenBucket(window_started_at=now, count=1)
+        return
+    if bucket.count >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail,
+        )
+    bucket.count += 1
+
+
+def check_signup_rate_limit(ip_hash: str, now: float | None = None) -> None:
+    minute_limit = _int_env("BLINK_SIGNUP_RATE_LIMIT_PER_MINUTE", 5)
+    day_limit = _int_env("BLINK_SIGNUP_RATE_LIMIT_PER_DAY", 50)
+    if minute_limit <= 0 and day_limit <= 0:
+        return
+    if now is None and _check_redis_signup_rate_limit(
+        ip_hash,
+        minute_limit=minute_limit,
+        day_limit=day_limit,
+    ):
+        return
+    current_time = time.monotonic() if now is None else now
+    key = ip_hash or "unknown"
+    with _RATE_LIMIT_LOCK:
+        _check_bucket(
+            _SIGNUP_RATE_LIMIT_MINUTE_BUCKETS,
+            key=key,
+            limit=minute_limit,
+            window_seconds=60,
+            detail="signup rate limit exceeded",
+            now=current_time,
+        )
+        _check_bucket(
+            _SIGNUP_RATE_LIMIT_DAY_BUCKETS,
+            key=key,
+            limit=day_limit,
+            window_seconds=86400,
+            detail="signup daily limit exceeded",
+            now=current_time,
+        )
+
+
 def _extract_bearer_token(authorization: Optional[str]) -> str:
     if authorization is None:
         raise HTTPException(
@@ -245,6 +348,22 @@ def _extract_bearer_token(authorization: Optional[str]) -> str:
             detail="invalid bearer token",
         )
     return token.strip()
+
+
+def require_admin_token(authorization: Optional[str] = Header(default=None)) -> str:
+    token = _extract_bearer_token(authorization)
+    try:
+        return validate_admin_token(token)
+    except AdminMisconfigured as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
 
 
 def require_bearer_token(
