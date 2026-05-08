@@ -20,10 +20,10 @@ npm run build
 
 Static output lands in `site/dist/`.
 
-The production build fails fast unless both public env vars are set:
+Both public env vars are optional and have sensible defaults:
 
-- `PUBLIC_BETA_SIGNUP_URL` — JSON endpoint for the beta form, currently `https://blink-production-7b5a.up.railway.app/v1/beta-signup`
-- `PUBLIC_DEMO_VIDEO_URL` — hosted MP4 demo video URL, usually an R2 object
+- `PUBLIC_BETA_SIGNUP_URL` — beta-signup endpoint. Defaults to the production Railway URL (`https://blink-production-7b5a.up.railway.app/v1/beta-signup`); set to override for local/staging.
+- `PUBLIC_DEMO_VIDEO_URL` — hosted MP4 demo video URL. If unset, the page renders a "demo coming soon" placeholder in the same slot, so the build succeeds even before the video is uploaded.
 
 For local work, copy `.env.example` to `.env` and adjust the URLs as needed.
 
@@ -35,5 +35,4 @@ No adapter needed — the build is pure static.
 - **Build command:** `npm run build`
 - **Build output directory:** `dist`
 - **Root directory:** `site`
-- **Environment variables:** set `PUBLIC_BETA_SIGNUP_URL` and
-  `PUBLIC_DEMO_VIDEO_URL` in the Cloudflare Pages dashboard.
+- **Environment variables:** set `PUBLIC_DEMO_VIDEO_URL` once the demo MP4 is hosted, and `PUBLIC_BETA_SIGNUP_URL` if you ever want to point at a non-production endpoint.

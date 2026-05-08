@@ -1,16 +1,11 @@
 ---
-if (!import.meta.env.PUBLIC_BETA_SIGNUP_URL) {
-  throw new Error("PUBLIC_BETA_SIGNUP_URL missing");
-}
-if (!import.meta.env.PUBLIC_DEMO_VIDEO_URL) {
-  throw new Error("PUBLIC_DEMO_VIDEO_URL missing");
-}
-
 const tagline =
   "instant recall across every AI thread for multi‑agent power users";
 const title = "Blink — instant recall across every AI thread";
-const betaSignupUrl = import.meta.env.PUBLIC_BETA_SIGNUP_URL;
-const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL;
+const betaSignupUrl =
+  import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
+  "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
+const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL || "";
 ---
 
 <!doctype html>
@@ -56,15 +51,21 @@ const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL;
         </div>
 
         <div class="demo">
-          <video
-            class="demo__video"
-            controls
-            muted
-            loop
-            playsinline
-            preload="metadata"
-            src={demoVideoUrl}
-          ></video>
+          {demoVideoUrl ? (
+            <video
+              class="demo__video"
+              controls
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              src={demoVideoUrl}
+            ></video>
+          ) : (
+            <div class="demo__placeholder" aria-label="Demo video coming soon">
+              demo coming soon
+            </div>
+          )}
         </div>
 
         <form class="signup" data-state="idle" data-endpoint={betaSignupUrl}>
@@ -322,7 +323,8 @@ const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL;
         width: 100%;
       }
 
-      .demo__video {
+      .demo__video,
+      .demo__placeholder {
         display: block;
         width: 100%;
         aspect-ratio: 16 / 10;
@@ -331,6 +333,17 @@ const demoVideoUrl = import.meta.env.PUBLIC_DEMO_VIDEO_URL;
         border-radius: 8px;
         background: #111114;
         box-shadow: 0 26px 80px rgba(0, 0, 0, 0.35);
+      }
+
+      .demo__placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(245, 245, 247, 0.4);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
       }
 
       .signup {
