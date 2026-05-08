@@ -76,7 +76,7 @@ RESOURCES="$APP_PATH/Contents/Resources"
 mkdir -p "$RESOURCES/python"
 
 echo "[tldr] copying app resources -> $RESOURCES"
-rsync -a "$APP_DIR/Resources/" "$RESOURCES/"
+rsync -a --exclude '*.xcassets' "$APP_DIR/Resources/" "$RESOURCES/"
 
 rm -f "$RESOURCES/proxy.env"
 if [[ "${TLDR_DISABLE_PROXY:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then

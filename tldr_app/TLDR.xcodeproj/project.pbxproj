@@ -35,6 +35,7 @@
 		82772D425B5802CDA535FE23 /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBD51782973BD1666FD0C1F /* RuntimeEnvironmentTests.swift */; };
 		8528A2F2B241FC48078C2286 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */; };
 		91B0CD5A1F048D786CDD1D1B /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79382EFAB0A0537C3A24BA21 /* ScreenCaptureKit.framework */; };
+		A1642EF852CD56F2AF251D65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4E5DAFAB372B39C20C2B5C5F /* Assets.xcassets */; };
 		A2B975BAF38E0B6AC21F5770 /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5467296FDD090C672968683E /* SoundEffects.swift */; };
 		AFFD91C322C4BCBF1A589DA5 /* TLDRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8FC9688321A6AA3C445F2F8 /* TLDRApp.swift */; };
 		B23E646BE1DB553469F3A7CE /* BackgroundActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC07AAA16D9FE63C2762AD2E /* BackgroundActivityMonitor.swift */; };
@@ -76,6 +77,7 @@
 		33734F5BBE20AC6361260668 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		453FD93D1A6290BB9F1FFD5E /* RuntimeConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStoreTests.swift; sourceTree = "<group>"; };
 		4777BAF6F74870A0A994554E /* MenubarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarController.swift; sourceTree = "<group>"; };
+		4E5DAFAB372B39C20C2B5C5F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5156FFEE481556DB8DB7E4CB /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		5467296FDD090C672968683E /* SoundEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundEffects.swift; sourceTree = "<group>"; };
 		5FD77C90100587BDA7E79E10 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
@@ -128,6 +130,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		6E076C9FAF6371B80605C663 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4E5DAFAB372B39C20C2B5C5F /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		7C83ABC820824F338C0E9F78 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -143,6 +153,7 @@
 		93972392442E4D0816939C5A = {
 			isa = PBXGroup;
 			children = (
+				6E076C9FAF6371B80605C663 /* Resources */,
 				FA8F7C5A999EF5B2B6AE0796 /* TLDR */,
 				E9A5D49D939397CB17FD4E03 /* TLDRTests */,
 				7C83ABC820824F338C0E9F78 /* Frameworks */,
@@ -238,6 +249,7 @@
 			buildConfigurationList = 31A03BCECEDE7FF2FC49639B /* Build configuration list for PBXNativeTarget "TLDR" */;
 			buildPhases = (
 				1F6511639D2C4A06C892A6A7 /* Sources */,
+				49429585AB67CD5C0D04948E /* Resources */,
 				13341566D01CA2607B896E1E /* Frameworks */,
 			);
 			buildRules = (
@@ -293,6 +305,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		49429585AB67CD5C0D04948E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1642EF852CD56F2AF251D65 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1F6511639D2C4A06C892A6A7 /* Sources */ = {
@@ -379,6 +402,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -482,6 +506,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";

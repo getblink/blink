@@ -42,9 +42,8 @@ final class MenubarController: NSObject {
     }
 
     func install() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "TLDR"
-        statusItem.button?.toolTip = "TLDR reply assistant"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        configureStatusButton()
         statusItem.menu = buildMenu()
 
         coordinator.onStatusChange = { [weak self] text in
@@ -69,6 +68,20 @@ final class MenubarController: NSObject {
                 self?.nudgesMenuItem?.state = enabled ? .on : .off
             }
         }
+    }
+
+    private func configureStatusButton() {
+        guard let button = statusItem.button else { return }
+        button.toolTip = "TLDR reply assistant"
+
+        guard let image = NSImage(named: "MenuBarIcon") else {
+            button.title = "TLDR"
+            return
+        }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        button.image = image
+        button.imagePosition = .imageOnly
     }
 
     /// Screen-space frame of the status item button, used to anchor a nudge
@@ -252,7 +265,9 @@ final class MenubarController: NSObject {
             title = "TLDR"
             pulse = nil
         }
-        statusItem.button?.title = title
+        if statusItem.button?.image == nil {
+            statusItem.button?.title = title
+        }
         statusItem.button?.toolTip = "TLDR: \(status)"
         if let pulse {
             pulseStatusItem(color: pulse.color, duration: pulse.duration)
@@ -271,8 +286,10 @@ final class MenubarController: NSObject {
     }
 
     private func advanceThinkingAnimation() {
-        let dots = String(repeating: ".", count: thinkingTick % 4)
-        statusItem.button?.title = "TLDR\(dots)"
+        if statusItem.button?.image == nil {
+            let dots = String(repeating: ".", count: thinkingTick % 4)
+            statusItem.button?.title = "TLDR\(dots)"
+        }
         pulseButtonScale(to: 0.94, duration: 0.13) { [weak self] in
             Task { @MainActor in
                 self?.pulseButtonScale(to: 1.0, duration: 0.16, completion: nil)
@@ -314,14 +331,23 @@ final class MenubarController: NSObject {
         statusPulseGeneration += 1
         let generation = statusPulseGeneration
         let normalTitle = button.title
-        let highlighted = NSAttributedString(
-            string: normalTitle,
-            attributes: [.foregroundColor: color]
-        )
-        button.attributedTitle = highlighted
+        let normalTint = button.contentTintColor
+        if button.image == nil {
+            let highlighted = NSAttributedString(
+                string: normalTitle,
+                attributes: [.foregroundColor: color]
+            )
+            button.attributedTitle = highlighted
+        } else {
+            button.contentTintColor = color
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
             guard generation == self.statusPulseGeneration else { return }
-            button.attributedTitle = NSAttributedString(string: self.statusItem.button?.title ?? normalTitle)
+            if button.image == nil {
+                button.attributedTitle = NSAttributedString(string: self.statusItem.button?.title ?? normalTitle)
+            } else {
+                button.contentTintColor = normalTint
+            }
         }
     }
 }
