@@ -36,8 +36,8 @@ for ws in "$WORKSPACES_DIR"/*/; do
     continue
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    central_keys="$(grep -cE '^[A-Z_]+=' "$CENTRAL_ENV" || true)"
-    ws_keys="$(grep -cE '^[A-Z_]+=' "$ws_env" || true)"
+    central_keys="$(grep -cE '^[A-Z][A-Z0-9_]*=' "$CENTRAL_ENV" || true)"
+    ws_keys="$(grep -cE '^[A-Z][A-Z0-9_]*=' "$ws_env" || true)"
     echo "would  $ws_name (central=$central_keys keys, workspace=$ws_keys keys)"
   else
     backup="${ws_env}.bak.$(date +%Y%m%dT%H%M%S)"
