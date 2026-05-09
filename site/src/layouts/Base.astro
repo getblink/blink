@@ -1,11 +1,13 @@
 ---
 import "../styles/global.css";
+import Analytics from "../components/Analytics.astro";
 
 interface Props {
   title: string;
   description: string;
   ogType?: string;
   animateLandingOnce?: boolean;
+  publishedAt?: string;
 }
 
 const {
@@ -13,7 +15,31 @@ const {
   description,
   ogType = "website",
   animateLandingOnce = false,
+  publishedAt,
 } = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+
+const websiteSchema = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "Blink",
+  url: Astro.site?.toString(),
+};
+
+const articleSchema =
+  ogType === "article"
+    ? {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        headline: title,
+        description,
+        url: canonicalURL.toString(),
+        author: { "@type": "Person", name: "Henry Zhang" },
+        publisher: { "@type": "Organization", name: "Blink" },
+        ...(publishedAt ? { datePublished: publishedAt } : {}),
+      }
+    : null;
 ---
 
 <!doctype html>
@@ -25,11 +51,29 @@ const {
     <meta name="description" content={description} />
     <meta name="theme-color" content="#fafaf7" />
     <link rel="icon" type="image/png" href="/blink-icon.png" />
+    <link rel="canonical" href={canonicalURL} />
 
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content={ogType} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:site_name" content="Blink" />
+    <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
+
+    <script
+      type="application/ld+json"
+      set:html={JSON.stringify(websiteSchema)}
+    />
+    {
+      articleSchema && (
+        <script
+          type="application/ld+json"
+          set:html={JSON.stringify(articleSchema)}
+        />
+      )
+    }
+
     {
       animateLandingOnce && (
         <script
@@ -44,6 +88,8 @@ const {
         />
       )
     }
+
+    <Analytics />
   </head>
   <body>
     <slot />

@@ -36,3 +36,6 @@ app/build/
 app/python-dist/
 app/Resources/proxy.env
 .wrangler/
+.env
+.claude/
+posthog-setup-report.md

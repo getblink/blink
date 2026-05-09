@@ -73,9 +73,12 @@ class BetaSignupTests(unittest.TestCase):
             headers={"user-agent": "unit-test"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"ok": True})
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(len(body["signup_id"]), 32)
         self.assertEqual(len(self.store.rows), 1)
         row = self.store.rows[0]
+        self.assertEqual(body["signup_id"], row["id"])
         self.assertEqual(row["email_normalized"], "person@example.com")
         self.assertEqual(row["email_original"], "Person@Example.COM")
         self.assertEqual(row["source"], "site")

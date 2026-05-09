@@ -343,6 +343,9 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       const data = new FormData(form);
       form.dataset.state = "submitting";
       button?.setAttribute("disabled", "true");
+      window.posthog?.capture("beta_signup_submitted", {
+        source: "useblink.dev",
+      });
       try {
         const response = await fetch(endpoint, {
           method: "POST",
@@ -355,16 +358,43 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
         });
         if (response.status === 429) {
           form.dataset.state = "error-rate-limit";
+          window.posthog?.capture("beta_signup_failed", {
+            kind: "rate-limit",
+            status: 429,
+          });
           return;
         }
         if (response.status === 422) {
           form.dataset.state = "error-invalid";
+          window.posthog?.capture("beta_signup_failed", {
+            kind: "invalid",
+            status: 422,
+          });
           return;
         }
-        form.dataset.state = response.ok ? "success" : "error-network";
-        if (response.ok) form.reset();
+        if (response.ok) {
+          form.dataset.state = "success";
+          form.reset();
+          let signupId;
+          try {
+            const body = await response.json();
+            signupId = typeof body?.signup_id === "string" ? body.signup_id : undefined;
+          } catch {}
+          if (signupId) window.posthog?.alias(signupId);
+          window.posthog?.capture("beta_signup_succeeded");
+        } else {
+          form.dataset.state = "error-network";
+          window.posthog?.capture("beta_signup_failed", {
+            kind: "network",
+            status: response.status,
+          });
+        }
       } catch {
         form.dataset.state = "error-network";
+        window.posthog?.capture("beta_signup_failed", {
+          kind: "network",
+          status: 0,
+        });
       } finally {
         button?.removeAttribute("disabled");
       }
