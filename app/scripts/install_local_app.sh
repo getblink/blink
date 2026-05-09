@@ -11,7 +11,6 @@ source "$SCRIPT_DIR/env_compat.sh"
 blink_apply_legacy_env_aliases
 
 CANONICAL_APP="${BLINK_CANONICAL_APP:-$HOME/Applications/Blink.app}"
-DISABLED_DIR="$ROOT_DIR/.context/disabled-apps"
 
 RESET_TCC=1
 LAUNCH_APP=1
@@ -38,17 +37,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-disable_app_bundle() {
-    local src="$1"
-    local label="$2"
-    local dest="$DISABLED_DIR/$label.app.disabled"
-    [[ -d "$src" ]] || return 0
-    mkdir -p "$DISABLED_DIR"
-    rm -rf "$dest"
-    echo "[blink] stashing duplicate app: $src -> $dest"
-    if ! mv "$src" "$dest"; then
-        echo "[blink] warning: could not move $src; leaving it in place" >&2
-    fi
+remove_duplicate_app() {
+    # Delete a duplicate Blink.app bundle so macOS Launch Services and TCC
+    # only see the canonical install at $CANONICAL_APP. Older versions of
+    # this script stashed duplicates as `*.app.disabled` under
+    # `.context/disabled-apps/`, but macOS Settings indexed those bundles
+    # as separate apps anyway, cluttering Privacy & Security and wasting
+    # ~100MB per stash. The canonical install is the source of truth.
+    local target="$1"
+    [[ -d "$target" ]] || return 0
+    echo "[blink] removing duplicate app: $target"
+    rm -rf "$target"
 }
 
 echo "[blink] stopping any running Blink processes"
@@ -80,12 +79,11 @@ mkdir -p "$(dirname "$CANONICAL_APP")"
 rm -rf "$CANONICAL_APP"
 ditto "$RELEASE_APP" "$CANONICAL_APP"
 
-disable_app_bundle "$RELEASE_APP" "Blink-Release"
-disable_app_bundle "/Applications/Blink.app" "Blink-System"
+remove_duplicate_app "$RELEASE_APP"
+remove_duplicate_app "/Applications/Blink.app"
 
 while IFS= read -r derived_app; do
-    flavor="Blink-DerivedData"
-    disable_app_bundle "$derived_app" "$flavor"
+    remove_duplicate_app "$derived_app"
 done < <(find "$HOME/Library/Developer/Xcode/DerivedData" \
     \( -path '*/Build/Products/Debug/Blink.app' \
        -o -path '*/Build/Products/Release/Blink.app' \) \

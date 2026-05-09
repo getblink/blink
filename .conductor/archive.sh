@@ -6,7 +6,18 @@
 # per-workspace copies seeded from $CONDUCTOR_ROOT_PATH/.env at setup time.
 # Central is the source of truth; see .conductor/sync_env.sh for re-syncing
 # existing workspaces after central rotates.
+#
+# `.context/disabled-apps/` is also intentionally NOT preserved — older
+# versions of app/scripts/install_local_app.sh stashed duplicate Blink.app
+# bundles there. macOS Settings indexes those bundles as separate apps, so
+# they cluttered Privacy & Security and wasted ~100MB per stash. The current
+# install_local_app.sh `rm -rf`s duplicates inline, but we still nuke the
+# directory defensively in case any older artifact lingers.
 set -euo pipefail
+
+# Defensive cleanup: kill any leftover .context/disabled-apps/ before any
+# other archive logic runs.
+rm -rf .context/disabled-apps 2>/dev/null || true
 
 ts="$(date +%Y%m%d-%H%M%S)"
 archive_root="$HOME/conductor/archive/blink"
