@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from posthog import Posthog
 from pydantic import BaseModel, Field, field_validator
 
 try:
@@ -44,6 +46,26 @@ except ImportError:
 
 
 load_workspace_env()
+
+_posthog_api_key = os.environ.get("POSTHOG_API_KEY", "")
+if _posthog_api_key:
+    _posthog_client: Optional[Posthog] = Posthog(
+        _posthog_api_key,
+        host=os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com"),
+        enable_exception_autocapture=False,
+    )
+    atexit.register(_posthog_client.shutdown)
+else:
+    _posthog_client = None
+
+
+def _posthog_capture(distinct_id: str, event: str, properties: Optional[dict] = None) -> None:
+    if _posthog_client is None:
+        return
+    if properties is None:
+        _posthog_client.capture(distinct_id, event)
+    else:
+        _posthog_client.capture(distinct_id, event, properties=properties)
 
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOT_FRAMES = 8
@@ -540,6 +562,10 @@ async def mint_device_token(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="device token storage unavailable",
         ) from exc
+    _posthog_capture(
+        install_id,
+        "device_token_minted",
+    )
     return {
         "token": plaintext_token,
         "token_type": "bearer",
@@ -598,6 +624,7 @@ async def _run_tldr_request(
     model_envelope = envelope
     storage_envelope = _privacy_safe_envelope(envelope)
     settings = _selected_settings(envelope, warnings)
+    distinct_id = envelope.get("install_id") or f"token:{token_id}"
     input_hash = _request_cache_key(storage_envelope, image_bytes_list)
     cache = _response_cache()
     cache_key = _request_cache_key(model_envelope, image_bytes_list) if _cache_allowed(envelope) else None
@@ -623,6 +650,17 @@ async def _run_tldr_request(
                 error=None,
                 summary=str(cached.get("tldr") or ""),
                 suggestions=[str(item) for item in cached.get("suggestions") or []],
+            )
+            _posthog_capture(
+                distinct_id,
+                "tldr_request_completed",
+                properties={
+                    "input_mode": envelope.get("input_mode"),
+                    "capture_mode": envelope.get("capture_mode"),
+                    "model": cached.get("model"),
+                    "latency_ms": cached.get("duration_ms"),
+                    "cache_hit": True,
+                },
             )
             return _ok_response(cached, envelope["request_id"], cached_warnings)
 
@@ -672,6 +710,18 @@ async def _run_tldr_request(
                                 suggestions=[str(item) for item in data.get("suggestions") or []],
                                 raw_model_output=str(data.get("raw") or ""),
                             )
+                            _posthog_capture(
+                                distinct_id,
+                                "tldr_request_completed",
+                                properties={
+                                    "input_mode": envelope.get("input_mode"),
+                                    "capture_mode": envelope.get("capture_mode"),
+                                    "model": data.get("model"),
+                                    "latency_ms": data.get("duration_ms"),
+                                    "usage_tokens": usage_tokens,
+                                    "cache_hit": False,
+                                },
+                            )
                             data = _ok_response(data, envelope["request_id"], warnings)
                         else:
                             # SSE intentionally returns HTTP 200 with status in the
@@ -701,6 +751,15 @@ async def _run_tldr_request(
                                 suggestions=[str(item) for item in data.get("suggestions") or []],
                                 raw_model_output=str(data.get("raw") or ""),
                             )
+                            _posthog_capture(
+                                distinct_id,
+                                "tldr_request_failed",
+                                properties={
+                                    "input_mode": envelope.get("input_mode"),
+                                    "capture_mode": envelope.get("capture_mode"),
+                                    "failure_status": status_name,
+                                },
+                            )
                             data = {
                                 "request_id": envelope["request_id"],
                                 "status": status_name,
@@ -729,6 +788,15 @@ async def _run_tldr_request(
                     input_hash=input_hash,
                     warnings=warnings,
                     error=detail,
+                )
+                _posthog_capture(
+                    distinct_id,
+                    "tldr_request_failed",
+                    properties={
+                        "input_mode": envelope.get("input_mode"),
+                        "capture_mode": envelope.get("capture_mode"),
+                        "failure_status": "upstream_error",
+                    },
                 )
                 data = {
                     "request_id": envelope["request_id"],
@@ -765,6 +833,15 @@ async def _run_tldr_request(
             input_hash=input_hash,
             warnings=warnings,
             error=detail,
+        )
+        _posthog_capture(
+            distinct_id,
+            "tldr_request_failed",
+            properties={
+                "input_mode": envelope.get("input_mode"),
+                "capture_mode": envelope.get("capture_mode"),
+                "failure_status": "upstream_error",
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -804,6 +881,18 @@ async def _run_tldr_request(
             suggestions=[str(item) for item in payload.get("suggestions") or []],
             raw_model_output=str(payload.get("raw") or ""),
         )
+        _posthog_capture(
+            distinct_id,
+            "tldr_request_completed",
+            properties={
+                "input_mode": envelope.get("input_mode"),
+                "capture_mode": envelope.get("capture_mode"),
+                "model": payload.get("model"),
+                "latency_ms": payload.get("duration_ms"),
+                "usage_tokens": usage_tokens,
+                "cache_hit": False,
+            },
+        )
         return _ok_response(payload, envelope["request_id"], warnings)
 
     if payload.get("status") == "parse_error":
@@ -819,6 +908,15 @@ async def _run_tldr_request(
             warnings=warnings,
             error=detail,
             raw_model_output=str(payload.get("raw") or ""),
+        )
+        _posthog_capture(
+            distinct_id,
+            "tldr_request_failed",
+            properties={
+                "input_mode": envelope.get("input_mode"),
+                "capture_mode": envelope.get("capture_mode"),
+                "failure_status": "parse_error",
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -839,6 +937,15 @@ async def _run_tldr_request(
         summary=str(payload.get("tldr") or ""),
         suggestions=[str(item) for item in payload.get("suggestions") or []],
         raw_model_output=str(payload.get("raw") or ""),
+    )
+    _posthog_capture(
+        distinct_id,
+        "tldr_request_failed",
+        properties={
+            "input_mode": envelope.get("input_mode"),
+            "capture_mode": envelope.get("capture_mode"),
+            "failure_status": "schema_mismatch",
+        },
     )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -962,6 +1069,14 @@ async def tldr_events(
         payload["request_id"],
         payload["event_type"],
     )
+    _posthog_capture(
+        payload.get("install_id") or f"token:{token_id}",
+        "tldr_client_event_received",
+        properties={
+            "event_type": str(payload["event_type"]),
+            "stored": stored,
+        },
+    )
     return {"ok": True, "stored": stored}
 
 
@@ -969,7 +1084,7 @@ async def tldr_events(
 async def beta_signup(
     payload: BetaSignupRequest,
     request: Request,
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     if payload.hp and payload.hp.strip():
         return {"ok": True}
 
@@ -978,9 +1093,10 @@ async def beta_signup(
     ip_hash = _ip_hash_for(client_ip_for(request))
     check_signup_rate_limit(ip_hash)
 
+    signup_id = uuid4().hex
     try:
         _telemetry_store().record_beta_signup(
-            signup_id=uuid4().hex,
+            signup_id=signup_id,
             email_normalized=email_normalized,
             email_original=email_original,
             source=payload.source.strip() if payload.source else None,
@@ -997,7 +1113,14 @@ async def beta_signup(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="beta signup storage unavailable",
         ) from exc
-    return {"ok": True}
+    _posthog_capture(
+        signup_id,
+        "beta_signup_recorded",
+        properties={
+            "source": payload.source.strip() if payload.source else None,
+        },
+    )
+    return {"ok": True, "signup_id": signup_id}
 
 
 async def _proxy_to_gemini(

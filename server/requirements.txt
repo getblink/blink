@@ -1,6 +1,7 @@
 fastapi
 google-genai>=1.11.0
 httpx
+posthog
 psycopg[binary]
 python-multipart
 redis
