@@ -6,7 +6,7 @@ See also:
 
 - [README.md](README.md) for the public repo entrypoint
 - [CLAUDE.md](CLAUDE.md) for implementation-oriented guidance
-- [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md) for internal workflows and Conductor behavior
+- [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md) for internal workflows, Conductor behavior, and env-var sync across workspaces
 - [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) for product scope and success criteria
 - [docs/EXPERIMENT_LOG.md](docs/EXPERIMENT_LOG.md) for durable experiment history
 - [scratchpad/README.md](scratchpad/README.md) for capture and sweep workflow details
@@ -33,6 +33,7 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Favor additive iteration with clear experiment boundaries; do not delete prior learning artifacts unless explicitly requested.
 - Keep deployed protocol surfaces stable: `/v1/tldr`, `tldr_*` tables/caches, and `tldr_dt_*` token prefixes are deliberately frozen v1 names.
 - When debugging Conductor hooks, check `.context/conductor/setup-receipt.json` and `~/conductor/archive/blink/_archive_runs.jsonl` before assuming setup or archive failed.
+- When rotating credentials or adding env vars, edit `~/conductor/repos/blink/.env` (the canonical source) and then run `~/conductor/repos/blink/.conductor/sync_env.sh` to propagate to existing workspaces. New workspaces inherit it automatically via `setup.sh`.
 - When validating `app/` locally, use `bash app/scripts/install_local_app.sh` and launch only `~/Applications/Blink.app`. Do not run Blink from `DerivedData` or `app/build`.
 - For a full clean-build + TCC-reset dogfood session, follow [docs/DOGFOOD_PLAYBOOK.md](docs/DOGFOOD_PLAYBOOK.md).
 - Cutting a public Sparkle release goes through `app/scripts/release.sh`; see [app/README.md](app/README.md#sparkle-releases).

@@ -82,6 +82,21 @@ bash .conductor/migrate_fixtures.sh
 
 Archive runs preserve `scratchpad/sweeps/` and `scratchpad/runs/`, dereference shared fixtures when needed so archived `compare.html` and `summary.md` outputs stay navigable, append `~/conductor/archive/blink/_archive_runs.jsonl`, and write `archive-receipt.json` into preserved bundles.
 
+### Env-var sync model
+
+The `.env` copy is **one-time, at workspace creation** — there is no automatic re-sync. Each workspace's `.env` then drifts independently. Treat `$CONDUCTOR_ROOT_PATH/.env` (i.e. `~/conductor/repos/blink/.env`) as the canonical source of truth for local credentials and rotated secrets.
+
+When you rotate credentials or add a new env var, edit central first, then propagate to existing workspaces:
+
+```bash
+~/conductor/repos/blink/.conductor/sync_env.sh             # actually sync
+~/conductor/repos/blink/.conductor/sync_env.sh --dry-run   # preview only
+```
+
+The script backs up each workspace's existing `.env` to `.env.bak.<timestamp>` before overwrite and skips workspaces already byte-identical to central. New workspaces created via Conductor still inherit central's `.env` automatically through `setup.sh:67-79` — `sync_env.sh` only covers the "central changed, existing workspaces need to catch up" case.
+
+`.env` and `.env.bak.*` files are gitignored under the root `.gitignore` `.env*` rule and are intentionally **not** preserved by `.conductor/archive.sh` when a workspace is torn down. They get rebuilt from central on the next workspace creation.
+
 ## Repository Map
 
 - `docs/` contains product, artifact, dogfood, manual-playbook, and experiment records.

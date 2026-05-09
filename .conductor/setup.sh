@@ -73,6 +73,9 @@ env_status="missing"
 if [ -f "$env_source" ]; then
   cp "$env_source" .env
   env_status="copied"
+  echo "[setup] copied .env from $env_source" >&2
+  echo "        Workspace .env is now independent. To re-sync after central rotates," >&2
+  echo "        run \$CONDUCTOR_ROOT_PATH/.conductor/sync_env.sh from any worktree." >&2
 else
   echo "WARNING: no .env at \$CONDUCTOR_ROOT_PATH/.env." >&2
   echo "         Create it once (see .env.example) so future workspaces inherit the key." >&2

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Runs before Conductor deletes the workspace dir. Move gitignored
 # experiment artifacts somewhere safe so nothing important is silently lost.
+#
+# `.env` and `.env.bak.*` files are intentionally NOT preserved here — they're
+# per-workspace copies seeded from $CONDUCTOR_ROOT_PATH/.env at setup time.
+# Central is the source of truth; see .conductor/sync_env.sh for re-syncing
+# existing workspaces after central rotates.
 set -euo pipefail
 
 ts="$(date +%Y%m%d-%H%M%S)"

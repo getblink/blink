@@ -6,7 +6,7 @@ Start with:
 
 - [README.md](README.md) for the public repo entrypoint
 - [AGENTS.md](AGENTS.md) for agent-facing guardrails
-- [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md) for internal workflows, Conductor setup/archive behavior, scratchpad capture, sweeps, and release notes
+- [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md) for internal workflows, Conductor setup/archive behavior, env-var sync across workspaces, scratchpad capture, sweeps, and release notes
 - [docs/DOGFOOD_PLAYBOOK.md](docs/DOGFOOD_PLAYBOOK.md) for clean Blink.app reinstall and TCC reset sessions
 - [app/README.md](app/README.md) for the shipped macOS app
 - [server/README.md](server/README.md) for the backend
