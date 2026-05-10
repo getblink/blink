@@ -46,8 +46,8 @@ targets:
         CFBundleName: Blink
         CFBundleDisplayName: Blink
         CFBundleIdentifier: com.henryz2004.blink
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2.1"
+        CFBundleVersion: "2"
         CFBundleExecutable: Blink
         LSMinimumSystemVersion: "14.0"
         SUFeedURL: "https://downloads.useblink.dev/blink/appcast.xml"
