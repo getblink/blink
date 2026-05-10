@@ -62,8 +62,9 @@ installing `~/Applications/Blink.app`; pass `--skip-tcc-reset` only when you are
 doing a non-dogfood script check and do not want to re-grant permissions.
 
 `scripts/build.sh` stamps the built bundle's `CFBundleVersion` from
-`git rev-list --count HEAD`; set `BLINK_BUILD_NUMBER=` when cutting a release
-from a dirty or otherwise non-linear tree.
+`git rev-list --count HEAD` plus `app/BUILD_NUMBER_OFFSET`; set
+`BLINK_BUILD_NUMBER=` when cutting a release from a dirty or otherwise
+non-linear tree.
 
 `scripts/fetch_python.sh` pins the python-build-standalone tarball by SHA256.
 When bumping `PYTHON_VERSION`, `PBS_RELEASE`, `ARCH`, or `BUILD`, update the
@@ -142,7 +143,8 @@ signs, notarizes, packages the DMG, signs the update for Sparkle, writes
 1. **Bump the marketing version in `app/project.yml`** (not `Info.plist`).
    `xcodegen` regenerates `Info.plist` from `project.yml` on every build, so
    editing `Info.plist` directly is wiped. The build number is auto-stamped
-   from `git rev-list --count HEAD` and does not need a manual bump.
+   from `git rev-list --count HEAD` plus `app/BUILD_NUMBER_OFFSET` and does
+   not need a manual bump.
 
 2. **Make sure release env vars are exported.** The scripts source
    `app/scripts/config.env` automatically if it exists; alternatively,
@@ -202,7 +204,8 @@ BLINK_PROXY_TOKEN=<bootstrap token>
 `build.sh` overwrites the placeholder values in `project.yml` after `xcodegen`
 runs:
 
-- `CFBundleVersion` ← `git rev-list --count HEAD` (or `BLINK_BUILD_NUMBER`)
+- `CFBundleVersion` ← `git rev-list --count HEAD` + `app/BUILD_NUMBER_OFFSET`
+  (or `BLINK_BUILD_NUMBER`)
 - `SUFeedURL` ← `BLINK_SPARKLE_FEED_URL` (placeholder stays if the var is empty)
 - `SUPublicEDKey` ← `BLINK_SPARKLE_PUBLIC_ED_KEY` (placeholder stays if empty)
 

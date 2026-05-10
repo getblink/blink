@@ -80,7 +80,21 @@ if [[ ! -d "$APP_PATH" ]]; then
 fi
 echo "[blink] built $APP_PATH"
 
-BUILD_NUMBER="${BLINK_BUILD_NUMBER:-$(git -C "$APP_DIR/.." rev-list --count HEAD)}"
+if [[ -n "${BLINK_BUILD_NUMBER:-}" ]]; then
+    BUILD_NUMBER="$BLINK_BUILD_NUMBER"
+else
+    BUILD_COUNT="$(git -C "$APP_DIR/.." rev-list --count HEAD)"
+    BUILD_OFFSET_PATH="$APP_DIR/BUILD_NUMBER_OFFSET"
+    BUILD_OFFSET=0
+    if [[ -f "$BUILD_OFFSET_PATH" ]]; then
+        BUILD_OFFSET="$(tr -d '[:space:]' < "$BUILD_OFFSET_PATH")"
+        if [[ ! "$BUILD_OFFSET" =~ ^[0-9]+$ ]]; then
+            echo "[blink] error: app/BUILD_NUMBER_OFFSET must contain a non-negative integer" >&2
+            exit 1
+        fi
+    fi
+    BUILD_NUMBER=$((BUILD_COUNT + BUILD_OFFSET))
+fi
 echo "[blink] stamping CFBundleVersion=$BUILD_NUMBER"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" \
     "$APP_PATH/Contents/Info.plist"
