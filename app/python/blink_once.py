@@ -1727,7 +1727,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     load_runtime_env()
     settings = load_json(args.settings, DEFAULT_SETTINGS)
-    runtime = load_json(args.runtime, {"version": 1, "auto_paste": True, "model": settings["model"]})
+    runtime = load_json(
+        args.runtime,
+        {"version": 1, "auto_paste": True, "model": settings["model"], "style": None},
+    )
     if runtime.get("model"):
         settings["model"] = runtime["model"]
     style = runtime.get("style") if isinstance(runtime.get("style"), dict) else None
