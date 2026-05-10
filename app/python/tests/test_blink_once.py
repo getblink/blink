@@ -252,6 +252,76 @@ class BlinkOnceTests(unittest.TestCase):
             },
         )
 
+    def test_proxy_401_from_device_token_clears_and_retries_bundled_token(self) -> None:
+        os.environ["BLINK_PROXY_TOKEN"] = "bootstrap"
+        blink_once.DEVICE_TOKEN_PATH.write_text("tldr_dt_stale\n", encoding="utf-8")
+        authorizations: list[str | None] = []
+
+        class FakeResponse:
+            status = 200
+            code = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "status": "ok",
+                        "schema_version": 2,
+                        "request_id": "req-retry",
+                        "tldr": "Retry worked.",
+                        "suggestions": [
+                            {"text": "One", "tags": ["reply"]},
+                            {"text": "Two", "tags": ["reply"]},
+                            {"text": "Three", "tags": ["reply"]},
+                        ],
+                    }
+                ).encode("utf-8")
+
+        def urlopen(req: object, **__: object) -> object:
+            authorizations.append(req.get_header("Authorization"))  # type: ignore[attr-defined]
+            if len(authorizations) == 1:
+                raise blink_once.error.HTTPError(
+                    "https://proxy.example/v1/tldr",
+                    401,
+                    "Unauthorized",
+                    {"content-type": "application/json"},
+                    BytesIO(b'{"detail":"invalid bearer token"}'),
+                )
+            return FakeResponse()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", side_effect=urlopen):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-retry"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "tldr_dt_stale"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(authorizations, ["Bearer tldr_dt_stale", "Bearer bootstrap"])
+        self.assertFalse(blink_once.DEVICE_TOKEN_PATH.exists())
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn(
+            "Cleared stale cached device token",
+            " ".join(payload.get("warnings", [])),
+        )
+
     def test_proxy_stream_non_sse_response_records_diagnostics(self) -> None:
         class FakeResponse:
             status = 200

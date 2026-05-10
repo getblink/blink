@@ -1101,6 +1101,30 @@ def proxy_settings_from_env() -> dict[str, str] | None:
     }
 
 
+def bundled_proxy_token_from_env() -> str:
+    return (
+        os.environ.get(PROXY_TOKEN_ENV)
+        or os.environ.get(PROXY_TOKEN_ENV_DEPRECATED)
+        or ""
+    ).strip()
+
+
+def clear_device_token_if_matches(token: str) -> bool:
+    if not token.startswith("tldr_dt_") or not DEVICE_TOKEN_PATH.exists():
+        return False
+    try:
+        existing = DEVICE_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    if existing != token:
+        return False
+    try:
+        DEVICE_TOKEN_PATH.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def write_model_input(
     path: Path,
     *,
@@ -1324,6 +1348,7 @@ def generate_via_proxy(
     proxy_settings: dict[str, str],
     image_paths: list[Path],
     stream_events: bool = False,
+    retry_stale_device_token: bool = True,
 ) -> dict[str, Any]:
     body, boundary = _encode_multipart_request(request_payload, image_paths)
     timeout_seconds = float(settings["timeout_seconds"])
@@ -1415,6 +1440,28 @@ def generate_via_proxy(
     except error.HTTPError as exc:
         finished = time.perf_counter()
         raw_body = exc.read().decode("utf-8", errors="replace")
+        bundled_token = bundled_proxy_token_from_env()
+        if (
+            retry_stale_device_token
+            and exc.code == 401
+            and proxy_settings["token"].startswith("tldr_dt_")
+            and bundled_token
+            and bundled_token != proxy_settings["token"]
+            and clear_device_token_if_matches(proxy_settings["token"])
+        ):
+            retry_settings = {**proxy_settings, "token": bundled_token}
+            retry_payload = generate_via_proxy(
+                request_payload=request_payload,
+                settings=settings,
+                proxy_settings=retry_settings,
+                image_paths=image_paths,
+                stream_events=stream_events,
+                retry_stale_device_token=False,
+            )
+            warnings = retry_payload.setdefault("warnings", [])
+            if isinstance(warnings, list):
+                warnings.append("Cleared stale cached device token after proxy returned 401.")
+            return retry_payload
         fallback = f"Proxy returned HTTP {exc.code}."
         return _proxy_error_payload(
             _proxy_error_message(raw_body, fallback),
