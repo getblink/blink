@@ -131,6 +131,8 @@ final class SuggestionsOverlay: NSObject {
         static let summaryBottomInset: CGFloat = 18
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
+        static let summaryStatusHeight: CGFloat = 16
+        static let summaryStatusBottomInset: CGFloat = 1
         static let thumbStripHeight: CGFloat = 56
         static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
@@ -203,6 +205,7 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
     private var summaryLabel: NSTextField?
+    private var summaryStatusLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
     private var isSuggestionRefreshing: Bool = false
@@ -733,6 +736,7 @@ final class SuggestionsOverlay: NSObject {
         currentHeightDelta = 0
         customInputField?.onFocusChanged?(false)
         panel?.customReplyField = nil
+        showSummaryStatus("Regenerating suggestions...")
 
         let views = suggestionCards.map(\.outer)
             + [customInputCard, bottomHintLabel].compactMap { $0 }
@@ -744,6 +748,11 @@ final class SuggestionsOverlay: NSObject {
                 view.animator().frame = view.frame.offsetBy(dx: 0, dy: 8 + CGFloat(index) * 1.5)
             }
         }
+    }
+
+    func endSuggestionRefresh() {
+        isSuggestionRefreshing = false
+        hideSummaryStatus()
     }
 
     private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
@@ -844,7 +853,7 @@ final class SuggestionsOverlay: NSObject {
         let visibleSuggestions = Array(suggestions.prefix(3))
         let shouldAnimateRefresh = isSuggestionRefreshing && !visibleSuggestions.isEmpty
         if !visibleSuggestions.isEmpty {
-            isSuggestionRefreshing = false
+            endSuggestionRefresh()
         }
 
         for card in suggestionCards {
@@ -1338,6 +1347,7 @@ final class SuggestionsOverlay: NSObject {
         contentView = nil
         summaryCard = nil
         summaryLabel = nil
+        summaryStatusLabel = nil
         summaryTextY = 0
         suggestionCards = []
         suggestionClickTargets = []
@@ -1598,6 +1608,58 @@ final class SuggestionsOverlay: NSObject {
         loadingPulseDot?.removeFromSuperview()
         loadingPulseDot = nil
         isLoadingState = false
+    }
+
+    private func showSummaryStatus(_ text: String) {
+        guard let summaryCard, let host = summaryLabel?.superview else { return }
+        let frame = NSRect(
+            x: 24,
+            y: Layout.summaryStatusBottomInset,
+            width: summaryCard.frame.width - 48,
+            height: Layout.summaryStatusHeight
+        )
+        let statusLabel: NSTextField
+        if let existing = summaryStatusLabel {
+            statusLabel = existing
+            statusLabel.frame = frame
+            setLabelText(
+                statusLabel,
+                text: text,
+                font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
+                color: .tertiaryLabelColor,
+                lineSpacing: 0,
+                singleLine: true
+            )
+        } else {
+            statusLabel = label(
+                frame: frame,
+                text: text,
+                font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
+                color: .tertiaryLabelColor,
+                singleLine: true
+            )
+            statusLabel.alignment = .center
+            statusLabel.alphaValue = 0
+            host.addSubview(statusLabel)
+            summaryStatusLabel = statusLabel
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            statusLabel.animator().alphaValue = 1
+        }
+    }
+
+    private func hideSummaryStatus() {
+        guard let statusLabel = summaryStatusLabel else { return }
+        summaryStatusLabel = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            statusLabel.animator().alphaValue = 0
+        } completionHandler: {
+            statusLabel.removeFromSuperview()
+        }
     }
 
     private func playArrivalAnimation(summary: NSView?, cards: [NSView]) {

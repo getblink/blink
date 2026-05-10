@@ -1203,6 +1203,9 @@ final class BlinkCoordinator {
                         "error": shortErrorSummary(error),
                     ]
                 )
+                DispatchQueue.main.async {
+                    self.overlay.endSuggestionRefresh()
+                }
                 reportFailure(
                     title: "Blink Failed",
                     statusText: "reroll failed: \(shortErrorSummary(error))",
