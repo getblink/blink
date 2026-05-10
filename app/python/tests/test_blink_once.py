@@ -533,7 +533,11 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(suggestions, ["a", "b", "c"])
         self.assertEqual(
             details,
-            [{"text": "a", "tags": []}, {"text": "b", "tags": []}, {"text": "c", "tags": []}],
+            [
+                {"text": "a", "tags": ["Reply"]},
+                {"text": "b", "tags": ["Ask"]},
+                {"text": "c", "tags": ["Next step"]},
+            ],
         )
 
     def test_normalize_payload_accepts_v2_suggestions_with_tags(self) -> None:
@@ -556,8 +560,26 @@ class BlinkOnceTests(unittest.TestCase):
             [
                 {"text": "one", "tags": ["Reply", "Direct"]},
                 {"text": "two", "tags": ["Ask"]},
-                {"text": "three", "tags": []},
+                {"text": "three", "tags": ["Next step"]},
             ],
+        )
+
+    def test_normalize_payload_fills_blank_v2_tags(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {"text": "Can you check the logs?", "tags": []},
+                    {"text": "Wait, this still seems wrong.", "tags": []},
+                    {"text": "Update the overlay height.", "tags": []},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            [item["tags"] for item in details],
+            [["Ask"], ["Pushback"], ["Next step"]],
         )
 
     def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:

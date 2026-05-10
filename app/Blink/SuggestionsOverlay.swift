@@ -138,8 +138,8 @@ final class SuggestionsOverlay: NSObject {
         static let bottomHintHeight: CGFloat = 18
         static let bottomHintTopGap: CGFloat = 14
         static let cardPaddingX: CGFloat = 24
-        static let suggestionCollapsedHeight: CGFloat = 86
-        static let suggestionCollapsedHeightWithoutTags: CGFloat = 62
+        static let suggestionCollapsedHeight: CGFloat = 98
+        static let suggestionCollapsedHeightWithoutTags: CGFloat = 76
         static let customInputHeight: CGFloat = 62
         static let suggestionNumberX: CGFloat = 20
         static let suggestionNumberWidth: CGFloat = 28

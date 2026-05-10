@@ -1240,15 +1240,55 @@ final class BlinkCoordinator {
         draft: String
     ) -> [SuggestionDetail] {
         let source = details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
-        return Array(source.prefix(3)).map { detail in
-            SuggestionDetail(
-                text: SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
-                    from: detail.text,
-                    draft: draft
-                ),
-                tags: Array(detail.tags.prefix(2))
+        return Array(source.prefix(3)).enumerated().map { offset, detail in
+            let text = SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: detail.text,
+                draft: draft
+            )
+            return SuggestionDetail(
+                text: text,
+                tags: normalizedSuggestionTags(detail.tags, text: text, index: offset)
             )
         }
+    }
+
+    private func normalizedSuggestionTags(_ tags: [String], text: String, index: Int) -> [String] {
+        let trimmed = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !trimmed.isEmpty {
+            return Array(trimmed.prefix(2))
+        }
+        return [fallbackSuggestionTag(for: text, index: index)]
+    }
+
+    private func fallbackSuggestionTag(for text: String, index: Int) -> String {
+        let normalized = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("?")
+            || normalized.hasPrefix("can you")
+            || normalized.hasPrefix("could you")
+            || normalized.hasPrefix("would you")
+            || normalized.hasPrefix("please") {
+            return "Ask"
+        }
+        if normalized.hasPrefix("wait")
+            || normalized.hasPrefix("hold on")
+            || normalized.hasPrefix("i don't")
+            || normalized.hasPrefix("no,") {
+            return "Pushback"
+        }
+        if normalized.hasPrefix("show me")
+            || normalized.hasPrefix("check")
+            || normalized.hasPrefix("fix")
+            || normalized.hasPrefix("add")
+            || normalized.hasPrefix("update")
+            || normalized.hasPrefix("implement")
+            || normalized.hasPrefix("push") {
+            return "Next step"
+        }
+        return ["Reply", "Ask", "Next step"][min(max(index, 0), 2)]
     }
 
     private func recordFrameCaptured(_ active: CaptureSession, frame: CapturedFrame, mode: String) {

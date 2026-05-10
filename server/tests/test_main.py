@@ -766,6 +766,24 @@ class MainTests(unittest.TestCase):
             ],
         )
 
+    def test_gemini_fills_blank_v2_tags(self) -> None:
+        _, _, details = gemini._normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "Sarah needs a reply.",
+                "suggestions": [
+                    {"text": "Can you check the logs?", "tags": []},
+                    {"text": "Wait, this still seems wrong.", "tags": []},
+                    {"text": "Update the overlay height.", "tags": []},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            [item["tags"] for item in details],
+            [["Ask"], ["Pushback"], ["Next step"]],
+        )
+
     def test_gemini_conversation_contents_render_alternating_roles(self) -> None:
         class FakePart:
             @staticmethod

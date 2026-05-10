@@ -352,6 +352,28 @@ def _normalize_tag(value: Any) -> str | None:
     return text[:SUGGESTION_TAG_MAX_CHARS]
 
 
+def fallback_suggestion_tags(text: str, index: int) -> list[str]:
+    normalized = text.strip().lower()
+    if (
+        "?" in normalized
+        or normalized.startswith(("can you", "could you", "would you", "please"))
+    ):
+        return ["Ask"]
+    if normalized.startswith(("wait", "hold on", "i don't", "no,")):
+        return ["Pushback"]
+    if normalized.startswith((
+        "show me",
+        "check",
+        "fix",
+        "add",
+        "update",
+        "implement",
+        "push",
+    )):
+        return ["Next step"]
+    return [["Reply"], ["Ask"], ["Next step"]][max(0, min(index, 2))]
+
+
 def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     raw_suggestions = parsed.get("suggestions")
     if not isinstance(raw_suggestions, list):
@@ -372,6 +394,8 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
             text = str(item or "").strip()
             tags = []
         if text:
+            if not tags:
+                tags = fallback_suggestion_tags(text, len(details))
             details.append({"text": text, "tags": tags})
     return details[:3]
 
