@@ -62,10 +62,16 @@ else:
 def _posthog_capture(distinct_id: str, event: str, properties: Optional[dict] = None) -> None:
     if _posthog_client is None:
         return
+    # posthog-python 6.x made distinct_id keyword-only and moved event to the
+    # first positional. The legacy `capture(distinct_id, event, ...)` form
+    # raises TypeError ("takes 2 positional arguments but 3 were given"),
+    # which posthog's internal wrapper swallows — so requests still 200, but
+    # every event is silently dropped. requirements.txt now pins posthog>=6
+    # so the signature stays consistent with this call site.
     if properties is None:
-        _posthog_client.capture(distinct_id, event)
+        _posthog_client.capture(event, distinct_id=distinct_id)
     else:
-        _posthog_client.capture(distinct_id, event, properties=properties)
+        _posthog_client.capture(event, distinct_id=distinct_id, properties=properties)
 
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOT_FRAMES = 8
