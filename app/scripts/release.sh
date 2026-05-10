@@ -57,6 +57,31 @@ if [[ "$UPLOAD" != "0" ]]; then
         echo "[blink] error: set BLINK_R2_ENDPOINT, BLINK_R2_ACCESS_KEY_ID, and BLINK_R2_SECRET_ACCESS_KEY (S3-compatible R2 token credentials), or BLINK_RELEASE_UPLOAD=0" >&2
         exit 1
     fi
+    # Drift guard: SUFeedURL stamped into the binary (BLINK_SPARKLE_FEED_URL,
+    # baked at build.sh:88-90) must match where this script will upload the
+    # appcast. If they ever diverge, every install built with the old feed URL
+    # is permanently quarantined from updates — its Sparkle poll hits a 404
+    # and there's no in-band way to recover. Caught the 0.2.0 → 0.2.1 incident
+    # where the stamped URL was /blink/appcast.xml but the upload key was
+    # appcast.xml at the root.
+    if [[ -z "${BLINK_SPARKLE_FEED_URL:-}" ]]; then
+        echo "[blink] error: BLINK_SPARKLE_FEED_URL must be set so SUFeedURL gets stamped into the build (or set BLINK_RELEASE_UPLOAD=0 for a local dry run)" >&2
+        exit 1
+    fi
+    # Normalize: tolerate trailing slash on R2_DOMAIN and leading slash on
+    # APPCAST_REMOTE_KEY so config-time typos don't masquerade as drift.
+    # BLINK_SPARKLE_FEED_URL itself is exact-string-matched: Sparkle stamps
+    # whatever string we give it into Info.plist verbatim, and any difference
+    # (query string, case, fragment) means installed apps poll a different URL.
+    EXPECTED_FEED_URL="https://${R2_DOMAIN%/}/${APPCAST_REMOTE_KEY#/}"
+    if [[ "$BLINK_SPARKLE_FEED_URL" != "$EXPECTED_FEED_URL" ]]; then
+        echo "[blink] error: appcast URL drift detected — installed apps would poll a path this release does not publish to." >&2
+        echo "[blink]   binary will be stamped with: $BLINK_SPARKLE_FEED_URL" >&2
+        echo "[blink]   appcast will be uploaded to: $EXPECTED_FEED_URL" >&2
+        echo "[blink] Either correct BLINK_SPARKLE_FEED_URL or set BLINK_R2_APPCAST_KEY so its path matches." >&2
+        echo "[blink] (Note: BLINK_R2_PUBLIC_DOMAIN must be the host users actually fetch from, not an internal R2 hostname.)" >&2
+        exit 1
+    fi
 fi
 
 bash "$SCRIPT_DIR/fetch_python.sh"
@@ -139,6 +164,16 @@ if [[ "$UPLOAD" != "0" ]]; then
         --endpoint-url "$R2_ENDPOINT" \
         --content-type application/x-apple-diskimage \
         --cache-control 'public, max-age=60, must-revalidate'
+    # Stable alias at latest/Blink.dmg for human-facing download links and
+    # structured-data offer URLs that don't want to drift on each release.
+    # Sparkle still uses the versioned URL via the appcast — this is purely
+    # a convenience handle. Same short Cache-Control + must-revalidate so a
+    # new release is visible within ~60s.
+    LATEST_DMG_KEY="${BLINK_R2_LATEST_DMG_KEY:-latest/Blink.dmg}"
+    aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$LATEST_DMG_KEY" \
+        --endpoint-url "$R2_ENDPOINT" \
+        --content-type application/x-apple-diskimage \
+        --cache-control 'public, max-age=60, must-revalidate'
     # Short Cache-Control so a fresh release is visible to Sparkle within 60s
     # instead of being pinned to Cloudflare's default edge TTL for XML.
     aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
@@ -146,6 +181,7 @@ if [[ "$UPLOAD" != "0" ]]; then
         --content-type 'application/xml; charset=utf-8' \
         --cache-control 'public, max-age=60, must-revalidate'
     echo "[blink] release uploaded: $DMG_URL"
+    echo "[blink] latest alias: https://$R2_DOMAIN/$LATEST_DMG_KEY"
     echo "[blink] appcast: https://$R2_DOMAIN/$APPCAST_REMOTE_KEY"
 else
     echo "[blink] upload skipped by BLINK_RELEASE_UPLOAD=0"

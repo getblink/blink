@@ -81,6 +81,12 @@ bash app/scripts/release.sh
 
 The build log must contain `[blink] stamping SUFeedURL=...` and `[blink] stamping SUPublicEDKey ...`. A missing line means the new build cannot discover or verify future updates and must not be uploaded.
 
+`release.sh` also asserts that `BLINK_SPARKLE_FEED_URL` matches `https://$BLINK_R2_PUBLIC_DOMAIN/$BLINK_R2_APPCAST_KEY`. If they drift, the script aborts before doing any work — every install built with the old feed URL would otherwise be permanently quarantined from updates (no in-band recovery once shipped). If you ever need to move the appcast URL, publish to the **old** path too as a bridge until the prior install base ages out.
+
+### Cloudflare cache config (`dl.useblink.dev`)
+
+Cache Rules on the R2-fronted hostname must allow origin Cache-Control through, otherwise CF overrides `max-age` on `.dmg` (and possibly other binary types) to its 4-hour default. We saw this on the 0.2.1 release: the script set `Cache-Control: public, max-age=60, must-revalidate` on the DMG upload, but the live response came back as `max-age=14400`. Doesn't break first downloads (each release lives at a unique versioned path), but defeats the dry-run-then-re-upload safety the short TTL was intended to provide. Fix in CF dashboard → Caching → Cache Rules: add a rule matching `dl.useblink.dev` (or `*.dmg`) and set **Edge TTL** to "Use cache-control header if present, use default Cloudflare caching behavior if not". The appcast.xml Cache-Control passes through correctly today (its `cf-cache-status` reflects the `max-age=60` we set), so the override is path- or extension-scoped, not global — diff the response headers between `dl.useblink.dev/appcast.xml` and any `*.dmg` to confirm before touching settings.
+
 ## Conductor Workspaces
 
 New Conductor workspaces bootstrap via `conductor.json` and `.conductor/setup.sh`. Setup creates the virtualenv, installs dependencies, validates `scratchpad/settings.json`, links `scratchpad/fixtures` to the shared fixture pool, copies `.env` from the shared source repo, and writes `.context/conductor/setup-receipt.json`.
