@@ -205,6 +205,7 @@ final class SuggestionsOverlay: NSObject {
     private var summaryLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
+    private var isSuggestionRefreshing: Bool = false
     private var softErrorPanel: NSPanel?
     private var summaryBaseFrame: NSRect = .zero
     private var summaryTextY: CGFloat = 0
@@ -691,7 +692,6 @@ final class SuggestionsOverlay: NSObject {
     /// streaming pipeline ("Reading screen…", "Calling Gemini…", etc.).
     func updateLoadingPhase(_ text: String) {
         guard isLoadingState, let summaryCard, let summaryLabel else {
-            updateSummary(text)
             return
         }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
@@ -724,6 +724,26 @@ final class SuggestionsOverlay: NSObject {
             lineSpacing: 0,
             singleLine: true
         )
+    }
+
+    func beginSuggestionRefresh() {
+        guard !isLoadingState else { return }
+        isSuggestionRefreshing = true
+        expandedSuggestionIndex = nil
+        currentHeightDelta = 0
+        customInputField?.onFocusChanged?(false)
+        panel?.customReplyField = nil
+
+        let views = suggestionCards.map(\.outer)
+            + [customInputCard, bottomHintLabel].compactMap { $0 }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for (index, view) in views.enumerated() {
+                view.animator().alphaValue = 0
+                view.animator().frame = view.frame.offsetBy(dx: 0, dy: -6 - CGFloat(index) * 1.5)
+            }
+        }
     }
 
     private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
@@ -821,6 +841,8 @@ final class SuggestionsOverlay: NSObject {
 
     func updateSuggestionDetails(_ suggestions: [SuggestionDetail]) {
         guard let panel, let contentView, let summaryCard else { return }
+        let shouldAnimateRefresh = isSuggestionRefreshing
+        isSuggestionRefreshing = false
         let visibleSuggestions = Array(suggestions.prefix(3))
 
         for card in suggestionCards {
@@ -981,7 +1003,9 @@ final class SuggestionsOverlay: NSObject {
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
         self.currentHeightDelta = 0
-        if !hasPlayedSuggestionArrival, !cards.isEmpty {
+        if shouldAnimateRefresh, !cards.isEmpty {
+            playArrivalAnimation(summary: nil, cards: cards.map(\.outer) + [customCard.outer])
+        } else if !hasPlayedSuggestionArrival, !cards.isEmpty {
             hasPlayedSuggestionArrival = true
             playArrivalAnimation(summary: summaryCard, cards: cards.map(\.outer))
         }

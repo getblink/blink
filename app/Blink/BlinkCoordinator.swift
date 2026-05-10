@@ -1032,7 +1032,7 @@ final class BlinkCoordinator {
         overlay.onDismissKey = { [weak self] in
             self?.dismissOverlay()
         }
-        overlay.showLoading(tldr: "Rerolling suggestions...")
+        overlay.beginSuggestionRefresh()
         status("rerolling suggestions...")
         emitEvent(
             requestID: requestID,
@@ -1077,9 +1077,9 @@ final class BlinkCoordinator {
                             guard self.currentRequestID == requestID else { return }
                             switch event {
                             case .phase:
-                                self.overlay.updateLoadingPhase("Rerolling suggestions...")
-                            case .partialSummary(let text):
-                                self.overlay.updateSummary(text)
+                                break
+                            case .partialSummary:
+                                break
                             case .partialSuggestions(let list):
                                 self.overlay.updateSuggestions(Array(list.prefix(3)))
                             }
@@ -1168,7 +1168,6 @@ final class BlinkCoordinator {
                         self?.dismissOverlay()
                     }
                     if self.overlay.isStreamingActive {
-                        self.overlay.updateSummary(result.tldr)
                         self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
                     } else {
                         self.overlay.show(
