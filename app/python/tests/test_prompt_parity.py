@@ -21,6 +21,7 @@ SHARED_LIMIT_CONSTANTS = (
     "RESPONSE_SCHEMA_VERSION",
     "SUGGESTION_TAG_LIMIT",
     "SUGGESTION_TAG_MAX_CHARS",
+    "STYLE_ABOUT_ME_MAX_CHARS",
 )
 
 
@@ -38,6 +39,10 @@ class PromptParityTests(unittest.TestCase):
         for name in SHARED_LIMIT_CONSTANTS:
             with self.subTest(constant=name):
                 self.assertEqual(getattr(blink_once, name), getattr(gemini, name))
+
+    def test_style_knob_metadata_matches(self) -> None:
+        self.assertEqual(blink_once.STYLE_KNOB_ORDER, gemini.STYLE_KNOB_ORDER)
+        self.assertEqual(blink_once.STYLE_KNOB_INSTRUCTIONS, gemini.STYLE_KNOB_INSTRUCTIONS)
 
     def test_prompt_with_stateful_context_returns_input_when_empty(self) -> None:
         for stateful in (None, {}, {"voice_samples": [], "preference_examples": [], "recent_surface_history": []}):
@@ -80,6 +85,79 @@ class PromptParityTests(unittest.TestCase):
         self.assertEqual(
             blink_once.prompt_with_stateful_context("BASE PROMPT", fixture),
             gemini.prompt_with_stateful_context("BASE PROMPT", fixture),
+        )
+
+    def test_style_block_default_is_empty_and_does_not_alter_prompt(self) -> None:
+        default_style = {
+            "initiative": "balanced",
+            "tone": "balanced",
+            "length": "balanced",
+            "directness": "balanced",
+            "voice_mirror": "balanced",
+            "about_me": "",
+        }
+        self.assertEqual(blink_once.style_block(default_style), "")
+        self.assertEqual(gemini.style_block(default_style), "")
+        # Style with all defaults plus no other context must not append anything.
+        self.assertEqual(
+            blink_once.prompt_with_context("BASE PROMPT", None, None, default_style),
+            "BASE PROMPT",
+        )
+        self.assertEqual(
+            gemini.prompt_with_context("BASE PROMPT", None, None, default_style),
+            "BASE PROMPT",
+        )
+
+    def test_style_block_matches_for_populated_style(self) -> None:
+        style = {
+            "initiative": "agentic",
+            "tone": "balanced",
+            "length": "terse",
+            "directness": "direct",
+            "voice_mirror": "balanced",
+            "about_me": "I'm a backend engineer; prefer technical language.",
+        }
+        self.assertEqual(blink_once.style_block(style), gemini.style_block(style))
+        rendered = blink_once.prompt_with_context("BASE PROMPT", None, None, style)
+        self.assertEqual(
+            rendered,
+            gemini.prompt_with_context("BASE PROMPT", None, None, style),
+        )
+        self.assertIn("Style preferences:", rendered)
+        self.assertIn("Initiative: take the lead", rendered)
+        self.assertIn("Length: keep each suggestion", rendered)
+        self.assertIn("Directness: be direct", rendered)
+        self.assertIn("About the user: I'm a backend engineer", rendered)
+        # Balanced knobs must not emit instructions.
+        self.assertNotIn("Tone:", rendered)
+        self.assertNotIn("Voice mirror:", rendered)
+
+    def test_style_block_about_me_is_truncated(self) -> None:
+        long_text = "x" * (blink_once.STYLE_ABOUT_ME_MAX_CHARS + 50)
+        style = {"about_me": long_text}
+        rendered = blink_once.style_block(style)
+        self.assertIn("About the user: " + ("x" * blink_once.STYLE_ABOUT_ME_MAX_CHARS), rendered)
+        self.assertNotIn("x" * (blink_once.STYLE_ABOUT_ME_MAX_CHARS + 1), rendered)
+        self.assertEqual(rendered, gemini.style_block(style))
+
+    def test_style_block_combines_with_stateful_context(self) -> None:
+        style = {"initiative": "agentic", "about_me": "hi"}
+        stateful = {
+            "voice_samples": [{"text": "yo"}],
+            "preference_examples": [],
+            "recent_surface_history": [],
+        }
+        rendered = blink_once.prompt_with_context("BASE PROMPT", stateful, None, style)
+        self.assertEqual(
+            rendered,
+            gemini.prompt_with_context("BASE PROMPT", stateful, None, style),
+        )
+        self.assertIn("Style preferences:", rendered)
+        self.assertIn("Stateful Blink context:", rendered)
+        # Style block should appear before the stateful context block.
+        self.assertLess(
+            rendered.index("Style preferences:"),
+            rendered.index("Stateful Blink context:"),
         )
 
     def test_prompt_with_context_matches_for_reroll_fixture(self) -> None:

@@ -121,6 +121,7 @@ REDACTED_CONTENT_KEYS = {
     "chosen_text",
     "tldr",
     "previous_suggestions",
+    "about_me",
 }
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -398,6 +399,10 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope.get("reroll_context"),
         allow_content_retention=allow_content_retention,
     )
+    sanitized["style"] = _sanitize_content_payload(
+        envelope.get("style"),
+        allow_content_retention=allow_content_retention,
+    )
     return sanitized
 
 
@@ -446,6 +451,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "focused_context": _dict_or_none(payload.get("focused_context")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
+        "style": _dict_or_none(payload.get("style")),
         "consent": {
             "allow_event_logging": bool(consent_dict.get("allow_event_logging", True)),
             "allow_content_retention": bool(consent_dict.get("allow_content_retention", False)),
@@ -491,6 +497,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "focused_context": None,
         "stateful_context": None,
         "reroll_context": None,
+        "style": None,
         "consent": {
             "allow_event_logging": False,
             "allow_content_retention": False,
@@ -548,6 +555,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "focused_context": envelope.get("focused_context"),
         "stateful_context": envelope.get("stateful_context"),
         "reroll_context": envelope.get("reroll_context"),
+        "style": envelope.get("style"),
         "conversation_thread": envelope.get("conversation_thread"),
     }
     image_hash = _ordered_image_hash(image_bytes_list)
@@ -908,6 +916,7 @@ def _record_request(
                 "focused_context": envelope.get("focused_context") or {},
                 "stateful_context": envelope.get("stateful_context") or {},
                 "reroll_context": envelope.get("reroll_context") or {},
+                "style": envelope.get("style") or {},
                 "consent": envelope.get("consent") or {},
                 "requested_preferences": envelope.get("preferences") or {},
                 "model_used": settings.get("model"),
@@ -1129,6 +1138,7 @@ async def _run_tldr_request(
         _prompt_text(),
         model_envelope.get("stateful_context"),
         None if conversation_turns is not None else model_envelope.get("reroll_context"),
+        model_envelope.get("style"),
     )
     if stream:
         def stream_events() -> Any:

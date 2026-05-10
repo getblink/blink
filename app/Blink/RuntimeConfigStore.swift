@@ -1,6 +1,75 @@
 import Combine
 import Foundation
 
+enum StyleKnob: String, CaseIterable {
+    case incremental, balanced, agentic
+    case casual, formal
+    case terse, thorough
+    case diplomatic, direct
+    case neutral, mirror
+
+    static let initiativeOptions: [StyleKnob] = [.incremental, .balanced, .agentic]
+    static let toneOptions: [StyleKnob] = [.casual, .balanced, .formal]
+    static let lengthOptions: [StyleKnob] = [.terse, .balanced, .thorough]
+    static let directnessOptions: [StyleKnob] = [.diplomatic, .balanced, .direct]
+    static let voiceMirrorOptions: [StyleKnob] = [.neutral, .balanced, .mirror]
+}
+
+struct StylePrefs: Codable, Equatable {
+    var initiative: String
+    var tone: String
+    var length: String
+    var directness: String
+    var voiceMirror: String
+    var aboutMe: String
+
+    static let aboutMeMaxChars = 280
+
+    enum CodingKeys: String, CodingKey {
+        case initiative
+        case tone
+        case length
+        case directness
+        case voiceMirror = "voice_mirror"
+        case aboutMe = "about_me"
+    }
+
+    static let `default` = StylePrefs(
+        initiative: "balanced",
+        tone: "balanced",
+        length: "balanced",
+        directness: "balanced",
+        voiceMirror: "balanced",
+        aboutMe: ""
+    )
+
+    init(
+        initiative: String = "balanced",
+        tone: String = "balanced",
+        length: String = "balanced",
+        directness: String = "balanced",
+        voiceMirror: String = "balanced",
+        aboutMe: String = ""
+    ) {
+        self.initiative = initiative
+        self.tone = tone
+        self.length = length
+        self.directness = directness
+        self.voiceMirror = voiceMirror
+        self.aboutMe = aboutMe
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        initiative = try container.decodeIfPresent(String.self, forKey: .initiative) ?? "balanced"
+        tone = try container.decodeIfPresent(String.self, forKey: .tone) ?? "balanced"
+        length = try container.decodeIfPresent(String.self, forKey: .length) ?? "balanced"
+        directness = try container.decodeIfPresent(String.self, forKey: .directness) ?? "balanced"
+        voiceMirror = try container.decodeIfPresent(String.self, forKey: .voiceMirror) ?? "balanced"
+        aboutMe = try container.decodeIfPresent(String.self, forKey: .aboutMe) ?? ""
+    }
+}
+
 struct RuntimeConfigFile: Codable {
     let version: Int
     var autoPaste: Bool
@@ -13,6 +82,7 @@ struct RuntimeConfigFile: Codable {
     var lastNudgeAt: Date?
     var recentNudgeDismissals: [Date]
     var nudgeCooldownMinutes: Int
+    var style: StylePrefs
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -26,6 +96,7 @@ struct RuntimeConfigFile: Codable {
         case lastNudgeAt = "last_nudge_at"
         case recentNudgeDismissals = "recent_nudge_dismissals"
         case nudgeCooldownMinutes = "nudge_cooldown_minutes"
+        case style
     }
 
     init(
@@ -39,7 +110,8 @@ struct RuntimeConfigFile: Codable {
         nudgesEnabled: Bool,
         lastNudgeAt: Date?,
         recentNudgeDismissals: [Date],
-        nudgeCooldownMinutes: Int
+        nudgeCooldownMinutes: Int,
+        style: StylePrefs = .default
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -52,6 +124,7 @@ struct RuntimeConfigFile: Codable {
         self.lastNudgeAt = lastNudgeAt
         self.recentNudgeDismissals = recentNudgeDismissals
         self.nudgeCooldownMinutes = nudgeCooldownMinutes
+        self.style = style
     }
 
     init(from decoder: Decoder) throws {
@@ -69,6 +142,7 @@ struct RuntimeConfigFile: Codable {
         lastNudgeAt = try container.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
         recentNudgeDismissals = try container.decodeIfPresent([Date].self, forKey: .recentNudgeDismissals) ?? []
         nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
+        style = try container.decodeIfPresent(StylePrefs.self, forKey: .style) ?? .default
     }
 }
 
@@ -104,6 +178,9 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var nudgeCooldownMinutes: Int {
         didSet { save() }
     }
+    @Published var style: StylePrefs {
+        didSet { save() }
+    }
 
     private var isSaving = false
 
@@ -119,6 +196,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.lastNudgeAt = config.lastNudgeAt
         self.recentNudgeDismissals = config.recentNudgeDismissals
         self.nudgeCooldownMinutes = config.nudgeCooldownMinutes
+        self.style = config.style
     }
 
     var snapshot: RuntimeConfigFile {
@@ -133,7 +211,8 @@ final class RuntimeConfigStore: ObservableObject {
             nudgesEnabled: nudgesEnabled,
             lastNudgeAt: lastNudgeAt,
             recentNudgeDismissals: recentNudgeDismissals,
-            nudgeCooldownMinutes: nudgeCooldownMinutes
+            nudgeCooldownMinutes: nudgeCooldownMinutes,
+            style: style
         )
     }
 
@@ -154,7 +233,8 @@ final class RuntimeConfigStore: ObservableObject {
             nudgesEnabled: true,
             lastNudgeAt: nil,
             recentNudgeDismissals: [],
-            nudgeCooldownMinutes: 30
+            nudgeCooldownMinutes: 30,
+            style: .default
         )
         write(config)
         return config
