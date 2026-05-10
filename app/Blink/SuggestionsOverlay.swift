@@ -125,7 +125,7 @@ final class SuggestionsOverlay: NSObject {
         static let suggestionGap: CGFloat = 8
         static let summaryFontSize: CGFloat = 16
         static let suggestionFontSize: CGFloat = 16
-        static let tagFontSize: CGFloat = 11
+        static let tagFontSize: CGFloat = 12
         static let hintFontSize: CGFloat = 12
         static let summaryTopInset: CGFloat = 26
         static let summaryBottomInset: CGFloat = 18
@@ -140,13 +140,14 @@ final class SuggestionsOverlay: NSObject {
         static let cardPaddingX: CGFloat = 24
         static let suggestionCollapsedHeight: CGFloat = 98
         static let suggestionCollapsedHeightWithoutTags: CGFloat = 76
+        static let suggestionCornerRadius: CGFloat = 22
         static let customInputHeight: CGFloat = 62
         static let suggestionNumberX: CGFloat = 20
         static let suggestionNumberWidth: CGFloat = 28
         static let suggestionNumberHeight: CGFloat = 24
         static let suggestionTextX: CGFloat = 68
         static let suggestionCollapsedTextHeight: CGFloat = 42
-        static let suggestionTagHeight: CGFloat = 16
+        static let suggestionTagHeight: CGFloat = 17
         static let suggestionTagGap: CGFloat = 4
         static let suggestionLineSpacing: CGFloat = 5
         static let suggestionBottomPaddingExpanded: CGFloat = 28
@@ -156,9 +157,18 @@ final class SuggestionsOverlay: NSObject {
         static let enterHintBottomInset: CGFloat = 4
         static let animationDuration: TimeInterval = 0.22
         static let momentDuration: TimeInterval = 0.34
+        static let tagAlpha: CGFloat = 0.95
 
         static var suggestionPaddingY: CGFloat {
             (suggestionCollapsedHeight - suggestionCollapsedTextHeight) / 2
+        }
+
+        static func suggestionNumberY(for cardHeight: CGFloat) -> CGFloat {
+            (cardHeight - suggestionNumberHeight) / 2
+        }
+
+        static func optionCornerRadius(for height: CGFloat) -> CGFloat {
+            min(suggestionCornerRadius, height / 2)
         }
     }
 
@@ -1089,15 +1099,7 @@ final class SuggestionsOverlay: NSObject {
                     )
                     labelY = Layout.suggestionBottomPaddingExpanded
                     card.tagLabel.alphaValue = 0
-                    // Align the number's vertical center with the FIRST
-                    // LINE's visual center, not the cell top — multi-line
-                    // labels render the first line at the top of the cell
-                    // with the font's natural leading, so aligning the
-                    // number's top with the cell top makes the number sit
-                    // ~half-a-line lower than the first line.
-                    let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
-                    let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
-                    numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
+                    numberY = Layout.suggestionNumberY(for: collapsedHeight)
                 } else {
                     setLabelText(
                         card.label,
@@ -1115,15 +1117,15 @@ final class SuggestionsOverlay: NSObject {
                     } else {
                         labelY = (collapsedHeight - labelHeight) / 2
                     }
-                    numberY = (collapsedHeight - Layout.suggestionNumberHeight) / 2
-                    card.tagLabel.alphaValue = card.hasTags ? 1 : 0
+                    numberY = Layout.suggestionNumberY(for: collapsedHeight)
+                    card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 }
 
                 card.tint.alphaValue = isSelected ? 1 : 0
                 card.enterHint.alphaValue = isSelected ? 1 : 0
-                let pillCorner = collapsedHeight / 2
-                setCornerRadius(card.outer, pillCorner)
-                card.tint.layer?.cornerRadius = pillCorner
+                let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
+                setCornerRadius(card.outer, optionCorner)
+                card.tint.layer?.cornerRadius = optionCorner
                 card.outer.animator().frame = targetFrame
                 card.number.animator().frame = NSRect(
                     x: Layout.suggestionNumberX,
@@ -1195,13 +1197,16 @@ final class SuggestionsOverlay: NSObject {
                     singleLine: false
                 )
                 card.tint.alphaValue = 0
-                card.tagLabel.alphaValue = card.hasTags ? 1 : 0
+                card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 card.enterHint.alphaValue = 0
                 let collapsedHeight = card.collapsedFrame.height
+                let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
+                setCornerRadius(card.outer, optionCorner)
+                card.tint.layer?.cornerRadius = optionCorner
                 card.outer.animator().frame = card.collapsedFrame
                 card.number.animator().frame = NSRect(
                     x: Layout.suggestionNumberX,
-                    y: (collapsedHeight - Layout.suggestionNumberHeight) / 2,
+                    y: Layout.suggestionNumberY(for: collapsedHeight),
                     width: Layout.suggestionNumberWidth,
                     height: Layout.suggestionNumberHeight
                 )
@@ -1556,7 +1561,7 @@ final class SuggestionsOverlay: NSObject {
         tagLabel: NSTextField,
         enterHint: NSTextField
     ) {
-        let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
+        let pane = makeGlassPane(frame: frame, cornerRadius: Layout.optionCornerRadius(for: frame.height))
         let clickTarget = SuggestionCardClickTarget(index: index - 1) { [weak self] index in
             self?.onChoiceKey?(index)
         }
@@ -1569,7 +1574,7 @@ final class SuggestionsOverlay: NSObject {
 
         let tint = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: frame.height))
         tint.wantsLayer = true
-        tint.layer?.cornerRadius = frame.height / 2
+        tint.layer?.cornerRadius = Layout.optionCornerRadius(for: frame.height)
         tint.layer?.masksToBounds = true
         tint.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.22).cgColor
         tint.autoresizingMask = [.width, .height]
@@ -1579,7 +1584,7 @@ final class SuggestionsOverlay: NSObject {
         let number = label(
             frame: NSRect(
                 x: Layout.suggestionNumberX,
-                y: (frame.height - Layout.suggestionNumberHeight) / 2,
+                y: Layout.suggestionNumberY(for: frame.height),
                 width: Layout.suggestionNumberWidth,
                 height: Layout.suggestionNumberHeight
             ),
@@ -1623,10 +1628,10 @@ final class SuggestionsOverlay: NSObject {
             ),
             text: tagText,
             font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold),
-            color: .tertiaryLabelColor,
+            color: .secondaryLabelColor,
             singleLine: true
         )
-        tagLabel.alphaValue = hasTags ? 1 : 0
+        tagLabel.alphaValue = hasTags ? Layout.tagAlpha : 0
         tagLabel.isHidden = !hasTags
         pane.content.addSubview(tagLabel)
 
