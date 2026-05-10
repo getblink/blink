@@ -17,6 +17,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
+REROLL_CONTENT_TEXT = (
+    "The user pressed reroll for the same capture. Continue from the prior "
+    "model response and produce a fresh set of three materially different "
+    "suggestions. Keep the same JSON schema."
+)
 PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
@@ -518,6 +523,103 @@ def _image_contents(types: Any, images: list[tuple[bytes, str]] | None, image_by
     ]
 
 
+def _text_part(types: Any, text: str) -> Any:
+    return types.Part.from_text(text=text)
+
+
+def _model_turn_text(turn: dict[str, Any]) -> str | None:
+    tldr = str(turn.get("tldr") or "").strip()
+    suggestions = turn.get("suggestion_details")
+    if not isinstance(suggestions, list):
+        suggestions = [
+            {"text": str(item or "").strip(), "tags": []}
+            for item in turn.get("suggestions") or []
+            if str(item or "").strip()
+        ]
+    normalized = []
+    for item in suggestions:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        raw_tags = item.get("tags")
+        tags = [
+            str(tag).strip()
+            for tag in raw_tags
+            if str(tag).strip()
+        ][:SUGGESTION_TAG_LIMIT] if isinstance(raw_tags, list) else []
+        normalized.append({"text": text, "tags": tags})
+        if len(normalized) >= 3:
+            break
+    if not tldr and not normalized:
+        return None
+    return json.dumps(
+        {
+            "schema_version": RESPONSE_SCHEMA_VERSION,
+            "tldr": tldr,
+            "suggestions": normalized,
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+
+
+def _conversation_contents(
+    types: Any,
+    images: list[tuple[bytes, str]] | None,
+    image_bytes: bytes | None,
+    mime_type: str,
+    conversation_turns: list[dict[str, Any]] | None,
+) -> list[Any]:
+    image_parts = _image_contents(types, images, image_bytes, mime_type)
+    if not image_parts:
+        return []
+    if not conversation_turns:
+        return image_parts + [MODEL_CONTENT_TEXT]
+
+    contents: list[Any] = []
+    used_capture_images = False
+
+    def append_content(role: str, parts: list[Any]) -> None:
+        if not parts:
+            return
+        if contents and getattr(contents[-1], "role", None) == role:
+            contents[-1].parts.extend(parts)
+            return
+        contents.append(types.Content(role=role, parts=parts))
+
+    for turn in conversation_turns:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or "").strip()
+        if role == "user":
+            kind = str(turn.get("kind") or "").strip()
+            if kind == "capture" and not used_capture_images:
+                append_content(
+                    "user",
+                    image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+                )
+                used_capture_images = True
+                continue
+            text = str(turn.get("text") or REROLL_CONTENT_TEXT).strip()
+            append_content("user", [_text_part(types, text)])
+        elif role == "model":
+            text = _model_turn_text(turn)
+            if text:
+                append_content("model", [_text_part(types, text)])
+
+    if not used_capture_images:
+        contents.insert(
+            0,
+            types.Content(
+                role="user",
+                parts=image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+            ),
+        )
+    return contents
+
+
 def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> Any:
     model = settings.get("model", "")
     max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
@@ -546,10 +648,11 @@ def generate_tldr_and_suggestions(
     images: list[tuple[bytes, str]] | None = None,
     image_bytes: bytes | None = None,
     mime_type: str = "image/png",
+    conversation_turns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     from google.genai import types
 
-    contents = _image_contents(types, images, image_bytes, mime_type)
+    contents = _conversation_contents(types, images, image_bytes, mime_type, conversation_turns)
     if not contents:
         raise ValueError("No screenshot was provided.")
 
@@ -613,10 +716,11 @@ def generate_tldr_and_suggestions_streaming(
     images: list[tuple[bytes, str]] | None = None,
     image_bytes: bytes | None = None,
     mime_type: str = "image/png",
+    conversation_turns: list[dict[str, Any]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     from google.genai import types
 
-    contents = _image_contents(types, images, image_bytes, mime_type)
+    contents = _conversation_contents(types, images, image_bytes, mime_type, conversation_turns)
     if not contents:
         raise ValueError("No screenshot was provided.")
 

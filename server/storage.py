@@ -265,6 +265,17 @@ class TelemetryStore:
         request_id: str,
         token_id: str,
     ) -> list[dict[str, Any]] | None:
+        response = self.get_previous_response(request_id, token_id)
+        if response is None:
+            return None
+        details = response.get("suggestion_details")
+        return details if isinstance(details, list) else None
+
+    def get_previous_response(
+        self,
+        request_id: str,
+        token_id: str,
+    ) -> dict[str, Any] | None:
         if not self.enabled or self.database_url is None:
             return None
         self._ensure_schema()
@@ -284,7 +295,7 @@ class TelemetryStore:
                 row = cur.fetchone()
         if row is None:
             return None
-        _, suggestions, _ = row
+        summary, suggestions, _ = row
         if not isinstance(suggestions, list):
             return None
         normalized: list[dict[str, Any]] = []
@@ -304,7 +315,13 @@ class TelemetryStore:
                 normalized.append({"text": text, "tags": tags})
             if len(normalized) >= 3:
                 break
-        return normalized or None
+        if not normalized:
+            return None
+        return {
+            "tldr": str(summary or ""),
+            "suggestions": [item["text"] for item in normalized],
+            "suggestion_details": normalized,
+        }
 
     def record_event(self, *, token_id: str, event_type: str, payload: dict[str, Any]) -> bool:
         if not self.enabled or self.database_url is None:

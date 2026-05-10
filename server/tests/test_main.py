@@ -14,6 +14,40 @@ from server.main import _selected_settings, app
 from server.storage import TelemetryStore
 
 
+class FakeThreadCache:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.threads: dict[tuple[str, str], dict[str, Any]] = {}
+        self.aliases: dict[tuple[str, str], str] = {}
+        self.set_thread_calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def get_thread(self, *, token_id: str, root_request_id: str) -> dict[str, Any] | None:
+        return self.threads.get((token_id, root_request_id)) or self.threads.get(("*", root_request_id))
+
+    def set_thread(
+        self,
+        *,
+        token_id: str,
+        root_request_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.threads[(token_id, root_request_id)] = payload
+        self.set_thread_calls.append((token_id, root_request_id, payload))
+
+    def resolve_root(self, *, token_id: str, request_id: str) -> str | None:
+        return self.aliases.get((token_id, request_id)) or self.aliases.get(("*", request_id))
+
+    def set_root_alias(
+        self,
+        *,
+        token_id: str,
+        request_id: str,
+        root_request_id: str,
+    ) -> None:
+        self.aliases[(token_id, request_id)] = root_request_id
+
+
 class MainTests(unittest.TestCase):
     def setUp(self) -> None:
         self.env = mock.patch.dict(
@@ -117,6 +151,107 @@ class MainTests(unittest.TestCase):
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_success_creates_redis_thread(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're in Messages.",
+            "suggestions": ["One", "Two", "Three"],
+            "suggestion_details": [
+                {"text": "One", "tags": ["Reply"]},
+                {"text": "Two", "tags": ["Ask"]},
+                {"text": "Three", "tags": ["Next"]},
+            ],
+            "duration_ms": 111,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+        thread_cache = FakeThreadCache()
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._thread_cache", return_value=thread_cache), mock.patch(
+            "server.main._telemetry_store",
+            return_value=telemetry_store,
+        ):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-thread",
+                            "schema_version": 1,
+                            "capture_mode": "frontmost_window",
+                            "input_mode": "screenshot",
+                            "consent": {"allow_content_retention": False},
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(thread_cache.set_thread_calls), 1)
+        token_id, root_id, thread = thread_cache.set_thread_calls[0]
+        self.assertTrue(token_id)
+        self.assertEqual(root_id, "req-thread")
+        self.assertEqual(thread["root_request_id"], "req-thread")
+        self.assertEqual(thread["latest_request_id"], "req-thread")
+        self.assertEqual(
+            [turn["role"] for turn in thread["turns"]],
+            ["user", "model"],
+        )
+        self.assertEqual(thread["turns"][0]["image_count"], 1)
+        self.assertEqual(thread_cache.aliases[(token_id, "req-thread")], "req-thread")
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_thread_cache_never_stores_screenshot_bytes(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        generate.return_value = {
+            "status": "ok",
+            "tldr": "You're in Messages.",
+            "suggestions": ["One", "Two", "Three"],
+            "duration_ms": 111,
+            "usage": None,
+            "model": "gemini-3.1-flash-lite-preview",
+        }
+        thread_cache = FakeThreadCache()
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._thread_cache", return_value=thread_cache), mock.patch(
+            "server.main._telemetry_store",
+            return_value=telemetry_store,
+        ):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-thread-private",
+                            "input_mode": "screenshot",
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"raw-private-screenshot-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        stored = json.dumps(thread_cache.set_thread_calls[0][2], ensure_ascii=True)
+        self.assertNotIn("raw-private-screenshot-bytes", stored)
+        self.assertIn("screenshot_sha256", stored)
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
     def test_v1_tldr_reroll_hydrates_previous_suggestions_from_store(
         self,
         create_client: mock.Mock,
@@ -127,8 +262,11 @@ class MainTests(unittest.TestCase):
 
         def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
             prompt_text = kwargs["prompt_text"]
-            self.assertIn("Reroll instructions:", prompt_text)
-            self.assertIn("Please send the doc.", prompt_text)
+            self.assertNotIn("Reroll instructions:", prompt_text)
+            turns = kwargs["conversation_turns"]
+            self.assertEqual([turn["role"] for turn in turns], ["user", "model", "user"])
+            self.assertEqual(turns[1]["suggestions"], ["Please send the doc.", "I'll take a look."])
+            self.assertIn("fresh set", turns[2]["text"])
             self.assertNotIn("Stateful Blink context:", prompt_text)
             return {
                 "status": "ok",
@@ -146,12 +284,20 @@ class MainTests(unittest.TestCase):
 
         generate.side_effect = fake_generate
         telemetry_store = mock.Mock()
-        telemetry_store.get_previous_suggestions.return_value = [
-            {"text": "Please send the doc.", "tags": ["Ask"]},
-            {"text": "I'll take a look.", "tags": ["Reply"]},
-        ]
+        telemetry_store.get_previous_response.return_value = {
+            "tldr": "Sarah asked for a doc.",
+            "suggestions": ["Please send the doc.", "I'll take a look."],
+            "suggestion_details": [
+                {"text": "Please send the doc.", "tags": ["Ask"]},
+                {"text": "I'll take a look.", "tags": ["Reply"]},
+            ],
+        }
 
-        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+        thread_cache = FakeThreadCache()
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store), mock.patch(
+            "server.main._thread_cache",
+            return_value=thread_cache,
+        ):
             response = self.client.post(
                 "/v1/tldr",
                 headers={"Authorization": "Bearer dev-token"},
@@ -177,9 +323,10 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("reroll_thread_cache_miss", response.json()["warnings"])
         self.assertIn("reroll_context_hydrated", response.json()["warnings"])
-        telemetry_store.get_previous_suggestions.assert_called_once()
-        lookup_args = telemetry_store.get_previous_suggestions.call_args.args
+        telemetry_store.get_previous_response.assert_called_once()
+        lookup_args = telemetry_store.get_previous_response.call_args.args
         self.assertEqual(lookup_args[0], source_id)
         self.assertIsInstance(lookup_args[1], str)
         self.assertTrue(lookup_args[1])
@@ -195,6 +342,114 @@ class MainTests(unittest.TestCase):
                 {"text": "Two", "tags": ["Ask"]},
                 {"text": "Three", "tags": ["Next"]},
             ],
+        )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_reroll_with_redis_thread_sends_conversation_turns(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        root_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        source_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        current_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        thread_cache = FakeThreadCache()
+        thread_cache.aliases[("*", source_id)] = root_id
+        thread_cache.threads[("*", root_id)] = {
+            "schema_version": 1,
+            "root_request_id": root_id,
+            "latest_request_id": source_id,
+            "created_at": "2026-05-10T00:00:00Z",
+            "updated_at": "2026-05-10T00:01:00Z",
+            "turns": [
+                {"role": "user", "kind": "capture", "request_id": root_id, "image_count": 1},
+                {
+                    "role": "model",
+                    "kind": "response",
+                    "request_id": root_id,
+                    "tldr": "Sarah needs a reply.",
+                    "suggestions": ["Original one", "Original two", "Original three"],
+                    "suggestion_details": [
+                        {"text": "Original one", "tags": ["Reply"]},
+                        {"text": "Original two", "tags": ["Ask"]},
+                        {"text": "Original three", "tags": ["Next"]},
+                    ],
+                },
+                {"role": "user", "kind": "reroll", "request_id": source_id, "text": "reroll"},
+                {
+                    "role": "model",
+                    "kind": "response",
+                    "request_id": source_id,
+                    "tldr": "Sarah still needs a reply.",
+                    "suggestions": ["Prior one", "Prior two", "Prior three"],
+                    "suggestion_details": [
+                        {"text": "Prior one", "tags": ["Reply"]},
+                        {"text": "Prior two", "tags": ["Ask"]},
+                        {"text": "Prior three", "tags": ["Next"]},
+                    ],
+                },
+            ],
+        }
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertNotIn("Reroll instructions:", kwargs["prompt_text"])
+            turns = kwargs["conversation_turns"]
+            self.assertEqual(
+                [turn["role"] for turn in turns],
+                ["user", "model", "user", "model", "user"],
+            )
+            self.assertEqual(turns[-1]["request_id"], current_id)
+            self.assertIn("fresh set", turns[-1]["text"])
+            return {
+                "status": "ok",
+                "tldr": "Sarah needs a new reply.",
+                "suggestions": ["New one", "New two", "New three"],
+                "suggestion_details": [
+                    {"text": "New one", "tags": ["Reply"]},
+                    {"text": "New two", "tags": ["Ask"]},
+                    {"text": "New three", "tags": ["Next"]},
+                ],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+
+        with mock.patch("server.main._thread_cache", return_value=thread_cache), mock.patch(
+            "server.main._telemetry_store",
+            return_value=telemetry_store,
+        ):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": current_id,
+                            "input_mode": "screenshot",
+                            "reroll_context": {
+                                "schema_version": 1,
+                                "source_request_id": source_id,
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("reroll_thread_cache_hit", response.json()["warnings"])
+        telemetry_store.get_previous_response.assert_not_called()
+        _, stored_root, stored_thread = thread_cache.set_thread_calls[-1]
+        self.assertEqual(stored_root, root_id)
+        self.assertEqual(stored_thread["latest_request_id"], current_id)
+        self.assertEqual(
+            [turn["role"] for turn in stored_thread["turns"]],
+            ["user", "model", "user", "model", "user", "model"],
         )
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
@@ -220,7 +475,7 @@ class MainTests(unittest.TestCase):
 
         generate.side_effect = fake_generate
         telemetry_store = mock.Mock()
-        telemetry_store.get_previous_suggestions.return_value = None
+        telemetry_store.get_previous_response.return_value = None
 
         with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
             response = self.client.post(
@@ -276,7 +531,7 @@ class MainTests(unittest.TestCase):
 
         generate.side_effect = fake_generate
         telemetry_store = mock.Mock()
-        telemetry_store.get_previous_suggestions.return_value = None
+        telemetry_store.get_previous_response.return_value = None
 
         with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
             response = self.client.post(
@@ -299,8 +554,8 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("reroll_context_missing_previous", response.json()["warnings"])
-        telemetry_store.get_previous_suggestions.assert_called_once()
-        lookup_args = telemetry_store.get_previous_suggestions.call_args.args
+        telemetry_store.get_previous_response.assert_called_once()
+        lookup_args = telemetry_store.get_previous_response.call_args.args
         self.assertEqual(lookup_args[0], source_id)
         self.assertIsInstance(lookup_args[1], str)
         self.assertTrue(lookup_args[1])
@@ -510,6 +765,51 @@ class MainTests(unittest.TestCase):
                 {"text": "Three", "tags": ["Next step"]},
             ],
         )
+
+    def test_gemini_conversation_contents_render_alternating_roles(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [
+                        {"text": "One", "tags": ["Reply"]},
+                        {"text": "Two", "tags": ["Ask"]},
+                        {"text": "Three", "tags": ["Next"]},
+                    ],
+                },
+                {"role": "user", "kind": "reroll", "text": "fresh please"},
+            ],
+        )
+
+        self.assertEqual([item.role for item in contents], ["user", "model", "user"])
+        self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
+        self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
+        self.assertIn("suggestions", contents[1].parts[0]["text"])
+        self.assertEqual(contents[2].parts, [{"text": "fresh please"}])
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
