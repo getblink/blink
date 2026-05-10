@@ -38,7 +38,6 @@ body {
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -165,19 +164,26 @@ html.pending-pointer .shell--animate-in {
   }
 
   .shell--fixed {
-    grid-template-rows: 44px auto 44px;
-    height: auto;
-    min-height: 100vh;
-    min-height: 100svh;
+    grid-template-rows: 44px minmax(0, 1fr) 44px;
+    height: 100vh;
+    height: 100svh;
+    min-height: 0;
   }
 
   .meta {
     grid-template-columns: 1fr 1fr;
   }
 
+  /* Hide "landing / 01" (cell 2) and "read the story" (cell 4 — moved
+     under the join CTA on mobile). Keep cell 3 ("macOS · beta") so the
+     header preserves the desktop's grid texture. */
   .meta .cell:nth-child(2),
-  .meta .cell:nth-child(3) {
+  .meta .cell:nth-child(4) {
     display: none;
+  }
+
+  .meta .cell:nth-child(3) {
+    justify-content: flex-end;
   }
 }
 
