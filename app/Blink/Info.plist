@@ -35,7 +35,7 @@
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://downloads.useblink.dev/blink/appcast.xml</string>
+	<string>https://dl.useblink.dev/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY</string>
 	<key>SUScheduledCheckInterval</key>

@@ -57,6 +57,31 @@ if [[ "$UPLOAD" != "0" ]]; then
         echo "[blink] error: set BLINK_R2_ENDPOINT, BLINK_R2_ACCESS_KEY_ID, and BLINK_R2_SECRET_ACCESS_KEY (S3-compatible R2 token credentials), or BLINK_RELEASE_UPLOAD=0" >&2
         exit 1
     fi
+    # Drift guard: SUFeedURL stamped into the binary (BLINK_SPARKLE_FEED_URL,
+    # baked at build.sh:88-90) must match where this script will upload the
+    # appcast. If they ever diverge, every install built with the old feed URL
+    # is permanently quarantined from updates — its Sparkle poll hits a 404
+    # and there's no in-band way to recover. Caught the 0.2.0 → 0.2.1 incident
+    # where the stamped URL was /blink/appcast.xml but the upload key was
+    # appcast.xml at the root.
+    if [[ -z "${BLINK_SPARKLE_FEED_URL:-}" ]]; then
+        echo "[blink] error: BLINK_SPARKLE_FEED_URL must be set so SUFeedURL gets stamped into the build (or set BLINK_RELEASE_UPLOAD=0 for a local dry run)" >&2
+        exit 1
+    fi
+    # Normalize: tolerate trailing slash on R2_DOMAIN and leading slash on
+    # APPCAST_REMOTE_KEY so config-time typos don't masquerade as drift.
+    # BLINK_SPARKLE_FEED_URL itself is exact-string-matched: Sparkle stamps
+    # whatever string we give it into Info.plist verbatim, and any difference
+    # (query string, case, fragment) means installed apps poll a different URL.
+    EXPECTED_FEED_URL="https://${R2_DOMAIN%/}/${APPCAST_REMOTE_KEY#/}"
+    if [[ "$BLINK_SPARKLE_FEED_URL" != "$EXPECTED_FEED_URL" ]]; then
+        echo "[blink] error: appcast URL drift detected — installed apps would poll a path this release does not publish to." >&2
+        echo "[blink]   binary will be stamped with: $BLINK_SPARKLE_FEED_URL" >&2
+        echo "[blink]   appcast will be uploaded to: $EXPECTED_FEED_URL" >&2
+        echo "[blink] Either correct BLINK_SPARKLE_FEED_URL or set BLINK_R2_APPCAST_KEY so its path matches." >&2
+        echo "[blink] (Note: BLINK_R2_PUBLIC_DOMAIN must be the host users actually fetch from, not an internal R2 hostname.)" >&2
+        exit 1
+    fi
 fi
 
 bash "$SCRIPT_DIR/fetch_python.sh"

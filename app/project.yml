@@ -47,10 +47,16 @@ targets:
         CFBundleDisplayName: Blink
         CFBundleIdentifier: com.henryz2004.blink
         CFBundleShortVersionString: "0.2.1"
-        CFBundleVersion: "2"
+        # Build-time placeholder. Auto-stamped by app/scripts/build.sh from
+        # `git rev-list --count HEAD` (or BLINK_BUILD_NUMBER); editing this
+        # value has no effect on shipped builds.
+        CFBundleVersion: "1"
         CFBundleExecutable: Blink
         LSMinimumSystemVersion: "14.0"
-        SUFeedURL: "https://downloads.useblink.dev/blink/appcast.xml"
+        # Build-time placeholder. release.sh asserts BLINK_SPARKLE_FEED_URL
+        # matches the actual upload destination; this default is only used
+        # for local dry runs that skip upload.
+        SUFeedURL: "https://dl.useblink.dev/appcast.xml"
         SUPublicEDKey: "REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY"
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
