@@ -145,6 +145,7 @@ final class SuggestionsOverlay: NSObject {
         static let suggestionCornerRadius: CGFloat = 22
         static let customInputHeight: CGFloat = 62
         static let customInputTextHeight: CGFloat = 24
+        static let suggestionSingleLineTextHeight: CGFloat = 24
         static let suggestionNumberX: CGFloat = 20
         static let suggestionNumberWidth: CGFloat = 28
         static let suggestionNumberHeight: CGFloat = 24
@@ -192,6 +193,8 @@ final class SuggestionsOverlay: NSObject {
         let fullText: String
         let expandedHeight: CGFloat
         let hasTags: Bool
+        let collapsedLabelHeight: CGFloat
+        let collapsedSingleLine: Bool
     }
 
     private var panel: SuggestionsPanel?
@@ -249,13 +252,23 @@ final class SuggestionsOverlay: NSObject {
 
     private func collapsedHeight(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> CGFloat {
         let hasTags = !renderTags(detail.tags).isEmpty
-        let measuredTextHeight = measureHeight(detail.text, width: width, font: font, lineSpacing: 2)
-        let singleLineHeight = ceil(font.ascender - font.descender + font.leading) + 6
-        let isSingleLine = measuredTextHeight <= singleLineHeight
+        let isSingleLine = collapsedTextIsSingleLine(for: detail, width: width, font: font)
         if hasTags {
             return isSingleLine ? Layout.suggestionSingleLineHeightWithTags : Layout.suggestionCollapsedHeight
         }
         return isSingleLine ? Layout.suggestionSingleLineHeight : Layout.suggestionCollapsedHeightWithoutTags
+    }
+
+    private func collapsedTextHeight(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> CGFloat {
+        collapsedTextIsSingleLine(for: detail, width: width, font: font)
+            ? Layout.suggestionSingleLineTextHeight
+            : Layout.suggestionCollapsedTextHeight
+    }
+
+    private func collapsedTextIsSingleLine(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> Bool {
+        let measuredTextHeight = measureHeight(detail.text, width: width, font: font, lineSpacing: 2)
+        let singleLineHeight = ceil(font.ascender - font.descender + font.leading) + 6
+        return measuredTextHeight <= singleLineHeight
     }
 
     func show(tldr: String, suggestions: [String]) {
@@ -550,7 +563,9 @@ final class SuggestionsOverlay: NSObject {
                 collapsedText: detail.text,
                 fullText: detail.text,
                 expandedHeight: expandedHeights[offset],
-                hasTags: !renderTags(detail.tags).isEmpty
+                hasTags: !renderTags(detail.tags).isEmpty,
+                collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -906,7 +921,9 @@ final class SuggestionsOverlay: NSObject {
                 collapsedText: detail.text,
                 fullText: detail.text,
                 expandedHeight: expandedHeights[offset],
-                hasTags: !renderTags(detail.tags).isEmpty
+                hasTags: !renderTags(detail.tags).isEmpty,
+                collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -1104,6 +1121,8 @@ final class SuggestionsOverlay: NSObject {
                         lineSpacing: Layout.suggestionLineSpacing,
                         singleLine: false
                     )
+                    card.label.maximumNumberOfLines = 0
+                    card.label.cell?.wraps = true
                     labelHeight = measureHeight(
                         card.fullText,
                         width: textWidth,
@@ -1122,10 +1141,12 @@ final class SuggestionsOverlay: NSObject {
                         text: card.collapsedText,
                         font: suggestionFont,
                         color: .labelColor,
-                        lineSpacing: 2,
-                        singleLine: false
+                        lineSpacing: card.collapsedSingleLine ? 0 : 2,
+                        singleLine: card.collapsedSingleLine
                     )
-                    labelHeight = Layout.suggestionCollapsedTextHeight
+                    card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
+                    card.label.cell?.wraps = !card.collapsedSingleLine
+                    labelHeight = card.collapsedLabelHeight
                     if card.hasTags {
                         labelY = (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
                             + Layout.suggestionTagHeight
@@ -1219,9 +1240,11 @@ final class SuggestionsOverlay: NSObject {
                     text: card.collapsedText,
                     font: suggestionFont,
                     color: .labelColor,
-                    lineSpacing: 2,
-                    singleLine: false
+                    lineSpacing: card.collapsedSingleLine ? 0 : 2,
+                    singleLine: card.collapsedSingleLine
                 )
+                card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
+                card.label.cell?.wraps = !card.collapsedSingleLine
                 card.tint.alphaValue = 0
                 card.tagIcon.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
@@ -1237,19 +1260,20 @@ final class SuggestionsOverlay: NSObject {
                     width: Layout.suggestionNumberWidth,
                     height: Layout.suggestionNumberHeight
                 )
+                let labelHeight = card.collapsedLabelHeight
                 let labelY = card.hasTags
-                    ? (collapsedHeight - Layout.suggestionCollapsedTextHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                    ? (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
                         + Layout.suggestionTagHeight
                         + Layout.suggestionTagGap
-                    : (collapsedHeight - Layout.suggestionCollapsedTextHeight) / 2
+                    : (collapsedHeight - labelHeight) / 2
                 card.label.animator().frame = NSRect(
                     x: Layout.suggestionTextX,
                     y: labelY,
                     width: textWidth,
-                    height: Layout.suggestionCollapsedTextHeight
+                    height: labelHeight
                 )
                 let tagY = card.hasTags
-                    ? (collapsedHeight - Layout.suggestionCollapsedTextHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                    ? (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
                     : labelY
                 card.tagIcon.animator().frame = NSRect(
                     x: Layout.suggestionTextX,
@@ -1636,24 +1660,27 @@ final class SuggestionsOverlay: NSObject {
         let tagText = renderTags(renderedTags)
         let hasTags = !renderedTags.isEmpty
         let primaryTagColor = tagColor(for: renderedTags.first)
+        let collapsedLabelHeight = collapsedTextHeight(for: detail, width: textWidth, font: font)
+        let collapsedSingleLine = collapsedTextIsSingleLine(for: detail, width: textWidth, font: font)
         let textBlockY = hasTags
-            ? (frame.height - Layout.suggestionCollapsedTextHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
-            : (frame.height - Layout.suggestionCollapsedTextHeight) / 2
+            ? (frame.height - collapsedLabelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+            : (frame.height - collapsedLabelHeight) / 2
         let suggestionLabel = label(
             frame: NSRect(
                 x: Layout.suggestionTextX,
                 y: hasTags ? textBlockY + Layout.suggestionTagHeight + Layout.suggestionTagGap : textBlockY,
                 width: textWidth,
-                height: Layout.suggestionCollapsedTextHeight
+                height: collapsedLabelHeight
             ),
             text: detail.text,
             font: font,
             color: .labelColor,
-            lineSpacing: 2
+            lineSpacing: collapsedSingleLine ? 0 : 2,
+            singleLine: collapsedSingleLine
         )
-        suggestionLabel.maximumNumberOfLines = 2
+        suggestionLabel.maximumNumberOfLines = collapsedSingleLine ? 1 : 2
         suggestionLabel.lineBreakMode = .byTruncatingTail
-        suggestionLabel.cell?.wraps = true
+        suggestionLabel.cell?.wraps = !collapsedSingleLine
         pane.content.addSubview(suggestionLabel)
 
         let tagIcon = makeTagIcon(frame: NSRect(
