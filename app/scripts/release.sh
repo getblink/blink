@@ -164,6 +164,16 @@ if [[ "$UPLOAD" != "0" ]]; then
         --endpoint-url "$R2_ENDPOINT" \
         --content-type application/x-apple-diskimage \
         --cache-control 'public, max-age=60, must-revalidate'
+    # Stable alias at latest/Blink.dmg for human-facing download links and
+    # structured-data offer URLs that don't want to drift on each release.
+    # Sparkle still uses the versioned URL via the appcast — this is purely
+    # a convenience handle. Same short Cache-Control + must-revalidate so a
+    # new release is visible within ~60s.
+    LATEST_DMG_KEY="${BLINK_R2_LATEST_DMG_KEY:-latest/Blink.dmg}"
+    aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$LATEST_DMG_KEY" \
+        --endpoint-url "$R2_ENDPOINT" \
+        --content-type application/x-apple-diskimage \
+        --cache-control 'public, max-age=60, must-revalidate'
     # Short Cache-Control so a fresh release is visible to Sparkle within 60s
     # instead of being pinned to Cloudflare's default edge TTL for XML.
     aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
@@ -171,6 +181,7 @@ if [[ "$UPLOAD" != "0" ]]; then
         --content-type 'application/xml; charset=utf-8' \
         --cache-control 'public, max-age=60, must-revalidate'
     echo "[blink] release uploaded: $DMG_URL"
+    echo "[blink] latest alias: https://$R2_DOMAIN/$LATEST_DMG_KEY"
     echo "[blink] appcast: https://$R2_DOMAIN/$APPCAST_REMOTE_KEY"
 else
     echo "[blink] upload skipped by BLINK_RELEASE_UPLOAD=0"
