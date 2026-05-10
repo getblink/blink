@@ -25,11 +25,28 @@ blink_apply_legacy_env_aliases
 
 export BLINK_DEVELOPMENT_TEAM="${BLINK_DEVELOPMENT_TEAM:-${BLINK_TEAM_ID:-}}"
 
+# Use a real Developer ID identity for local builds when one is available, so
+# the bundle's designated requirement is anchored to the cert (stable across
+# rebuilds) instead of the cdhash (changes every build). Stable attribution is
+# what lets TCC's Screen Recording entry persist across reinstalls — under
+# ad-hoc signing on Tahoe, every rebuild looks like a different app to TCC and
+# the System Settings entry never reliably lands. Falls back to ad-hoc when no
+# identity is configured (CI, fresh checkout without a populated .env).
+LOCAL_SIGN_IDENTITY="${BLINK_SIGN_IDENTITY:--}"
+if [[ "$LOCAL_SIGN_IDENTITY" == "-" ]]; then
+    echo "[blink] signing identity: ad-hoc (set BLINK_SIGN_IDENTITY for stable Developer ID attribution)"
+else
+    echo "[blink] signing identity: $LOCAL_SIGN_IDENTITY"
+fi
+
 echo "[blink] generating Xcode project"
 (cd "$APP_DIR" && xcodegen generate --spec project.yml)
 
 echo "[blink] xcodebuild ($CONFIG)"
-# Build unsigned (ad-hoc); sign_and_notarize.sh handles real Developer ID signing.
+# DEVELOPMENT_TEAM has to be set on the xcodebuild command line (not just on the
+# Blink target via project.yml) so SwiftPM-built dependency targets like
+# PermissionFlow / SystemSettingsKit / their resource bundles inherit it.
+# Without this they fail with "Signing for ... requires a development team".
 xcodebuild \
     -project "$APP_DIR/Blink.xcodeproj" \
     -scheme Blink \
@@ -37,7 +54,9 @@ xcodebuild \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
     -destination 'generic/platform=macOS' \
     BUILD_DIR="$BUILD_DIR" \
-    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGN_IDENTITY="$LOCAL_SIGN_IDENTITY" \
+    DEVELOPMENT_TEAM="${BLINK_DEVELOPMENT_TEAM:-}" \
+    CODE_SIGN_STYLE=Manual \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGNING_ALLOWED=YES \
     build | xcbeautify 2>/dev/null || xcodebuild \
@@ -47,7 +66,9 @@ xcodebuild \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
     -destination 'generic/platform=macOS' \
     BUILD_DIR="$BUILD_DIR" \
-    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGN_IDENTITY="$LOCAL_SIGN_IDENTITY" \
+    DEVELOPMENT_TEAM="${BLINK_DEVELOPMENT_TEAM:-}" \
+    CODE_SIGN_STYLE=Manual \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGNING_ALLOWED=YES \
     build
@@ -117,6 +138,20 @@ if [[ -z "$SITE_PACKAGES_DIR" ]]; then
 fi
 echo "../../python-packages" > "$SITE_PACKAGES_DIR/blink-site.pth"
 
+# Precompile every .py inside the bundle so .pyc files exist at sign time and
+# Python never writes new ones at runtime. Without this, Python regenerates
+# stdlib .pyc on first import (rsync mtimes don't match the prebuilt headers),
+# adding files that aren't in the code-resources manifest. The broken seal
+# silently blocks TCC's Screen Recording registration so Blink never appears
+# in System Settings even though the prompt fires. Combined with
+# PYTHONDONTWRITEBYTECODE=1 in PythonRunner.swift this keeps the seal intact.
+echo "[blink] precompiling bundled python (.pyc) so the seal stays intact"
+"$RESOURCES/python/bin/python3" -m compileall -f -q -j0 \
+    "$RESOURCES/python/lib" "$RESOURCES" || {
+        echo "[blink] error: compileall failed; aborting before sign" >&2
+        exit 1
+    }
+
 ENTITLEMENTS_PATH="${BLINK_ENTITLEMENTS_PATH:-$APP_DIR/Blink/Blink.entitlements}"
 # xcodebuild ad-hoc signed the app, but PlistBuddy stamps and the Python /
 # Resources rsync above mutate the bundle, invalidating that signature. The
@@ -126,8 +161,8 @@ ENTITLEMENTS_PATH="${BLINK_ENTITLEMENTS_PATH:-$APP_DIR/Blink/Blink.entitlements}
 # refuse to launch ("error connecting to the installer"). Re-sign just the
 # outer bundle so Sparkle.framework's nested Developer-ID XPCs keep their
 # original signatures.
-echo "[blink] re-signing ad-hoc after Info.plist + resource stamping"
-codesign --force --sign - \
+echo "[blink] re-signing ($LOCAL_SIGN_IDENTITY) after Info.plist + resource stamping"
+codesign --force --sign "$LOCAL_SIGN_IDENTITY" \
     --options=runtime \
     --timestamp=none \
     --generate-entitlement-der \

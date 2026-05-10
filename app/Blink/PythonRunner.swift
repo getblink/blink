@@ -382,6 +382,10 @@ enum PythonRunner {
         }
         env["BLINK_RUNTIME_DIR"] = Paths.runtimeDir.path
         env["TLDR_RUNTIME_DIR"] = Paths.runtimeDir.path
+        // Don't let Python write .pyc into the bundle — new files break the
+        // code-resources seal, which silently blocks TCC's Screen Recording
+        // registration. build.sh precompiles everything once at sign time.
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         return env
     }
 }

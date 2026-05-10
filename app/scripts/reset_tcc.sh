@@ -34,4 +34,12 @@ for service in "${SERVICES[@]}"; do
     tccutil reset "$service" "$BUNDLE_ID" >/dev/null 2>&1 || true
 done
 
+# Drop and re-register the canonical bundle so LaunchServices forgets stale
+# registrations of the same bundle ID with old trusted code signatures.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+if [[ -d "$INSTALLED_APP" ]]; then
+    "$LSREGISTER" -u "$INSTALLED_APP" 2>/dev/null || true
+    "$LSREGISTER" -f "$INSTALLED_APP" 2>/dev/null || true
+fi
+
 echo "[blink] TCC reset complete for $BUNDLE_ID"
