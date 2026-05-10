@@ -571,6 +571,11 @@ def _hydrate_reroll_context_for_model(
         return None
     source_request_id = str(reroll_context.get("source_request_id") or "").strip()
     hydrated = dict(reroll_context)
+    logger.info(
+        "reroll_context_lookup_started token_id=%s source_request_id=%s",
+        token_id,
+        source_request_id,
+    )
     try:
         previous = _telemetry_store().get_previous_suggestions(
             source_request_id,
@@ -593,6 +598,12 @@ def _hydrate_reroll_context_for_model(
         )
         warnings.append("reroll_context_missing_previous")
         return hydrated
+    logger.info(
+        "reroll_context_hydrated token_id=%s source_request_id=%s previous_suggestion_count=%s",
+        token_id,
+        source_request_id,
+        len(previous),
+    )
     warnings.append("reroll_context_hydrated")
     hydrated["previous_suggestion_details"] = previous
     hydrated["previous_suggestions"] = [
@@ -769,8 +780,16 @@ async def _run_tldr_request(
         )
 
     model_envelope = dict(envelope)
+    reroll_context = envelope.get("reroll_context")
+    if isinstance(reroll_context, dict):
+        logger.info(
+            "reroll_request_received token_id=%s request_id=%s source_request_id=%s",
+            token_id,
+            envelope.get("request_id"),
+            reroll_context.get("source_request_id"),
+        )
     hydrated_reroll_context = _hydrate_reroll_context_for_model(
-        envelope.get("reroll_context"),
+        reroll_context,
         token_id,
         warnings,
     )
