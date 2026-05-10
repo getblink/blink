@@ -86,8 +86,14 @@ a:focus-visible {
   display: grid;
 }
 
-html:not(.no-shell-animate) .shell--animate-in {
-  animation: pull-in-edges 1200ms cubic-bezier(0.65, 0, 0.35, 1) 150ms backwards;
+html:not(.no-shell-animate):not(.pending-pointer) .shell--animate-in {
+  animation: pull-in-edges 1200ms cubic-bezier(0.16, 1, 0.3, 1) 150ms backwards;
+}
+
+html.pending-pointer .shell--animate-in {
+  --shell-inset: 0px;
+  border-radius: 0;
+  border-color: transparent;
 }
 
 .shell--fixed {
@@ -153,14 +159,16 @@ html:not(.no-shell-animate) .shell--animate-in {
   }
 
   .shell {
-    --shell-inset: 18px;
+    --shell-inset: 0px;
+    border: 0;
+    border-radius: 0;
   }
 
   .shell--fixed {
     grid-template-rows: 44px auto 44px;
     height: auto;
-    min-height: calc(100vh - 2 * var(--shell-inset));
-    min-height: calc(100svh - 2 * var(--shell-inset));
+    min-height: 100vh;
+    min-height: 100svh;
   }
 
   .meta {

@@ -3,9 +3,8 @@ import Base from "../layouts/Base.astro";
 import MetaFooter from "../components/MetaFooter.astro";
 import BrandMark from "../components/BrandMark.astro";
 
-const tagline =
-  "instant recall across every AI thread for multi‑agent power users";
-const title = "Blink — instant recall across every AI thread";
+const tagline = "reads your screen, writes the rest.";
+const title = "Blink — reads your screen, writes the rest";
 const betaSignupUrl =
   import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
   "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
@@ -35,8 +34,8 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
             aria-hidden="true"></span>
         </h1>
         <p class="tagline">
-          instant recall across every AI thread.<br />
-          built for multi‑agent power users.
+          reads your screen,<br />
+          writes the rest.
         </p>
         <form class="signup" data-state="idle" data-endpoint={betaSignupUrl}>
           <div class="signup__row">
