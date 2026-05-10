@@ -571,7 +571,7 @@ def _hydrate_reroll_context_for_model(
         return None
     source_request_id = str(reroll_context.get("source_request_id") or "").strip()
     hydrated = dict(reroll_context)
-    logger.info(
+    logger.warning(
         "reroll_context_lookup_started token_id=%s source_request_id=%s",
         token_id,
         source_request_id,
@@ -598,7 +598,7 @@ def _hydrate_reroll_context_for_model(
         )
         warnings.append("reroll_context_missing_previous")
         return hydrated
-    logger.info(
+    logger.warning(
         "reroll_context_hydrated token_id=%s source_request_id=%s previous_suggestion_count=%s",
         token_id,
         source_request_id,
@@ -782,7 +782,7 @@ async def _run_tldr_request(
     model_envelope = dict(envelope)
     reroll_context = envelope.get("reroll_context")
     if isinstance(reroll_context, dict):
-        logger.info(
+        logger.warning(
             "reroll_request_received token_id=%s request_id=%s source_request_id=%s",
             token_id,
             envelope.get("request_id"),
