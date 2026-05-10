@@ -748,13 +748,33 @@ def _thread_context_for_request(
             if thread is not None:
                 root_request_id = source_request_id
         if thread is not None and _valid_thread_turns(thread):
+            turn_count = len(_valid_thread_turns(thread))
+            logger.warning(
+                "reroll_thread_cache_hit token_id=%s source_request_id=%s root_request_id=%s turn_count=%s",
+                token_id,
+                source_request_id,
+                str(thread.get("root_request_id") or root_request_id),
+                turn_count,
+            )
             warnings.append("reroll_thread_cache_hit")
             return {
                 "root_request_id": str(thread.get("root_request_id") or root_request_id),
                 "source_request_id": source_request_id,
                 "thread": thread,
             }
+        logger.warning(
+            "reroll_thread_cache_miss token_id=%s source_request_id=%s root_request_id=%s",
+            token_id,
+            source_request_id,
+            root_request_id,
+        )
         warnings.append("reroll_thread_cache_miss")
+    else:
+        logger.warning(
+            "reroll_thread_cache_disabled token_id=%s source_request_id=%s",
+            token_id,
+            source_request_id,
+        )
 
     thread = _fallback_thread_from_store(
         source_request_id=source_request_id,
@@ -838,6 +858,15 @@ def _store_thread_success(
         request_id=request_id,
         root_request_id=root_request_id,
     )
+    if thread_context is not None:
+        logger.warning(
+            "reroll_thread_appended token_id=%s source_request_id=%s root_request_id=%s request_id=%s turn_count=%s",
+            token_id,
+            str(thread_context.get("source_request_id") or ""),
+            root_request_id,
+            request_id,
+            len(_valid_thread_turns(thread)),
+        )
 
 
 def _record_request(
