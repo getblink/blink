@@ -8,6 +8,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from server import auth
+from server import main as server_main
 from server.main import app
 
 
@@ -75,6 +76,7 @@ class BetaSignupTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertTrue(body["ok"])
+        self.assertFalse(body["already_signed_up"])
         self.assertEqual(len(body["signup_id"]), 32)
         self.assertEqual(len(self.store.rows), 1)
         row = self.store.rows[0]
@@ -89,8 +91,43 @@ class BetaSignupTests(unittest.TestCase):
         first = self.client.post("/v1/beta-signup", json={"email": "A@B.co"})
         second = self.client.post("/v1/beta-signup", json={"email": "  a@b.CO  "})
         self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()["ok"])
+        self.assertFalse(first.json()["already_signed_up"])
         self.assertEqual(second.status_code, 200)
+        second_body = second.json()
+        self.assertTrue(second_body["ok"])
+        self.assertTrue(second_body["already_signed_up"])
+        self.assertNotIn("signup_id", second_body)
         self.assertEqual(len(self.store.rows), 1)
+
+    def test_discord_webhook_fires_on_new_signup_only(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"BLINK_DISCORD_SIGNUP_WEBHOOK_URL": "https://discord.example/hook"},
+            clear=False,
+        ):
+            calls: list[dict[str, Any]] = []
+
+            async def fake_notify(**kwargs: Any) -> None:
+                calls.append(kwargs)
+
+            with mock.patch.object(server_main, "_notify_discord_signup", fake_notify):
+                first = self.client.post(
+                    "/v1/beta-signup",
+                    json={"email": "fan@example.com", "source": "site"},
+                )
+                second = self.client.post(
+                    "/v1/beta-signup",
+                    json={"email": "fan@example.com"},
+                )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.json()["already_signed_up"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["email_original"], "fan@example.com")
+        self.assertEqual(calls[0]["source"], "site")
+        self.assertEqual(len(calls[0]["signup_id"]), 32)
 
     def test_honeypot_silently_succeeds_without_writing(self) -> None:
         response = self.client.post(

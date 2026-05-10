@@ -102,9 +102,22 @@ Public endpoint for the `useblink.dev` beta signup form:
 
 The `hp` field is a honeypot. Non-empty values return `{"ok": true}` without
 writing a row. Valid emails are trimmed, lowercased for uniqueness, and stored
-with the original submitted casing preserved. The endpoint always returns
-`{"ok": true}` for valid submissions, including duplicate emails, so it does
-not leak whether an address is already on the list.
+with the original submitted casing preserved.
+
+Successful first-time signups return:
+
+```json
+{"ok": true, "signup_id": "<uuid hex>", "already_signed_up": false}
+```
+
+Duplicate emails return `200 {"ok": true, "already_signed_up": true}` without a
+`signup_id`. The client can render a friendly "already on the list" state from
+that flag. The duplicate path does not re-fire the Discord notification or the
+`beta_signup_recorded` PostHog event.
+
+If `BLINK_DISCORD_SIGNUP_WEBHOOK_URL` is set, each new signup is announced to
+that Discord channel via a fire-and-forget background task. Webhook failures
+are logged and do not affect the signup response.
 
 Signup rows live in `beta_signups`:
 
@@ -184,6 +197,7 @@ Copy [`server/.env.example`](.env.example) into the repo-root `.env` or
 - `BLINK_IP_HASH_SALT` — persisted salt for beta-signup IP hashes
 - `BLINK_SIGNUP_RATE_LIMIT_PER_MINUTE` — defaults to `5` per hashed IP
 - `BLINK_SIGNUP_RATE_LIMIT_PER_DAY` — defaults to `50` per hashed IP
+- `BLINK_DISCORD_SIGNUP_WEBHOOK_URL` — optional Discord webhook for new signup pings
 
 Client-side variables used by the local Blink runner and future Swift app:
 

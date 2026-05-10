@@ -8,6 +8,7 @@ Start with:
 - [AGENTS.md](AGENTS.md) for agent-facing guardrails
 - [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md) for internal workflows, Conductor setup/archive behavior, env-var sync across workspaces, scratchpad capture, sweeps, and release notes
 - [docs/DOGFOOD_PLAYBOOK.md](docs/DOGFOOD_PLAYBOOK.md) for clean Blink.app reinstall and TCC reset sessions
+- [docs/BETA_SIGNUP_PLAYBOOK.md](docs/BETA_SIGNUP_PLAYBOOK.md) for the landing-page beta signup flow, Discord webhook, and post-submit response process
 - [app/README.md](app/README.md) for the shipped macOS app
 - [server/README.md](server/README.md) for the backend
 - [site/README.md](site/README.md) for the landing page

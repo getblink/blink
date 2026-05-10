@@ -13,7 +13,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from posthog import Posthog
@@ -160,6 +160,53 @@ def _response_cache() -> ResponseCache:
 @lru_cache(maxsize=1)
 def _telemetry_store() -> TelemetryStore:
     return TelemetryStore.from_env()
+
+
+async def _notify_discord_signup(
+    *,
+    email_original: str,
+    source: str | None,
+    signup_id: str,
+) -> None:
+    webhook_url = (os.environ.get("BLINK_DISCORD_SIGNUP_WEBHOOK_URL") or "").strip()
+    if not webhook_url:
+        return
+    payload = {
+        "username": "blink-signups",
+        "content": f"new beta signup: `{email_original}`",
+        "embeds": [
+            {
+                "title": email_original,
+                "color": 0x58A6FF,
+                "fields": [
+                    {
+                        "name": "source",
+                        "value": source or "—",
+                        "inline": True,
+                    },
+                    {
+                        "name": "signup_id",
+                        "value": signup_id,
+                        "inline": True,
+                    },
+                ],
+            }
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(webhook_url, json=payload)
+        if response.status_code >= 400:
+            logger.warning(
+                "beta_signup_discord_failed status=%s body=%s",
+                response.status_code,
+                response.text[:240],
+            )
+    except Exception as exc:
+        logger.warning(
+            "beta_signup_discord_failed error=%s",
+            _sanitized_error_message(exc),
+        )
 
 
 def _ip_hash_for(ip: str) -> str:
@@ -1084,22 +1131,24 @@ async def tldr_events(
 async def beta_signup(
     payload: BetaSignupRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
     if payload.hp and payload.hp.strip():
         return {"ok": True}
 
     email_original = payload.email.strip()
     email_normalized = email_original.lower()
+    source = payload.source.strip() if payload.source else None
     ip_hash = _ip_hash_for(client_ip_for(request))
     check_signup_rate_limit(ip_hash)
 
     signup_id = uuid4().hex
     try:
-        _telemetry_store().record_beta_signup(
+        inserted = _telemetry_store().record_beta_signup(
             signup_id=signup_id,
             email_normalized=email_normalized,
             email_original=email_original,
-            source=payload.source.strip() if payload.source else None,
+            source=source,
             user_agent=request.headers.get("user-agent"),
             ip_hash=ip_hash,
         )
@@ -1113,14 +1162,27 @@ async def beta_signup(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="beta signup storage unavailable",
         ) from exc
+
+    if inserted:
+        _posthog_capture(
+            signup_id,
+            "beta_signup_recorded",
+            properties={"source": source},
+        )
+        background_tasks.add_task(
+            _notify_discord_signup,
+            email_original=email_original,
+            source=source,
+            signup_id=signup_id,
+        )
+        return {"ok": True, "signup_id": signup_id, "already_signed_up": False}
+
     _posthog_capture(
-        signup_id,
-        "beta_signup_recorded",
-        properties={
-            "source": payload.source.strip() if payload.source else None,
-        },
+        f"hash:{ip_hash[:16]}",
+        "beta_signup_duplicate",
+        properties={"source": source},
     )
-    return {"ok": True, "signup_id": signup_id}
+    return {"ok": True, "already_signed_up": True}
 
 
 async def _proxy_to_gemini(
