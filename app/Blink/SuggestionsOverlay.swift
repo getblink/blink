@@ -131,8 +131,7 @@ final class SuggestionsOverlay: NSObject {
         static let summaryBottomInset: CGFloat = 18
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
-        static let summaryStatusHeight: CGFloat = 16
-        static let summaryStatusBottomInset: CGFloat = 1
+        static let refreshPillHeight: CGFloat = 62
         static let thumbStripHeight: CGFloat = 56
         static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
@@ -205,7 +204,8 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
     private var summaryLabel: NSTextField?
-    private var summaryStatusLabel: NSTextField?
+    private var refreshStatusPill: NSView?
+    private var refreshStatusLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
     private var isSuggestionRefreshing: Bool = false
@@ -736,7 +736,7 @@ final class SuggestionsOverlay: NSObject {
         currentHeightDelta = 0
         customInputField?.onFocusChanged?(false)
         panel?.customReplyField = nil
-        showSummaryStatus("Regenerating suggestions...")
+        showRefreshStatusPill()
 
         let views = suggestionCards.map(\.outer)
             + [customInputCard, bottomHintLabel].compactMap { $0 }
@@ -752,7 +752,7 @@ final class SuggestionsOverlay: NSObject {
 
     func endSuggestionRefresh() {
         isSuggestionRefreshing = false
-        hideSummaryStatus()
+        hideRefreshStatusPill()
     }
 
     private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
@@ -851,6 +851,9 @@ final class SuggestionsOverlay: NSObject {
     func updateSuggestionDetails(_ suggestions: [SuggestionDetail]) {
         guard let panel, let contentView, let summaryCard else { return }
         let visibleSuggestions = Array(suggestions.prefix(3))
+        if isSuggestionRefreshing && visibleSuggestions.isEmpty {
+            return
+        }
         let shouldAnimateRefresh = isSuggestionRefreshing && !visibleSuggestions.isEmpty
         if !visibleSuggestions.isEmpty {
             endSuggestionRefresh()
@@ -1347,7 +1350,8 @@ final class SuggestionsOverlay: NSObject {
         contentView = nil
         summaryCard = nil
         summaryLabel = nil
-        summaryStatusLabel = nil
+        refreshStatusPill = nil
+        refreshStatusLabel = nil
         summaryTextY = 0
         suggestionCards = []
         suggestionClickTargets = []
@@ -1610,55 +1614,66 @@ final class SuggestionsOverlay: NSObject {
         isLoadingState = false
     }
 
-    private func showSummaryStatus(_ text: String) {
-        guard let summaryCard, let host = summaryLabel?.superview else { return }
-        let frame = NSRect(
-            x: 24,
-            y: Layout.summaryStatusBottomInset,
-            width: summaryCard.frame.width - 48,
-            height: Layout.summaryStatusHeight
+    private func showRefreshStatusPill() {
+        guard let contentView else { return }
+        let finalFrame = NSRect(
+            x: Layout.shadowBleed,
+            y: summaryBaseFrame.minY - Layout.sectionGap - Layout.refreshPillHeight,
+            width: Layout.panelWidth,
+            height: Layout.refreshPillHeight
         )
-        let statusLabel: NSTextField
-        if let existing = summaryStatusLabel {
-            statusLabel = existing
-            statusLabel.frame = frame
-            setLabelText(
-                statusLabel,
-                text: text,
-                font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
-                color: .tertiaryLabelColor,
-                lineSpacing: 0,
-                singleLine: true
-            )
-        } else {
-            statusLabel = label(
-                frame: frame,
-                text: text,
-                font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
-                color: .tertiaryLabelColor,
-                singleLine: true
-            )
-            statusLabel.alignment = .center
-            statusLabel.alphaValue = 0
-            host.addSubview(statusLabel)
-            summaryStatusLabel = statusLabel
+        if let refreshStatusPill {
+            refreshStatusPill.frame = finalFrame
+            refreshStatusPill.alphaValue = 1
+            return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Layout.animationDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            statusLabel.animator().alphaValue = 1
+
+        let pane = makeGlassPane(
+            frame: finalFrame.offsetBy(dx: 0, dy: 10),
+            cornerRadius: Layout.optionCornerRadius(for: Layout.refreshPillHeight)
+        )
+        pane.outer.alphaValue = 0
+        let statusLabel = label(
+            frame: NSRect(
+                x: 24,
+                y: (Layout.refreshPillHeight - Layout.enterHintHeight) / 2,
+                width: Layout.panelWidth - 48,
+                height: Layout.enterHintHeight
+            ),
+            text: "Regenerating suggestions...",
+            font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
+            color: .secondaryLabelColor,
+            singleLine: true
+        )
+        statusLabel.alignment = .center
+        pane.content.addSubview(statusLabel)
+        contentView.addSubview(pane.outer)
+        refreshStatusPill = pane.outer
+        refreshStatusLabel = statusLabel
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            guard self.refreshStatusPill === pane.outer else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Layout.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                pane.outer.animator().alphaValue = 1
+                pane.outer.animator().frame = finalFrame
+            }
         }
     }
 
-    private func hideSummaryStatus() {
-        guard let statusLabel = summaryStatusLabel else { return }
-        summaryStatusLabel = nil
+    private func hideRefreshStatusPill() {
+        guard let pill = refreshStatusPill else { return }
+        refreshStatusPill = nil
+        refreshStatusLabel = nil
+        let targetFrame = pill.frame.offsetBy(dx: 0, dy: 8)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Layout.animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            statusLabel.animator().alphaValue = 0
+            pill.animator().alphaValue = 0
+            pill.animator().frame = targetFrame
         } completionHandler: {
-            statusLabel.removeFromSuperview()
+            pill.removeFromSuperview()
         }
     }
 
