@@ -741,7 +741,7 @@ final class SuggestionsOverlay: NSObject {
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             for (index, view) in views.enumerated() {
                 view.animator().alphaValue = 0
-                view.animator().frame = view.frame.offsetBy(dx: 0, dy: -6 - CGFloat(index) * 1.5)
+                view.animator().frame = view.frame.offsetBy(dx: 0, dy: 8 + CGFloat(index) * 1.5)
             }
         }
     }
@@ -841,9 +841,11 @@ final class SuggestionsOverlay: NSObject {
 
     func updateSuggestionDetails(_ suggestions: [SuggestionDetail]) {
         guard let panel, let contentView, let summaryCard else { return }
-        let shouldAnimateRefresh = isSuggestionRefreshing
-        isSuggestionRefreshing = false
         let visibleSuggestions = Array(suggestions.prefix(3))
+        let shouldAnimateRefresh = isSuggestionRefreshing && !visibleSuggestions.isEmpty
+        if !visibleSuggestions.isEmpty {
+            isSuggestionRefreshing = false
+        }
 
         for card in suggestionCards {
             card.outer.removeFromSuperview()
@@ -1003,8 +1005,9 @@ final class SuggestionsOverlay: NSObject {
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
         self.currentHeightDelta = 0
+        let refreshArrivalViews = cards.map(\.outer) + [customCard.outer] + [bottomHint].compactMap { $0 }
         if shouldAnimateRefresh, !cards.isEmpty {
-            playArrivalAnimation(summary: nil, cards: cards.map(\.outer) + [customCard.outer])
+            playArrivalAnimation(summary: nil, cards: refreshArrivalViews)
         } else if !hasPlayedSuggestionArrival, !cards.isEmpty {
             hasPlayedSuggestionArrival = true
             playArrivalAnimation(summary: summaryCard, cards: cards.map(\.outer))
@@ -1602,7 +1605,7 @@ final class SuggestionsOverlay: NSObject {
         for (index, card) in cards.enumerated() {
             card.alphaValue = 0
             let finalFrame = card.frame
-            card.frame = finalFrame.offsetBy(dx: 0, dy: -12)
+            card.frame = finalFrame.offsetBy(dx: 0, dy: 14)
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.06) {
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = Layout.momentDuration
