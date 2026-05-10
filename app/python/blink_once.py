@@ -1488,6 +1488,14 @@ def request_payload_for_proxy(request_payload: dict[str, Any]) -> dict[str, Any]
     return payload
 
 
+def stream_phase_message(request_payload: dict[str, Any]) -> str:
+    return (
+        "Rerolling suggestions..."
+        if isinstance(request_payload.get("reroll_context"), dict)
+        else "Reading this screen..."
+    )
+
+
 def generate(
     screenshot_paths: list[Path],
     prompt_text: str,
@@ -1698,7 +1706,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.stream_events:
             emit_stream_event("run_started", {"bundle_dir": str(run_dir)})
-            emit_stream_event("phase", {"phase": "model_started", "message": "Reading this screen..."})
+            emit_stream_event(
+                "phase",
+                {
+                    "phase": "model_started",
+                    "message": stream_phase_message(request_payload),
+                },
+            )
         if args.skip_gemini:
             response = {
                 "status": "ok",

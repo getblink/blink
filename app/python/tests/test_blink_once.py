@@ -939,11 +939,26 @@ class BlinkOnceTests(unittest.TestCase):
             self.assertEqual(len(bundles), 1)
             self.assertEqual(events[0]["bundle_dir"], str(bundles[0]))
             self.assertEqual(events[1]["event"], "phase")
+            self.assertEqual(events[1]["message"], "Reading this screen...")
             self.assertTrue(any(event["event"] == "partial_tldr" for event in events))
             self.assertEqual(events[-1]["event"], "final")
             self.assertEqual(events[-1]["status"], "ok")
             self.assertEqual(len(events[-1]["suggestions"]), 3)
             self.assertTrue((bundles[0] / "run.json").exists())
+
+    def test_stream_phase_message_uses_reroll_copy(self) -> None:
+        self.assertEqual(blink_once.stream_phase_message({}), "Reading this screen...")
+        self.assertEqual(
+            blink_once.stream_phase_message(
+                {
+                    "reroll_context": {
+                        "schema_version": 1,
+                        "source_request_id": "11111111-1111-4111-8111-111111111111",
+                    }
+                }
+            ),
+            "Rerolling suggestions...",
+        )
 
     def test_build_stateful_context_uses_custom_replies_and_same_surface_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
