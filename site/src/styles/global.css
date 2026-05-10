@@ -26,6 +26,10 @@
 body {
   background-color: var(--bg);
   background-image: url("/seurat-channel.jpg");
+  background-image: image-set(
+    url("/seurat-channel.webp") 1x,
+    url("/seurat-channel.jpg") 1x
+  );
   background-size: cover;
   background-position: center;
   background-attachment: fixed;

@@ -3,8 +3,9 @@ import Base from "../layouts/Base.astro";
 import MetaFooter from "../components/MetaFooter.astro";
 import BrandMark from "../components/BrandMark.astro";
 
-const tagline = "reads your screen, writes the rest.";
 const title = "Blink — reads your screen, writes the rest";
+const description =
+  "Blink is a local-first Mac assistant that reads your screen and drafts the reply for you: TL;DRs, follow-ups, and one-Cmd-V handoffs.";
 const betaSignupUrl =
   import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
   "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
@@ -21,7 +22,7 @@ const desktopDemoUrls = parseUrls(
 // desktop URLs — see the .demo-cell--mobile block below.
 ---
 
-<Base title={title} description={tagline} animateLandingOnce>
+<Base title={title} description={description} animateLandingOnce>
   <main class="shell shell--fixed shell--animate-in">
     <header class="row meta">
       <div class="cell">
@@ -154,7 +155,7 @@ const desktopDemoUrls = parseUrls(
                 autoplay
                 muted
                 playsinline
-                preload="auto"
+                preload="none"
                 disablepictureinpicture
                 disableremoteplayback
                 controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
@@ -167,7 +168,7 @@ const desktopDemoUrls = parseUrls(
                 data-slot="1"
                 muted
                 playsinline
-                preload="auto"
+                preload="none"
                 disablepictureinpicture
                 disableremoteplayback
                 controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"

@@ -6,6 +6,7 @@ interface Props {
   title: string;
   description: string;
   ogType?: string;
+  ogImage?: string;
   animateLandingOnce?: boolean;
   publishedAt?: string;
 }
@@ -14,23 +15,38 @@ const {
   title,
   description,
   ogType = "website",
+  ogImage = "/og-image.png",
   animateLandingOnce = false,
   publishedAt,
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const ogImageURL = new URL(ogImage, Astro.site);
 
 const websiteSchema = {
-  "@context": "https://schema.org",
   "@type": "WebSite",
   name: "Blink",
   url: Astro.site?.toString(),
 };
 
+const softwareApplicationSchema = {
+  "@type": "SoftwareApplication",
+  name: "Blink",
+  description,
+  url: Astro.site?.toString(),
+  operatingSystem: "macOS",
+  applicationCategory: "ProductivityApplication",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+    url: "https://dl.useblink.dev/releases/0.2.1/Blink-0.2.1.dmg",
+  },
+};
+
 const articleSchema =
   ogType === "article"
     ? {
-        "@context": "https://schema.org",
         "@type": "Article",
         headline: title,
         description,
@@ -40,6 +56,15 @@ const articleSchema =
         ...(publishedAt ? { datePublished: publishedAt } : {}),
       }
     : null;
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    websiteSchema,
+    softwareApplicationSchema,
+    ...(articleSchema ? [articleSchema] : []),
+  ],
+};
 ---
 
 <!doctype html>
@@ -51,7 +76,10 @@ const articleSchema =
     <meta name="description" content={description} />
     <meta name="theme-color" content="#fafaf7" />
     <link rel="icon" type="image/png" href="/blink-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="canonical" href={canonicalURL} />
+    <link rel="preconnect" href="https://dl.useblink.dev" crossorigin />
+    <link rel="preconnect" href="https://us.i.posthog.com" crossorigin />
 
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
@@ -59,20 +87,20 @@ const articleSchema =
     <meta property="og:url" content={canonicalURL} />
     <meta property="og:site_name" content="Blink" />
     <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={ogImageURL} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Blink — reads your screen, writes the rest"
+    />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={ogImageURL} />
 
     <script
       type="application/ld+json"
-      set:html={JSON.stringify(websiteSchema)}
+      set:html={JSON.stringify(structuredData)}
     />
-    {
-      articleSchema && (
-        <script
-          type="application/ld+json"
-          set:html={JSON.stringify(articleSchema)}
-        />
-      )
-    }
 
     {
       animateLandingOnce && (
