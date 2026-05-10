@@ -125,11 +125,13 @@ final class SuggestionsOverlay: NSObject {
         static let suggestionGap: CGFloat = 8
         static let summaryFontSize: CGFloat = 16
         static let suggestionFontSize: CGFloat = 16
+        static let tagFontSize: CGFloat = 12
         static let hintFontSize: CGFloat = 12
         static let summaryTopInset: CGFloat = 26
         static let summaryBottomInset: CGFloat = 18
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
+        static let refreshPillHeight: CGFloat = 62
         static let thumbStripHeight: CGFloat = 56
         static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
@@ -137,13 +139,23 @@ final class SuggestionsOverlay: NSObject {
         static let bottomHintHeight: CGFloat = 18
         static let bottomHintTopGap: CGFloat = 14
         static let cardPaddingX: CGFloat = 24
-        static let suggestionCollapsedHeight: CGFloat = 62
+        static let suggestionCollapsedHeight: CGFloat = 98
+        static let suggestionCollapsedHeightWithoutTags: CGFloat = 76
+        static let suggestionSingleLineHeight: CGFloat = 62
+        static let suggestionSingleLineHeightWithTags: CGFloat = 76
+        static let suggestionCornerRadius: CGFloat = 22
         static let customInputHeight: CGFloat = 62
+        static let customInputTextHeight: CGFloat = 24
+        static let suggestionSingleLineTextHeight: CGFloat = 24
         static let suggestionNumberX: CGFloat = 20
         static let suggestionNumberWidth: CGFloat = 28
         static let suggestionNumberHeight: CGFloat = 24
         static let suggestionTextX: CGFloat = 68
-        static let suggestionCollapsedTextHeight: CGFloat = 24
+        static let suggestionCollapsedTextHeight: CGFloat = 42
+        static let suggestionTagHeight: CGFloat = 17
+        static let suggestionTagGap: CGFloat = 4
+        static let tagIconSize: CGFloat = 12
+        static let tagIconGap: CGFloat = 5
         static let suggestionLineSpacing: CGFloat = 5
         static let suggestionBottomPaddingExpanded: CGFloat = 28
         static let enterHintWidth: CGFloat = 140
@@ -152,9 +164,14 @@ final class SuggestionsOverlay: NSObject {
         static let enterHintBottomInset: CGFloat = 4
         static let animationDuration: TimeInterval = 0.22
         static let momentDuration: TimeInterval = 0.34
+        static let tagAlpha: CGFloat = 0.95
 
         static var suggestionPaddingY: CGFloat {
             (suggestionCollapsedHeight - suggestionCollapsedTextHeight) / 2
+        }
+
+        static func optionCornerRadius(for height: CGFloat) -> CGFloat {
+            min(suggestionCornerRadius, height / 2)
         }
     }
 
@@ -169,11 +186,16 @@ final class SuggestionsOverlay: NSObject {
         let tint: NSView
         let number: NSTextField
         let label: NSTextField
+        let tagIcon: NSImageView
+        let tagLabel: NSTextField
         let enterHint: NSTextField
         let collapsedFrame: NSRect
         let collapsedText: String
         let fullText: String
         let expandedHeight: CGFloat
+        let hasTags: Bool
+        let collapsedLabelHeight: CGFloat
+        let collapsedSingleLine: Bool
     }
 
     private var panel: SuggestionsPanel?
@@ -182,8 +204,11 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
     private var summaryLabel: NSTextField?
+    private var refreshStatusPill: NSView?
+    private var refreshStatusLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
+    private var isSuggestionRefreshing: Bool = false
     private var softErrorPanel: NSPanel?
     private var summaryBaseFrame: NSRect = .zero
     private var summaryTextY: CGFloat = 0
@@ -213,6 +238,7 @@ final class SuggestionsOverlay: NSObject {
     var onCustomInsertKey: (() -> Bool)?
     var onLeaveCustomInputKey: (() -> Void)?
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
+    var onRerollKey: (() -> Void)?
     var onDismissKey: (() -> Void)?
 
     var isVisible: Bool {
@@ -228,13 +254,38 @@ final class SuggestionsOverlay: NSObject {
         isVisible && !isLoadingState
     }
 
+    private func collapsedHeight(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> CGFloat {
+        let hasTags = !renderTags(detail.tags).isEmpty
+        let isSingleLine = collapsedTextIsSingleLine(for: detail, width: width, font: font)
+        if hasTags {
+            return isSingleLine ? Layout.suggestionSingleLineHeightWithTags : Layout.suggestionCollapsedHeight
+        }
+        return isSingleLine ? Layout.suggestionSingleLineHeight : Layout.suggestionCollapsedHeightWithoutTags
+    }
+
+    private func collapsedTextHeight(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> CGFloat {
+        collapsedTextIsSingleLine(for: detail, width: width, font: font)
+            ? Layout.suggestionSingleLineTextHeight
+            : Layout.suggestionCollapsedTextHeight
+    }
+
+    private func collapsedTextIsSingleLine(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> Bool {
+        let measuredTextHeight = measureHeight(detail.text, width: width, font: font, lineSpacing: 2)
+        let singleLineHeight = ceil(font.ascender - font.descender + font.leading) + 6
+        return measuredTextHeight <= singleLineHeight
+    }
+
     func show(tldr: String, suggestions: [String]) {
+        show(tldr: tldr, suggestionDetails: suggestions.map(SuggestionDetail.plain))
+    }
+
+    func show(tldr: String, suggestionDetails: [SuggestionDetail]) {
         show(
             tldr: tldr,
-            suggestions: suggestions,
+            suggestionDetails: suggestionDetails,
             showsCustomInput: true,
             hintText: nil,
-            bottomHintText: "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss",
+            bottomHintText: "Press 1 / 2 / 3 to expand \u{00B7} R to reroll \u{00B7} Esc to dismiss",
             showsTldrHeader: true
         )
     }
@@ -242,7 +293,7 @@ final class SuggestionsOverlay: NSObject {
     func showLoading(tldr: String) {
         show(
             tldr: tldr,
-            suggestions: [],
+            suggestionDetails: [],
             showsCustomInput: false,
             hintText: nil,
             showsTldrHeader: true,
@@ -261,7 +312,7 @@ final class SuggestionsOverlay: NSObject {
         let lead = message ?? "Collecting"
         show(
             tldr: "\(lead). \(frameCount) of \(maxFrames) frames.",
-            suggestions: [],
+            suggestionDetails: [],
             showsCustomInput: false,
             hintText: "\(hotkeyDisplay) to add, Return to submit, Esc to cancel",
             thumbnails: thumbnails,
@@ -272,7 +323,7 @@ final class SuggestionsOverlay: NSObject {
 
     private func show(
         tldr: String,
-        suggestions: [String],
+        suggestionDetails: [SuggestionDetail],
         showsCustomInput: Bool,
         hintText: String?,
         bottomHintText: String? = nil,
@@ -284,7 +335,7 @@ final class SuggestionsOverlay: NSObject {
     ) {
         close()
 
-        let visibleSuggestions = Array(suggestions.prefix(3))
+        let visibleSuggestions = Array(suggestionDetails.prefix(3))
         // Loading state keeps the medium weight for visual contrast with the
         // pulsing dot; the actual Blink body is regular weight so the bold
         // "tl;dr" label sits above it as a header.
@@ -307,15 +358,18 @@ final class SuggestionsOverlay: NSObject {
                     + Layout.summaryTopInset
             )
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
-        let expandedHeights = visibleSuggestions.map { text in
+        let collapsedHeights = visibleSuggestions.map {
+            collapsedHeight(for: $0, width: suggestionLabelWidth, font: suggestionFont)
+        }
+        let expandedHeights = visibleSuggestions.enumerated().map { offset, detail in
             max(
-                Layout.suggestionCollapsedHeight,
-                measureHeight(text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
+                collapsedHeights[offset],
+                measureHeight(detail.text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
                     + Layout.suggestionPaddingY
                     + Layout.suggestionBottomPaddingExpanded
             )
         }
-        let suggestionStackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
+        let suggestionStackHeight = collapsedHeights.reduce(0, +)
             + CGFloat(max(0, visibleSuggestions.count - 1)) * Layout.suggestionGap
         let customStackHeight = showsCustomInput
             ? (visibleSuggestions.isEmpty ? Layout.customInputHeight : Layout.suggestionGap + Layout.customInputHeight)
@@ -484,19 +538,19 @@ final class SuggestionsOverlay: NSObject {
 
         var cards: [SuggestionCard] = []
         var y = summaryY - Layout.sectionGap
-        for (offset, text) in visibleSuggestions.enumerated() {
-            y -= Layout.suggestionCollapsedHeight
+        for (offset, detail) in visibleSuggestions.enumerated() {
+            let collapsedHeight = collapsedHeights[offset]
+            y -= collapsedHeight
             let rowFrame = NSRect(
                 x: contentX,
                 y: y,
                 width: contentWidth,
-                height: Layout.suggestionCollapsedHeight
+                height: collapsedHeight
             )
-            let collapsedText = collapsedSingleLineText(text, width: suggestionLabelWidth, font: suggestionFont)
             let card = makeSuggestionCard(
                 frame: rowFrame,
                 index: offset + 1,
-                text: collapsedText,
+                detail: detail,
                 font: suggestionFont
             )
             content.addSubview(card.outer)
@@ -506,11 +560,16 @@ final class SuggestionsOverlay: NSObject {
                 tint: card.tint,
                 number: card.number,
                 label: card.label,
+                tagIcon: card.tagIcon,
+                tagLabel: card.tagLabel,
                 enterHint: card.enterHint,
                 collapsedFrame: rowFrame,
-                collapsedText: collapsedText,
-                fullText: text,
-                expandedHeight: expandedHeights[offset]
+                collapsedText: detail.text,
+                fullText: detail.text,
+                expandedHeight: expandedHeights[offset],
+                hasTags: !renderTags(detail.tags).isEmpty,
+                collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -636,7 +695,6 @@ final class SuggestionsOverlay: NSObject {
     /// streaming pipeline ("Reading screen…", "Calling Gemini…", etc.).
     func updateLoadingPhase(_ text: String) {
         guard isLoadingState, let summaryCard, let summaryLabel else {
-            updateSummary(text)
             return
         }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
@@ -669,6 +727,32 @@ final class SuggestionsOverlay: NSObject {
             lineSpacing: 0,
             singleLine: true
         )
+    }
+
+    func beginSuggestionRefresh() {
+        guard !isLoadingState else { return }
+        isSuggestionRefreshing = true
+        expandedSuggestionIndex = nil
+        currentHeightDelta = 0
+        customInputField?.onFocusChanged?(false)
+        panel?.customReplyField = nil
+        showRefreshStatusPill()
+
+        let views = suggestionCards.map(\.outer)
+            + [customInputCard, bottomHintLabel].compactMap { $0 }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for (index, view) in views.enumerated() {
+                view.animator().alphaValue = 0
+                view.animator().frame = view.frame.offsetBy(dx: 0, dy: 8 + CGFloat(index) * 1.5)
+            }
+        }
+    }
+
+    func endSuggestionRefresh() {
+        isSuggestionRefreshing = false
+        hideRefreshStatusPill()
     }
 
     private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
@@ -761,8 +845,19 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func updateSuggestions(_ suggestions: [String]) {
+        updateSuggestionDetails(suggestions.map(SuggestionDetail.plain))
+    }
+
+    func updateSuggestionDetails(_ suggestions: [SuggestionDetail]) {
         guard let panel, let contentView, let summaryCard else { return }
         let visibleSuggestions = Array(suggestions.prefix(3))
+        if isSuggestionRefreshing && visibleSuggestions.isEmpty {
+            return
+        }
+        let shouldAnimateRefresh = isSuggestionRefreshing && !visibleSuggestions.isEmpty
+        if !visibleSuggestions.isEmpty {
+            endSuggestionRefresh()
+        }
 
         for card in suggestionCards {
             card.outer.removeFromSuperview()
@@ -783,19 +878,22 @@ final class SuggestionsOverlay: NSObject {
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let bottomHintText = showsTldrHeader
-            ? "Press 1 / 2 / 3 to expand \u{00B7} repeat in the app to copy \u{00B7} Esc to dismiss"
+            ? "Press 1 / 2 / 3 to expand \u{00B7} R to reroll \u{00B7} Esc to dismiss"
             : nil
         let contentWidth = Layout.panelWidth
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
-        let expandedHeights = visibleSuggestions.map { text in
+        let collapsedHeights = visibleSuggestions.map {
+            collapsedHeight(for: $0, width: suggestionLabelWidth, font: suggestionFont)
+        }
+        let expandedHeights = visibleSuggestions.enumerated().map { offset, detail in
             max(
-                Layout.suggestionCollapsedHeight,
-                measureHeight(text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
+                collapsedHeights[offset],
+                measureHeight(detail.text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
                     + Layout.suggestionPaddingY
                     + Layout.suggestionBottomPaddingExpanded
             )
         }
-        let suggestionStackHeight = CGFloat(visibleSuggestions.count) * Layout.suggestionCollapsedHeight
+        let suggestionStackHeight = collapsedHeights.reduce(0, +)
             + CGFloat(max(0, visibleSuggestions.count - 1)) * Layout.suggestionGap
         let customStackHeight = visibleSuggestions.isEmpty
             ? Layout.customInputHeight
@@ -830,19 +928,19 @@ final class SuggestionsOverlay: NSObject {
 
         var cards: [SuggestionCard] = []
         var y = summaryY - Layout.sectionGap
-        for (offset, text) in visibleSuggestions.enumerated() {
-            y -= Layout.suggestionCollapsedHeight
+        for (offset, detail) in visibleSuggestions.enumerated() {
+            let collapsedHeight = collapsedHeights[offset]
+            y -= collapsedHeight
             let rowFrame = NSRect(
                 x: contentX,
                 y: y,
                 width: contentWidth,
-                height: Layout.suggestionCollapsedHeight
+                height: collapsedHeight
             )
-            let collapsedText = collapsedSingleLineText(text, width: suggestionLabelWidth, font: suggestionFont)
             let card = makeSuggestionCard(
                 frame: rowFrame,
                 index: offset + 1,
-                text: collapsedText,
+                detail: detail,
                 font: suggestionFont
             )
             contentView.addSubview(card.outer)
@@ -852,11 +950,16 @@ final class SuggestionsOverlay: NSObject {
                 tint: card.tint,
                 number: card.number,
                 label: card.label,
+                tagIcon: card.tagIcon,
+                tagLabel: card.tagLabel,
                 enterHint: card.enterHint,
                 collapsedFrame: rowFrame,
-                collapsedText: collapsedText,
-                fullText: text,
-                expandedHeight: expandedHeights[offset]
+                collapsedText: detail.text,
+                fullText: detail.text,
+                expandedHeight: expandedHeights[offset],
+                hasTags: !renderTags(detail.tags).isEmpty,
+                collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -914,7 +1017,10 @@ final class SuggestionsOverlay: NSObject {
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
         self.currentHeightDelta = 0
-        if !hasPlayedSuggestionArrival, !cards.isEmpty {
+        let refreshArrivalViews = cards.map(\.outer) + [customCard.outer] + [bottomHint].compactMap { $0 }
+        if shouldAnimateRefresh, !cards.isEmpty {
+            playArrivalAnimation(summary: nil, cards: refreshArrivalViews)
+        } else if !hasPlayedSuggestionArrival, !cards.isEmpty {
             hasPlayedSuggestionArrival = true
             playArrivalAnimation(summary: summaryCard, cards: cards.map(\.outer))
         }
@@ -974,7 +1080,7 @@ final class SuggestionsOverlay: NSObject {
         }
 
         let selected = suggestionCards[index]
-        let heightDelta = selected.expandedHeight - Layout.suggestionCollapsedHeight
+        let heightDelta = selected.expandedHeight - selected.collapsedFrame.height
         // Going from a state with currentHeightDelta to one with heightDelta
         // shifts panel.origin.y in screen coords by `heightDelta - current`
         // (top edge stays pinned). Each card's local origin would visually
@@ -1026,8 +1132,9 @@ final class SuggestionsOverlay: NSObject {
             for cardIndex in suggestionCards.indices {
                 let card = suggestionCards[cardIndex]
                 let isSelected = cardIndex == index
-                let grows = isSelected && card.expandedHeight > Layout.suggestionCollapsedHeight
-                let targetHeight = grows ? card.expandedHeight : Layout.suggestionCollapsedHeight
+                let collapsedHeight = card.collapsedFrame.height
+                let grows = isSelected && card.expandedHeight > collapsedHeight
+                let targetHeight = grows ? card.expandedHeight : collapsedHeight
                 // Cards above the selection shift up in panel-local coords to
                 // compensate for the panel growing downward; the selected
                 // card keeps its collapsed origin and just gains height, so
@@ -1053,6 +1160,8 @@ final class SuggestionsOverlay: NSObject {
                         lineSpacing: Layout.suggestionLineSpacing,
                         singleLine: false
                     )
+                    card.label.maximumNumberOfLines = 0
+                    card.label.cell?.wraps = true
                     labelHeight = measureHeight(
                         card.fullText,
                         width: textWidth,
@@ -1060,12 +1169,8 @@ final class SuggestionsOverlay: NSObject {
                         lineSpacing: Layout.suggestionLineSpacing
                     )
                     labelY = Layout.suggestionBottomPaddingExpanded
-                    // Align the number's vertical center with the FIRST
-                    // LINE's visual center, not the cell top — multi-line
-                    // labels render the first line at the top of the cell
-                    // with the font's natural leading, so aligning the
-                    // number's top with the cell top makes the number sit
-                    // ~half-a-line lower than the first line.
+                    card.tagIcon.alphaValue = 0
+                    card.tagLabel.alphaValue = 0
                     let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
                     let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
                     numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
@@ -1075,19 +1180,29 @@ final class SuggestionsOverlay: NSObject {
                         text: card.collapsedText,
                         font: suggestionFont,
                         color: .labelColor,
-                        lineSpacing: 0,
-                        singleLine: true
+                        lineSpacing: card.collapsedSingleLine ? 0 : 2,
+                        singleLine: card.collapsedSingleLine
                     )
-                    labelHeight = Layout.suggestionCollapsedTextHeight
-                    labelY = (Layout.suggestionCollapsedHeight - labelHeight) / 2
-                    numberY = (Layout.suggestionCollapsedHeight - Layout.suggestionNumberHeight) / 2
+                    card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
+                    card.label.cell?.wraps = !card.collapsedSingleLine
+                    labelHeight = card.collapsedLabelHeight
+                    if card.hasTags {
+                        labelY = (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                            + Layout.suggestionTagHeight
+                            + Layout.suggestionTagGap
+                    } else {
+                        labelY = (collapsedHeight - labelHeight) / 2
+                    }
+                    numberY = (collapsedHeight - Layout.suggestionNumberHeight) / 2
+                    card.tagIcon.alphaValue = card.hasTags ? Layout.tagAlpha : 0
+                    card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 }
 
                 card.tint.alphaValue = isSelected ? 1 : 0
                 card.enterHint.alphaValue = isSelected ? 1 : 0
-                let pillCorner = Layout.suggestionCollapsedHeight / 2
-                setCornerRadius(card.outer, pillCorner)
-                card.tint.layer?.cornerRadius = pillCorner
+                let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
+                setCornerRadius(card.outer, optionCorner)
+                card.tint.layer?.cornerRadius = optionCorner
                 card.outer.animator().frame = targetFrame
                 card.number.animator().frame = NSRect(
                     x: Layout.suggestionNumberX,
@@ -1100,6 +1215,21 @@ final class SuggestionsOverlay: NSObject {
                     y: labelY,
                     width: textWidth,
                     height: labelHeight
+                )
+                let tagY = card.hasTags
+                    ? max(0, labelY - Layout.suggestionTagGap - Layout.suggestionTagHeight)
+                    : labelY
+                card.tagIcon.animator().frame = NSRect(
+                    x: Layout.suggestionTextX,
+                    y: tagY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
+                    width: Layout.tagIconSize,
+                    height: Layout.tagIconSize
+                )
+                card.tagLabel.animator().frame = NSRect(
+                    x: Layout.suggestionTextX + Layout.tagIconSize + Layout.tagIconGap,
+                    y: tagY,
+                    width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
+                    height: Layout.suggestionTagHeight
                 )
                 card.enterHint.animator().frame = NSRect(
                     x: targetFrame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
@@ -1149,23 +1279,52 @@ final class SuggestionsOverlay: NSObject {
                     text: card.collapsedText,
                     font: suggestionFont,
                     color: .labelColor,
-                    lineSpacing: 0,
-                    singleLine: true
+                    lineSpacing: card.collapsedSingleLine ? 0 : 2,
+                    singleLine: card.collapsedSingleLine
                 )
+                card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
+                card.label.cell?.wraps = !card.collapsedSingleLine
                 card.tint.alphaValue = 0
+                card.tagIcon.alphaValue = card.hasTags ? Layout.tagAlpha : 0
+                card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 card.enterHint.alphaValue = 0
+                let collapsedHeight = card.collapsedFrame.height
+                let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
+                setCornerRadius(card.outer, optionCorner)
+                card.tint.layer?.cornerRadius = optionCorner
                 card.outer.animator().frame = card.collapsedFrame
                 card.number.animator().frame = NSRect(
                     x: Layout.suggestionNumberX,
-                    y: (Layout.suggestionCollapsedHeight - Layout.suggestionNumberHeight) / 2,
+                    y: (collapsedHeight - Layout.suggestionNumberHeight) / 2,
                     width: Layout.suggestionNumberWidth,
                     height: Layout.suggestionNumberHeight
                 )
+                let labelHeight = card.collapsedLabelHeight
+                let labelY = card.hasTags
+                    ? (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                        + Layout.suggestionTagHeight
+                        + Layout.suggestionTagGap
+                    : (collapsedHeight - labelHeight) / 2
                 card.label.animator().frame = NSRect(
                     x: Layout.suggestionTextX,
-                    y: (Layout.suggestionCollapsedHeight - Layout.suggestionCollapsedTextHeight) / 2,
+                    y: labelY,
                     width: textWidth,
-                    height: Layout.suggestionCollapsedTextHeight
+                    height: labelHeight
+                )
+                let tagY = card.hasTags
+                    ? (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                    : labelY
+                card.tagIcon.animator().frame = NSRect(
+                    x: Layout.suggestionTextX,
+                    y: tagY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
+                    width: Layout.tagIconSize,
+                    height: Layout.tagIconSize
+                )
+                card.tagLabel.animator().frame = NSRect(
+                    x: Layout.suggestionTextX + Layout.tagIconSize + Layout.tagIconGap,
+                    y: tagY,
+                    width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
+                    height: Layout.suggestionTagHeight
                 )
             }
 
@@ -1191,6 +1350,8 @@ final class SuggestionsOverlay: NSObject {
         contentView = nil
         summaryCard = nil
         summaryLabel = nil
+        refreshStatusPill = nil
+        refreshStatusLabel = nil
         summaryTextY = 0
         suggestionCards = []
         suggestionClickTargets = []
@@ -1453,12 +1614,75 @@ final class SuggestionsOverlay: NSObject {
         isLoadingState = false
     }
 
+    private func showRefreshStatusPill() {
+        guard let contentView else { return }
+        let finalFrame = NSRect(
+            x: Layout.shadowBleed,
+            y: summaryBaseFrame.minY - Layout.sectionGap - Layout.refreshPillHeight,
+            width: Layout.panelWidth,
+            height: Layout.refreshPillHeight
+        )
+        if let refreshStatusPill {
+            refreshStatusPill.frame = finalFrame
+            refreshStatusPill.alphaValue = 1
+            return
+        }
+
+        let pane = makeGlassPane(
+            frame: finalFrame.offsetBy(dx: 0, dy: 10),
+            cornerRadius: Layout.optionCornerRadius(for: Layout.refreshPillHeight)
+        )
+        pane.outer.alphaValue = 0
+        let statusLabel = label(
+            frame: NSRect(
+                x: 24,
+                y: (Layout.refreshPillHeight - Layout.enterHintHeight) / 2,
+                width: Layout.panelWidth - 48,
+                height: Layout.enterHintHeight
+            ),
+            text: "Regenerating suggestions...",
+            font: NSFont.systemFont(ofSize: Layout.hintFontSize, weight: .medium),
+            color: .secondaryLabelColor,
+            singleLine: true
+        )
+        statusLabel.alignment = .center
+        pane.content.addSubview(statusLabel)
+        contentView.addSubview(pane.outer)
+        refreshStatusPill = pane.outer
+        refreshStatusLabel = statusLabel
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            guard self.refreshStatusPill === pane.outer else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Layout.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                pane.outer.animator().alphaValue = 1
+                pane.outer.animator().frame = finalFrame
+            }
+        }
+    }
+
+    private func hideRefreshStatusPill() {
+        guard let pill = refreshStatusPill else { return }
+        refreshStatusPill = nil
+        refreshStatusLabel = nil
+        let targetFrame = pill.frame.offsetBy(dx: 0, dy: 8)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            pill.animator().alphaValue = 0
+            pill.animator().frame = targetFrame
+        } completionHandler: {
+            pill.removeFromSuperview()
+        }
+    }
+
     private func playArrivalAnimation(summary: NSView?, cards: [NSView]) {
         animateScale(view: summary, from: 0.96, to: 1.0, duration: Layout.momentDuration)
         for (index, card) in cards.enumerated() {
             card.alphaValue = 0
             let finalFrame = card.frame
-            card.frame = finalFrame.offsetBy(dx: 0, dy: -12)
+            card.frame = finalFrame.offsetBy(dx: 0, dy: 14)
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.06) {
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = Layout.momentDuration
@@ -1488,7 +1712,7 @@ final class SuggestionsOverlay: NSObject {
     private func makeSuggestionCard(
         frame: NSRect,
         index: Int,
-        text: String,
+        detail: SuggestionDetail,
         font: NSFont
     ) -> (
         outer: NSView,
@@ -1496,9 +1720,11 @@ final class SuggestionsOverlay: NSObject {
         tint: NSView,
         number: NSTextField,
         label: NSTextField,
+        tagIcon: NSImageView,
+        tagLabel: NSTextField,
         enterHint: NSTextField
     ) {
-        let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
+        let pane = makeGlassPane(frame: frame, cornerRadius: Layout.optionCornerRadius(for: frame.height))
         let clickTarget = SuggestionCardClickTarget(index: index - 1) { [weak self] index in
             self?.onChoiceKey?(index)
         }
@@ -1511,7 +1737,7 @@ final class SuggestionsOverlay: NSObject {
 
         let tint = NSView(frame: NSRect(x: 0, y: 0, width: frame.width, height: frame.height))
         tint.wantsLayer = true
-        tint.layer?.cornerRadius = frame.height / 2
+        tint.layer?.cornerRadius = Layout.optionCornerRadius(for: frame.height)
         tint.layer?.masksToBounds = true
         tint.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.22).cgColor
         tint.autoresizingMask = [.width, .height]
@@ -1534,20 +1760,62 @@ final class SuggestionsOverlay: NSObject {
         pane.content.addSubview(number)
 
         let textWidth = frame.width - Layout.suggestionTextX - Layout.cardPaddingX
+        let renderedTags = renderedTags(detail.tags)
+        let tagText = renderTags(renderedTags)
+        let hasTags = !renderedTags.isEmpty
+        let primaryTagColor = tagColor(for: renderedTags.first)
+        let collapsedLabelHeight = collapsedTextHeight(for: detail, width: textWidth, font: font)
+        let collapsedSingleLine = collapsedTextIsSingleLine(for: detail, width: textWidth, font: font)
+        let textBlockY = hasTags
+            ? (frame.height - collapsedLabelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+            : (frame.height - collapsedLabelHeight) / 2
         let suggestionLabel = label(
             frame: NSRect(
                 x: Layout.suggestionTextX,
-                y: (frame.height - Layout.suggestionCollapsedTextHeight) / 2,
+                y: hasTags ? textBlockY + Layout.suggestionTagHeight + Layout.suggestionTagGap : textBlockY,
                 width: textWidth,
-                height: Layout.suggestionCollapsedTextHeight
+                height: collapsedLabelHeight
             ),
-            text: text,
+            text: detail.text,
             font: font,
             color: .labelColor,
+            lineSpacing: collapsedSingleLine ? 0 : 2,
+            singleLine: collapsedSingleLine
+        )
+        suggestionLabel.maximumNumberOfLines = collapsedSingleLine ? 1 : 2
+        suggestionLabel.lineBreakMode = .byTruncatingTail
+        suggestionLabel.cell?.wraps = !collapsedSingleLine
+        pane.content.addSubview(suggestionLabel)
+
+        let tagIcon = makeTagIcon(frame: NSRect(
+            x: Layout.suggestionTextX,
+            y: textBlockY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
+            width: Layout.tagIconSize,
+            height: Layout.tagIconSize
+        ), color: primaryTagColor)
+        tagIcon.alphaValue = hasTags ? Layout.tagAlpha : 0
+        tagIcon.isHidden = !hasTags
+        pane.content.addSubview(tagIcon)
+
+        let tagLabel = label(
+            frame: NSRect(
+                x: Layout.suggestionTextX + Layout.tagIconSize + Layout.tagIconGap,
+                y: textBlockY,
+                width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
+                height: Layout.suggestionTagHeight
+            ),
+            text: tagText,
+            font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold),
+            color: primaryTagColor,
             singleLine: true
         )
-        suggestionLabel.lineBreakMode = .byClipping
-        pane.content.addSubview(suggestionLabel)
+        tagLabel.attributedStringValue = makeTagAttributedString(
+            tags: renderedTags,
+            font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold)
+        )
+        tagLabel.alphaValue = hasTags ? Layout.tagAlpha : 0
+        tagLabel.isHidden = !hasTags
+        pane.content.addSubview(tagLabel)
 
         let enterHint = label(
             frame: NSRect(
@@ -1566,7 +1834,104 @@ final class SuggestionsOverlay: NSObject {
         enterHint.autoresizingMask = [.minXMargin]
         pane.content.addSubview(enterHint)
 
-        return (pane.outer, pane.content, tint, number, suggestionLabel, enterHint)
+        return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint)
+    }
+
+    private func makeTagIcon(frame: NSRect, color: NSColor) -> NSImageView {
+        let imageView = NSImageView(frame: frame)
+        imageView.image = NSImage(systemSymbolName: "tag.fill", accessibilityDescription: "Tag")
+        imageView.contentTintColor = color
+        imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Layout.tagFontSize, weight: .semibold)
+        imageView.imageScaling = .scaleProportionallyDown
+        return imageView
+    }
+
+    private func renderTags(_ tags: [String]) -> String {
+        let rendered = renderedTags(tags)
+        return rendered.isEmpty ? "" : rendered.joined(separator: "  \u{00B7}  ")
+    }
+
+    private func renderedTags(_ tags: [String]) -> [String] {
+        let rendered = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+            .map { $0.uppercased() }
+        return Array(rendered)
+    }
+
+    private func makeTagAttributedString(tags: [String], font: NSFont) -> NSAttributedString {
+        let attributed = NSMutableAttributedString()
+        for (index, tag) in tags.enumerated() {
+            if index > 0 {
+                attributed.append(NSAttributedString(
+                    string: "  \u{00B7}  ",
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                ))
+            }
+            attributed.append(NSAttributedString(
+                string: tag,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: tagColor(for: tag),
+                ]
+            ))
+        }
+        return attributed
+    }
+
+    private func tagColor(for tag: String?) -> NSColor {
+        guard let tag, !tag.isEmpty else {
+            return .systemBlue
+        }
+        switch normalizedTagKey(tag) {
+        case "reply", "respond", "response", "confirm", "ack", "acknowledge":
+            return .systemBlue
+        case "ask", "question", "request":
+            return .systemPurple
+        case "pushback", "disagree", "objection", "challenge":
+            return .systemRed
+        case "nextstep", "next", "action", "todo", "update", "implement", "fix":
+            return .systemGreen
+        case "clarify", "clarification":
+            return .systemTeal
+        case "evidence", "proof", "logs", "check", "verify":
+            return .systemIndigo
+        case "commit", "ship", "done":
+            return .systemMint
+        case "defer", "later", "wait":
+            return .systemOrange
+        case "draft", "rewrite", "edit":
+            return .systemPink
+        default:
+            let palette: [NSColor] = [
+                .systemBlue,
+                .systemPurple,
+                .systemTeal,
+                .systemGreen,
+                .systemOrange,
+                .systemPink,
+                .systemIndigo,
+            ]
+            return palette[stableTagIndex(for: tag, count: palette.count)]
+        }
+    }
+
+    private func normalizedTagKey(_ tag: String) -> String {
+        tag
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    private func stableTagIndex(for tag: String, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let value = tag.unicodeScalars.reduce(0) { partial, scalar in
+            (partial &* 31 &+ Int(scalar.value)) & 0x7fffffff
+        }
+        return value % count
     }
 
     private func makeCustomInputCard(
@@ -1617,7 +1982,7 @@ final class SuggestionsOverlay: NSObject {
         number.alignment = .center
         pane.content.addSubview(number)
 
-        let textHeight = Layout.suggestionCollapsedTextHeight
+        let textHeight = Layout.customInputTextHeight
         let field = CustomReplyField(frame: NSRect(
             x: Layout.suggestionTextX,
             y: (frame.height - textHeight) / 2,
@@ -1791,6 +2156,9 @@ final class SuggestionsOverlay: NSObject {
             return onCustomInsertKey?() ?? true
         case .leaveCustomInput:
             onLeaveCustomInputKey?()
+            return true
+        case .reroll:
+            onRerollKey?()
             return true
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false

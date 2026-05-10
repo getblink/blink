@@ -6,6 +6,7 @@ enum PythonRunner {
         let bundleDir: String
         let tldr: String
         let suggestions: [String]
+        let suggestionDetails: [SuggestionDetail]
         let requestID: String?
         let durationMS: Int?
         let warnings: [String]
@@ -168,12 +169,14 @@ enum PythonRunner {
               let suggestions = object["suggestions"] as? [String] else {
             throw RunError.invalidJSONOutput(stdoutText)
         }
+        let suggestionDetails = decodeSuggestionDetails(from: object, fallbackSuggestions: suggestions)
 
         return ResultPayload(
             status: status,
             bundleDir: bundleDir,
             tldr: tldr,
             suggestions: suggestions,
+            suggestionDetails: suggestionDetails,
             requestID: object["request_id"] as? String,
             durationMS: object["duration_ms"] as? Int,
             warnings: object["warnings"] as? [String] ?? [],
@@ -283,12 +286,14 @@ enum PythonRunner {
                     streamError = RunError.invalidStreamEvent(line)
                     return
                 }
+                let suggestionDetails = decodeSuggestionDetails(from: object, fallbackSuggestions: suggestions)
                 streamingRun.markFinalReceived()
                 finalPayload = ResultPayload(
                     status: status,
                     bundleDir: bundleDir,
                     tldr: tldr,
                     suggestions: suggestions,
+                    suggestionDetails: suggestionDetails,
                     requestID: object["request_id"] as? String,
                     durationMS: object["duration_ms"] as? Int,
                     warnings: object["warnings"] as? [String] ?? [],
@@ -367,12 +372,34 @@ enum PythonRunner {
             bundleDir: finalPayload.bundleDir,
             tldr: finalPayload.tldr,
             suggestions: finalPayload.suggestions,
+            suggestionDetails: finalPayload.suggestionDetails,
             requestID: finalPayload.requestID,
             durationMS: finalPayload.durationMS,
             warnings: finalPayload.warnings,
             model: finalPayload.model,
             stderr: stderrText
         )
+    }
+
+    private static func decodeSuggestionDetails(
+        from object: [String: Any],
+        fallbackSuggestions: [String]
+    ) -> [SuggestionDetail] {
+        guard let rawDetails = object["suggestion_details"] as? [[String: Any]] else {
+            return fallbackSuggestions.map(SuggestionDetail.plain)
+        }
+        let details = rawDetails.compactMap { item -> SuggestionDetail? in
+            guard let text = item["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return nil
+            }
+            let tags = (item["tags"] as? [String] ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return SuggestionDetail(text: text, tags: Array(tags.prefix(2)))
+        }
+        return details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
     }
 
     private static func buildEnvironment(config: Config) -> [String: String] {

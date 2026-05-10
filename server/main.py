@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+from datetime import datetime, timezone
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
@@ -28,7 +29,7 @@ try:
         require_bearer_token,
         token_hash_for,
     )
-    from .cache import ResponseCache
+    from .cache import ResponseCache, ThreadCache
     from .env_loader import load_workspace_env
     from .storage import TelemetryStore
 except ImportError:
@@ -40,7 +41,7 @@ except ImportError:
         require_bearer_token,
         token_hash_for,
     )
-    from cache import ResponseCache  # type: ignore[no-redef]
+    from cache import ResponseCache, ThreadCache  # type: ignore[no-redef]
     from env_loader import load_workspace_env  # type: ignore[no-redef]
     from storage import TelemetryStore  # type: ignore[no-redef]
 
@@ -77,6 +78,9 @@ MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOT_FRAMES = 8
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 GEMINI_UPSTREAM = "https://generativelanguage.googleapis.com"
 PROXY_TIMEOUT_SECONDS = 120.0
@@ -116,6 +120,7 @@ REDACTED_CONTENT_KEYS = {
     "custom_reply_text",
     "chosen_text",
     "tldr",
+    "previous_suggestions",
 }
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -161,6 +166,11 @@ def _version() -> str:
 @lru_cache(maxsize=1)
 def _response_cache() -> ResponseCache:
     return ResponseCache.from_env()
+
+
+@lru_cache(maxsize=1)
+def _thread_cache() -> ThreadCache:
+    return ThreadCache.from_env()
 
 
 @lru_cache(maxsize=1)
@@ -293,6 +303,37 @@ def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context must be a JSON object",
+        )
+    source_request_id = str(value.get("source_request_id") or "").strip()
+    if (
+        not source_request_id
+        or len(source_request_id) > 64
+        or UUID_RE.fullmatch(source_request_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context.source_request_id must be a UUID",
+        )
+    try:
+        schema_version = int(value.get("schema_version") or 1)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context.schema_version must be an integer",
+        ) from exc
+    return {
+        "schema_version": schema_version,
+        "source_request_id": source_request_id,
+    }
+
+
 def _redacted_text_summary(value: str) -> dict[str, Any]:
     return {
         "redacted": True,
@@ -307,8 +348,18 @@ def _sanitize_content_payload(value: Any, *, allow_content_retention: bool) -> A
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            if isinstance(item, str) and key in REDACTED_CONTENT_KEYS:
+            if key in REDACTED_CONTENT_KEYS and isinstance(item, str):
                 sanitized[key] = _redacted_text_summary(item)
+            elif key in REDACTED_CONTENT_KEYS and isinstance(item, list):
+                sanitized[key] = [
+                    _redacted_text_summary(str(entry))
+                    if isinstance(entry, str)
+                    else _sanitize_content_payload(
+                        entry,
+                        allow_content_retention=allow_content_retention,
+                    )
+                    for entry in item
+                ]
             else:
                 sanitized[key] = _sanitize_content_payload(
                     item,
@@ -341,6 +392,10 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     )
     sanitized["stateful_context"] = _sanitize_content_payload(
         envelope.get("stateful_context"),
+        allow_content_retention=allow_content_retention,
+    )
+    sanitized["reroll_context"] = _sanitize_content_payload(
+        envelope.get("reroll_context"),
         allow_content_retention=allow_content_retention,
     )
     return sanitized
@@ -390,6 +445,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
+        "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
         "consent": {
             "allow_event_logging": bool(consent_dict.get("allow_event_logging", True)),
             "allow_content_retention": bool(consent_dict.get("allow_content_retention", False)),
@@ -434,6 +490,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "ocr_packet": None,
         "focused_context": None,
         "stateful_context": None,
+        "reroll_context": None,
         "consent": {
             "allow_event_logging": False,
             "allow_content_retention": False,
@@ -490,6 +547,8 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
         "stateful_context": envelope.get("stateful_context"),
+        "reroll_context": envelope.get("reroll_context"),
+        "conversation_thread": envelope.get("conversation_thread"),
     }
     image_hash = _ordered_image_hash(image_bytes_list)
     if image_hash is not None:
@@ -505,10 +564,315 @@ def _ok_response(payload: dict[str, Any], request_id: str, warnings: list[str]) 
         "status": "ok",
         "tldr": payload["tldr"],
         "suggestions": payload["suggestions"],
+        "suggestion_details": payload.get("suggestion_details")
+        or [
+            {"text": str(item), "tags": []}
+            for item in payload.get("suggestions") or []
+        ],
         "duration_ms": payload["duration_ms"],
         "model": payload["model"],
         "warnings": warnings,
     }
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _capture_thread_turn(request_id: str, image_bytes_list: list[bytes]) -> dict[str, Any]:
+    turn: dict[str, Any] = {
+        "role": "user",
+        "kind": "capture",
+        "request_id": request_id,
+        "image_count": len(image_bytes_list),
+    }
+    image_hash = _ordered_image_hash(image_bytes_list)
+    if image_hash is not None:
+        turn["screenshot_sha256"] = image_hash
+    return turn
+
+
+def _suggestion_details_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    details = payload.get("suggestion_details")
+    if isinstance(details, list):
+        normalized = []
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            raw_tags = item.get("tags")
+            tags = [
+                str(tag).strip()
+                for tag in raw_tags
+                if str(tag).strip()
+            ][:2] if isinstance(raw_tags, list) else []
+            normalized.append({"text": text, "tags": tags})
+            if len(normalized) >= 3:
+                break
+        if normalized:
+            return normalized
+    return [
+        {"text": str(item or "").strip(), "tags": []}
+        for item in payload.get("suggestions") or []
+        if str(item or "").strip()
+    ][:3]
+
+
+def _model_thread_turn(request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    details = _suggestion_details_from_payload(payload)
+    return {
+        "role": "model",
+        "kind": "response",
+        "request_id": request_id,
+        "tldr": str(payload.get("tldr") or ""),
+        "suggestions": [item["text"] for item in details],
+        "suggestion_details": details,
+    }
+
+
+def _reroll_thread_turn(request_id: str) -> dict[str, Any]:
+    return {
+        "role": "user",
+        "kind": "reroll",
+        "request_id": request_id,
+        "text": gemini.REROLL_CONTENT_TEXT,
+    }
+
+
+def _new_thread(
+    *,
+    root_request_id: str,
+    latest_request_id: str,
+    turns: list[dict[str, Any]],
+) -> dict[str, Any]:
+    now = _now_iso()
+    return {
+        "schema_version": 1,
+        "root_request_id": root_request_id,
+        "latest_request_id": latest_request_id,
+        "created_at": now,
+        "updated_at": now,
+        "turns": turns,
+    }
+
+
+def _valid_thread_turns(thread: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(thread, dict):
+        return []
+    turns = thread.get("turns")
+    if not isinstance(turns, list):
+        return []
+    return [turn for turn in turns if isinstance(turn, dict)]
+
+
+def _fallback_thread_from_store(
+    *,
+    source_request_id: str,
+    token_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    logger.warning(
+        "reroll_context_lookup_started token_id=%s source_request_id=%s",
+        token_id,
+        source_request_id,
+    )
+    try:
+        previous = _telemetry_store().get_previous_response(source_request_id, token_id)
+    except Exception as exc:
+        logger.warning(
+            "reroll_context_lookup_failed token_id=%s source_request_id=%s error=%s",
+            token_id,
+            source_request_id,
+            _sanitized_error_message(exc),
+        )
+        warnings.append("reroll_context_lookup_failed")
+        previous = None
+    if not isinstance(previous, dict):
+        logger.warning(
+            "reroll_context_missing_previous token_id=%s source_request_id=%s",
+            token_id,
+            source_request_id,
+        )
+        warnings.append("reroll_context_missing_previous")
+        return None
+    details = _suggestion_details_from_payload(previous)
+    logger.warning(
+        "reroll_context_hydrated token_id=%s source_request_id=%s previous_suggestion_count=%s",
+        token_id,
+        source_request_id,
+        len(details),
+    )
+    warnings.append("reroll_context_hydrated")
+    return _new_thread(
+        root_request_id=source_request_id,
+        latest_request_id=source_request_id,
+        turns=[
+            {
+                "role": "user",
+                "kind": "capture",
+                "request_id": source_request_id,
+            },
+            _model_thread_turn(source_request_id, previous),
+        ],
+    )
+
+
+def _thread_context_for_request(
+    *,
+    envelope: dict[str, Any],
+    token_id: str,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    reroll_context = envelope.get("reroll_context")
+    if not isinstance(reroll_context, dict):
+        return None
+    source_request_id = str(reroll_context.get("source_request_id") or "").strip()
+    if not source_request_id:
+        return None
+
+    cache = _thread_cache()
+    root_request_id = source_request_id
+    thread: dict[str, Any] | None = None
+    if cache.enabled:
+        resolved_root = cache.resolve_root(
+            token_id=token_id,
+            request_id=source_request_id,
+        )
+        if resolved_root:
+            root_request_id = resolved_root
+        thread = cache.get_thread(
+            token_id=token_id,
+            root_request_id=root_request_id,
+        )
+        if thread is None and root_request_id != source_request_id:
+            thread = cache.get_thread(
+                token_id=token_id,
+                root_request_id=source_request_id,
+            )
+            if thread is not None:
+                root_request_id = source_request_id
+        if thread is not None and _valid_thread_turns(thread):
+            turn_count = len(_valid_thread_turns(thread))
+            logger.warning(
+                "reroll_thread_cache_hit token_id=%s source_request_id=%s root_request_id=%s turn_count=%s",
+                token_id,
+                source_request_id,
+                str(thread.get("root_request_id") or root_request_id),
+                turn_count,
+            )
+            warnings.append("reroll_thread_cache_hit")
+            return {
+                "root_request_id": str(thread.get("root_request_id") or root_request_id),
+                "source_request_id": source_request_id,
+                "thread": thread,
+            }
+        logger.warning(
+            "reroll_thread_cache_miss token_id=%s source_request_id=%s root_request_id=%s",
+            token_id,
+            source_request_id,
+            root_request_id,
+        )
+        warnings.append("reroll_thread_cache_miss")
+    else:
+        logger.warning(
+            "reroll_thread_cache_disabled token_id=%s source_request_id=%s",
+            token_id,
+            source_request_id,
+        )
+
+    thread = _fallback_thread_from_store(
+        source_request_id=source_request_id,
+        token_id=token_id,
+        warnings=warnings,
+    )
+    if thread is None:
+        return None
+    return {
+        "root_request_id": source_request_id,
+        "source_request_id": source_request_id,
+        "thread": thread,
+    }
+
+
+def _conversation_turns_for_request(
+    thread_context: dict[str, Any] | None,
+    request_id: str,
+) -> list[dict[str, Any]] | None:
+    if thread_context is None:
+        return None
+    turns = _valid_thread_turns(thread_context.get("thread"))
+    if not turns:
+        return None
+    return turns + [_reroll_thread_turn(request_id)]
+
+
+def _store_thread_success(
+    *,
+    token_id: str,
+    envelope: dict[str, Any],
+    image_bytes_list: list[bytes],
+    payload: dict[str, Any],
+    thread_context: dict[str, Any] | None,
+) -> None:
+    cache = _thread_cache()
+    if not cache.enabled:
+        return
+    request_id = str(envelope["request_id"])
+    if thread_context is None:
+        root_request_id = request_id
+        thread = _new_thread(
+            root_request_id=root_request_id,
+            latest_request_id=request_id,
+            turns=[
+                _capture_thread_turn(request_id, image_bytes_list),
+                _model_thread_turn(request_id, payload),
+            ],
+        )
+    else:
+        root_request_id = str(thread_context.get("root_request_id") or "").strip()
+        if not root_request_id:
+            root_request_id = request_id
+        source_request_id = str(thread_context.get("source_request_id") or "").strip()
+        original = thread_context.get("thread") if isinstance(thread_context.get("thread"), dict) else {}
+        turns = _valid_thread_turns(original)
+        thread = {
+            "schema_version": 1,
+            "root_request_id": root_request_id,
+            "latest_request_id": request_id,
+            "created_at": str(original.get("created_at") or _now_iso()),
+            "updated_at": _now_iso(),
+            "turns": turns + [
+                _reroll_thread_turn(request_id),
+                _model_thread_turn(request_id, payload),
+            ],
+        }
+        if source_request_id:
+            cache.set_root_alias(
+                token_id=token_id,
+                request_id=source_request_id,
+                root_request_id=root_request_id,
+            )
+    cache.set_thread(
+        token_id=token_id,
+        root_request_id=root_request_id,
+        payload=thread,
+    )
+    cache.set_root_alias(
+        token_id=token_id,
+        request_id=request_id,
+        root_request_id=root_request_id,
+    )
+    if thread_context is not None:
+        logger.warning(
+            "reroll_thread_appended token_id=%s source_request_id=%s root_request_id=%s request_id=%s turn_count=%s",
+            token_id,
+            str(thread_context.get("source_request_id") or ""),
+            root_request_id,
+            request_id,
+            len(_valid_thread_turns(thread)),
+        )
 
 
 def _record_request(
@@ -524,6 +888,7 @@ def _record_request(
     error: str | None,
     summary: str | None = None,
     suggestions: list[str] | None = None,
+    suggestion_details: list[dict[str, Any]] | None = None,
     raw_model_output: str | None = None,
 ) -> None:
     try:
@@ -542,6 +907,7 @@ def _record_request(
                 "ocr_packet": envelope.get("ocr_packet") or {},
                 "focused_context": envelope.get("focused_context") or {},
                 "stateful_context": envelope.get("stateful_context") or {},
+                "reroll_context": envelope.get("reroll_context") or {},
                 "consent": envelope.get("consent") or {},
                 "requested_preferences": envelope.get("preferences") or {},
                 "model_used": settings.get("model"),
@@ -550,7 +916,7 @@ def _record_request(
                 "usage_tokens": usage_tokens,
                 "input_hash": input_hash,
                 "summary": summary,
-                "suggestions": suggestions,
+                "suggestions": suggestion_details if suggestion_details is not None else suggestions,
                 "raw_model_output": raw_model_output,
                 "warnings": warnings,
                 "error": error,
@@ -674,7 +1040,29 @@ async def _run_tldr_request(
             detail="request must include a screenshot",
         )
 
-    model_envelope = envelope
+    model_envelope = dict(envelope)
+    reroll_context = envelope.get("reroll_context")
+    if isinstance(reroll_context, dict):
+        logger.warning(
+            "reroll_request_received token_id=%s request_id=%s source_request_id=%s",
+            token_id,
+            envelope.get("request_id"),
+            reroll_context.get("source_request_id"),
+        )
+    thread_context = _thread_context_for_request(
+        envelope=envelope,
+        token_id=token_id,
+        warnings=warnings,
+    )
+    conversation_turns = _conversation_turns_for_request(
+        thread_context,
+        str(envelope["request_id"]),
+    )
+    if conversation_turns is not None:
+        model_envelope["conversation_thread"] = {
+            "root_request_id": thread_context.get("root_request_id") if thread_context else None,
+            "turns": conversation_turns,
+        }
     storage_envelope = _privacy_safe_envelope(envelope)
     settings = _selected_settings(envelope, warnings)
     distinct_id = envelope.get("install_id") or f"token:{token_id}"
@@ -703,6 +1091,11 @@ async def _run_tldr_request(
                 error=None,
                 summary=str(cached.get("tldr") or ""),
                 suggestions=[str(item) for item in cached.get("suggestions") or []],
+                suggestion_details=(
+                    cached.get("suggestion_details")
+                    if isinstance(cached.get("suggestion_details"), list)
+                    else None
+                ),
             )
             _posthog_capture(
                 distinct_id,
@@ -715,6 +1108,13 @@ async def _run_tldr_request(
                     "cache_hit": True,
                 },
             )
+            _store_thread_success(
+                token_id=token_id,
+                envelope=envelope,
+                image_bytes_list=image_bytes_list,
+                payload=cached,
+                thread_context=thread_context,
+            )
             return _ok_response(cached, envelope["request_id"], cached_warnings)
 
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -725,9 +1125,10 @@ async def _run_tldr_request(
         )
 
     client = gemini.create_client(api_key, settings)
-    prompt_text = gemini.prompt_with_stateful_context(
+    prompt_text = gemini.prompt_with_context(
         _prompt_text(),
         model_envelope.get("stateful_context"),
+        None if conversation_turns is not None else model_envelope.get("reroll_context"),
     )
     if stream:
         def stream_events() -> Any:
@@ -737,6 +1138,7 @@ async def _run_tldr_request(
                     settings=settings,
                     prompt_text=prompt_text,
                     images=images,
+                    conversation_turns=conversation_turns,
                 ):
                     event_name = str(event.get("event") or "message")
                     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -761,6 +1163,11 @@ async def _run_tldr_request(
                                 error=None,
                                 summary=str(data.get("tldr") or ""),
                                 suggestions=[str(item) for item in data.get("suggestions") or []],
+                                suggestion_details=(
+                                    data.get("suggestion_details")
+                                    if isinstance(data.get("suggestion_details"), list)
+                                    else None
+                                ),
                                 raw_model_output=str(data.get("raw") or ""),
                             )
                             _posthog_capture(
@@ -774,6 +1181,13 @@ async def _run_tldr_request(
                                     "usage_tokens": usage_tokens,
                                     "cache_hit": False,
                                 },
+                            )
+                            _store_thread_success(
+                                token_id=token_id,
+                                envelope=envelope,
+                                image_bytes_list=image_bytes_list,
+                                payload=data,
+                                thread_context=thread_context,
                             )
                             data = _ok_response(data, envelope["request_id"], warnings)
                         else:
@@ -867,6 +1281,7 @@ async def _run_tldr_request(
             settings=settings,
             prompt_text=prompt_text,
             images=images,
+            conversation_turns=conversation_turns,
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"
@@ -916,6 +1331,7 @@ async def _run_tldr_request(
                 {
                     "tldr": payload["tldr"],
                     "suggestions": payload["suggestions"],
+                    "suggestion_details": payload.get("suggestion_details"),
                     "duration_ms": payload["duration_ms"],
                     "model": payload["model"],
                 },
@@ -932,6 +1348,11 @@ async def _run_tldr_request(
             error=None,
             summary=str(payload.get("tldr") or ""),
             suggestions=[str(item) for item in payload.get("suggestions") or []],
+            suggestion_details=(
+                payload.get("suggestion_details")
+                if isinstance(payload.get("suggestion_details"), list)
+                else None
+            ),
             raw_model_output=str(payload.get("raw") or ""),
         )
         _posthog_capture(
@@ -945,6 +1366,13 @@ async def _run_tldr_request(
                 "usage_tokens": usage_tokens,
                 "cache_hit": False,
             },
+        )
+        _store_thread_success(
+            token_id=token_id,
+            envelope=envelope,
+            image_bytes_list=image_bytes_list,
+            payload=payload,
+            thread_context=thread_context,
         )
         return _ok_response(payload, envelope["request_id"], warnings)
 

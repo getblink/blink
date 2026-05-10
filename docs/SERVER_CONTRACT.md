@@ -61,6 +61,10 @@ Operational rules:
   `tldr_requests_with_outcome` view. Screenshot bytes are never persisted.
 - When `REDIS_URL` is configured, the server may cache response JSON keyed by
   input hash only when `allow_content_retention=true`.
+- When `REDIS_URL` is configured, the server may also cache compact reroll
+  conversation threads for `BLINK_THREAD_CACHE_TTL_SECONDS` seconds. These
+  threads contain user/model transcript text and screenshot hashes only;
+  screenshot bytes are never persisted or cached server-side.
 
 Error responses:
 

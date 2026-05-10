@@ -50,6 +50,7 @@ final class BlinkCoordinator {
     private let submitQueue = DispatchQueue(label: "blink.coordinator.submit", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
     private var currentSuggestions: [String] = []
+    private var currentSuggestionDetails: [SuggestionDetail] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
     // Tracks the request ID for which a terminal event (copied / inserted /
@@ -129,6 +130,7 @@ final class BlinkCoordinator {
     }
 
     func summarizeFrontmostWindow() {
+        acknowledgeCaptureHotkey()
         queue.async { [self] in
             if pendingDoubleTap != nil {
                 promoteToMultiFrame()
@@ -143,6 +145,14 @@ final class BlinkCoordinator {
             } else {
                 appendFrameToSession()
             }
+        }
+    }
+
+    private func acknowledgeCaptureHotkey() {
+        DispatchQueue.main.async {
+            self.onStatusChange?("capturing window...")
+            self.statusSubject.send("capturing window...")
+            self.soundEffects.play(.capture)
         }
     }
 
@@ -254,9 +264,6 @@ final class BlinkCoordinator {
                 details: ["frontmost_app": frontmostApp]
             )
             status("capturing window...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             let captureResult = try captureFrame(index: 0, staging: staging)
             let frame = captureResult.frame
             var sessionFrontmost = frame.frontmostApp
@@ -364,9 +371,6 @@ final class BlinkCoordinator {
         defer { running = false }
         do {
             status("capturing frame \(pending.frames.count + 1)...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             let captureResult = try captureFrame(
                 index: pending.frames.count,
                 staging: pending.staging,
@@ -470,9 +474,6 @@ final class BlinkCoordinator {
         defer { running = false }
         do {
             status("capturing frame \(active.frames.count + 1)...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             // Multi-frame is now an explicit double-tap mode that may span
             // any frontmost window or app. Re-query SCShareableContent on
             // every frame so windows from a different app surface as
@@ -713,6 +714,7 @@ final class BlinkCoordinator {
                 guard !self.cancelledSubmissionTokens.contains(submissionToken) else { return }
                 self.currentRequestID = requestID
                 self.currentSuggestions = []
+                self.currentSuggestionDetails = []
                 self.currentBundleDir = nil
                 self.choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
                 self.overlay.onCustomInputFocusChanged = nil
@@ -720,6 +722,7 @@ final class BlinkCoordinator {
                 self.overlay.onCustomInsertKey = nil
                 self.overlay.onLeaveCustomInputKey = nil
                 self.overlay.onTextEditingKey = nil
+                self.overlay.onRerollKey = nil
                 self.overlay.onChoiceKey = { _ in }
                 self.overlay.onInsertKey = { true }
                 self.overlay.onDismissKey = { [weak self] in
@@ -821,12 +824,12 @@ final class BlinkCoordinator {
             status("ready - press 1/2/3 to expand")
             DispatchQueue.main.async {
                 guard self.currentRequestID == requestID else { return }
-                self.currentSuggestions = Array(result.suggestions.prefix(3)).map { suggestion in
-                    SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
-                        from: suggestion,
-                        draft: focusedSnapshot.meaningfulDraftText
-                    )
-                }
+                self.currentSuggestionDetails = self.normalizedSuggestionDetails(
+                    result.suggestionDetails,
+                    fallbackSuggestions: result.suggestions,
+                    draft: focusedSnapshot.meaningfulDraftText ?? ""
+                )
+                self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
                 self.currentBundleDir = bundleDir
                 self.currentRequestID = requestID
                 self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
@@ -852,6 +855,9 @@ final class BlinkCoordinator {
                 self.overlay.onTextEditingKey = { [weak self] shortcut in
                     self?.performCustomInputShortcut(shortcut) ?? false
                 }
+                self.overlay.onRerollKey = { [weak self] in
+                    self?.rerollCurrentSuggestions()
+                }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
@@ -862,11 +868,11 @@ final class BlinkCoordinator {
                     // flicker. Push the final values through the in-place
                     // update entry points instead.
                     self.overlay.updateSummary(result.tldr)
-                    self.overlay.updateSuggestions(self.currentSuggestions)
+                    self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
                 } else {
                     self.overlay.show(
                         tldr: result.tldr,
-                        suggestions: self.currentSuggestions
+                        suggestionDetails: self.currentSuggestionDetails
                     )
                 }
                 self.soundEffects.play(.resultReady)
@@ -913,6 +919,378 @@ final class BlinkCoordinator {
                 detail: detailedErrorMessage(error)
             )
         }
+    }
+
+    @MainActor
+    func rerollCurrentSuggestions() {
+        guard overlay.isVisible,
+              let sourceBundleDir = currentBundleDir,
+              let sourceRequestID = currentRequestID,
+              !currentSuggestions.isEmpty
+        else {
+            return
+        }
+        if currentStreamingRun?.isRunning == true {
+            status("already rerolling")
+            return
+        }
+        let screenshotURLs = rerollScreenshotURLs(in: sourceBundleDir)
+        guard !screenshotURLs.isEmpty else {
+            overlay.showSoftError("Can't reroll this one. The saved screenshot is missing.")
+            return
+        }
+        let requestID = UUID().uuidString.lowercased()
+        let clientMetadata = Self.clientMetadata()
+        let runtime = runtimeStore.snapshot
+        let allowEventLogging = runtime.allowEventLogging
+        let startedAt = Date()
+        let pendingPayload: [String: Any] = [
+            "request_id": requestID,
+            "started_at": JSONFiles.isoString(startedAt),
+            "updated_at": JSONFiles.isoString(startedAt),
+            "last_phase": "reroll_started",
+            "client": clientMetadata,
+            "capture_mode": "frontmost_window",
+            "input_mode": "screenshot",
+            "source_request_id": sourceRequestID,
+            "source_bundle_dir": sourceBundleDir.path,
+            "frames": screenshotURLs.map(\.lastPathComponent),
+        ]
+        do {
+            try PendingRunStore.create(requestID: requestID, payload: pendingPayload)
+        } catch {
+            overlay.showSoftError("Couldn't prepare a reroll.")
+            status("reroll failed")
+            return
+        }
+        let priorSuggestions = currentSuggestionDetails.isEmpty
+            ? currentSuggestions.map(SuggestionDetail.plain)
+            : currentSuggestionDetails
+        let runtimeURL: URL
+        let hostProfileURL = sourceBundleDir.appendingPathComponent("host_profile.json")
+        let tempDir: URL
+        do {
+            tempDir = try makeStagingDir()
+            runtimeURL = tempDir.appendingPathComponent("runtime.json")
+            try writeJSON(runtime, to: runtimeURL)
+            var requestEnvelope = JSONFiles.readObject(at: sourceBundleDir.appendingPathComponent("request.json")) ?? [:]
+            requestEnvelope["request_id"] = requestID
+            requestEnvelope.removeValue(forKey: "stateful_context")
+            // Keep full prior suggestions in the local request.json so the direct local runner can reroll without a server store. The Python proxy path trims this to schema_version + source_request_id before upload.
+            requestEnvelope["reroll_context"] = [
+                "schema_version": 1,
+                "source_request_id": sourceRequestID,
+                "previous_suggestions": currentSuggestions,
+                "previous_suggestion_details": priorSuggestions.map { detail in
+                    [
+                        "text": detail.text,
+                        "tags": detail.tags,
+                    ]
+                },
+            ]
+            try JSONFiles.writeObject(
+                requestEnvelope,
+                to: tempDir.appendingPathComponent("request.json")
+            )
+        } catch {
+            PendingRunStore.finish(requestID: requestID)
+            overlay.showSoftError("Couldn't prepare a reroll.")
+            status("reroll failed")
+            return
+        }
+
+        terminalEmittedRequestID = sourceRequestID
+        emitEvent(
+            requestID: sourceRequestID,
+            type: "run_completed",
+            allowLogging: allowEventLogging,
+            clientMetadata: clientMetadata,
+            details: ["outcome": "rerolled"]
+        )
+        PendingRunStore.finish(requestID: sourceRequestID)
+
+        let token = UUID()
+        if let inflight = currentSubmission {
+            cancelledSubmissionTokens.insert(inflight.token)
+            inflight.run?.terminate()
+        }
+        currentSubmission = InflightSubmission(token: token, requestID: requestID, run: nil)
+        currentStreamingRun = nil
+        currentRequestID = requestID
+        currentBundleDir = nil
+        currentSuggestions = []
+        currentSuggestionDetails = []
+        choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+        overlay.onChoiceKey = { _ in }
+        overlay.onInsertKey = { true }
+        overlay.onCustomInputFocusChanged = nil
+        overlay.onCustomInsert = nil
+        overlay.onCustomInsertKey = nil
+        overlay.onLeaveCustomInputKey = nil
+        overlay.onTextEditingKey = nil
+        overlay.onRerollKey = nil
+        overlay.onDismissKey = { [weak self] in
+            self?.dismissOverlay()
+        }
+        overlay.beginSuggestionRefresh()
+        status("rerolling suggestions...")
+        emitEvent(
+            requestID: requestID,
+            type: "reroll_started",
+            allowLogging: allowEventLogging,
+            clientMetadata: clientMetadata,
+            details: [
+                "source_request_id": sourceRequestID,
+                "previous_suggestion_count": priorSuggestions.count,
+            ]
+        )
+
+        let requestURL = tempDir.appendingPathComponent("request.json")
+        let rerollStartedPerf = monotonicNow()
+        submitQueue.async { [self] in
+            do {
+                let result = try PythonRunner.runOnceStreaming(
+                    config: config,
+                    screenshotPNGs: screenshotURLs,
+                    runtimeJSON: runtimeURL,
+                    settingsJSON: Paths.settingsPath,
+                    prompt: Paths.promptPath,
+                    requestJSON: requestURL,
+                    outputParent: Paths.runsDir,
+                    hostProfileJSON: hostProfileURL,
+                    onRunStarted: { run in
+                        DispatchQueue.main.async {
+                            if self.cancelledSubmissionTokens.contains(token) {
+                                run.terminate()
+                                return
+                            }
+                            if var submission = self.currentSubmission, submission.token == token {
+                                submission.run = run
+                                self.currentSubmission = submission
+                            }
+                            self.currentStreamingRun = run
+                        }
+                    },
+                    onEvent: { event in
+                        DispatchQueue.main.async {
+                            guard !self.cancelledSubmissionTokens.contains(token) else { return }
+                            guard self.currentRequestID == requestID else { return }
+                            switch event {
+                            case .phase:
+                                break
+                            case .partialSummary:
+                                break
+                            case .partialSuggestions(let list):
+                                self.overlay.updateSuggestions(Array(list.prefix(3)))
+                            }
+                        }
+                    }
+                )
+                let streamCompletedAt = Date()
+                let firstTokenAt = DispatchQueue.main.sync { self.currentStreamingRun?.firstTokenAt }
+                DispatchQueue.main.async {
+                    if let submission = self.currentSubmission, submission.token == token {
+                        self.currentSubmission = nil
+                    }
+                    if self.currentRequestID == requestID {
+                        self.currentStreamingRun = nil
+                    }
+                }
+                let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
+                    if self.cancelledSubmissionTokens.remove(token) != nil {
+                        return true
+                    }
+                    return self.currentRequestID != requestID
+                }
+                if wasAbandoned { return }
+
+                let pythonMS = durationMS(since: rerollStartedPerf)
+                let bundleDir = URL(fileURLWithPath: result.bundleDir)
+                try updateRunHostProfile(
+                    bundleDir: bundleDir,
+                    requestID: requestID,
+                    captureMS: 0,
+                    pythonMS: pythonMS,
+                    totalMS: pythonMS,
+                    result: result,
+                    firstTokenAt: firstTokenAt,
+                    streamCompletedAt: streamCompletedAt
+                )
+                emitEvent(
+                    requestID: requestID,
+                    type: "server_response_received",
+                    allowLogging: allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: [
+                        "duration_ms": result.durationMS as Any,
+                        "warnings": result.warnings,
+                        "model": result.model as Any,
+                        "reroll": true,
+                    ]
+                )
+
+                DispatchQueue.main.async {
+                    guard self.currentRequestID == requestID else { return }
+                    self.currentSuggestionDetails = self.normalizedSuggestionDetails(
+                        result.suggestionDetails,
+                        fallbackSuggestions: result.suggestions,
+                        draft: ""
+                    )
+                    self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
+                    self.currentBundleDir = bundleDir
+                    self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
+                    self.overlay.onCustomInputFocusChanged = { [weak self] active in
+                        self?.choiceState.setCustomInputActive(active)
+                    }
+                    self.overlay.onCustomInsert = { [weak self] text in
+                        self?.insertCustomReply(text: text)
+                    }
+                    self.overlay.onChoiceKey = { [weak self] index in
+                        self?.chooseSuggestion(index: index)
+                    }
+                    self.overlay.onInsertKey = { [weak self] in
+                        self?.insertExpandedSuggestion() ?? false
+                    }
+                    self.overlay.onCustomInsertKey = { [weak self] in
+                        _ = self?.insertCustomReplyFromInput()
+                        return true
+                    }
+                    self.overlay.onLeaveCustomInputKey = { [weak self] in
+                        self?.leaveCustomInput()
+                    }
+                    self.overlay.onTextEditingKey = { [weak self] shortcut in
+                        self?.performCustomInputShortcut(shortcut) ?? false
+                    }
+                    self.overlay.onRerollKey = { [weak self] in
+                        self?.rerollCurrentSuggestions()
+                    }
+                    self.overlay.onDismissKey = { [weak self] in
+                        self?.dismissOverlay()
+                    }
+                    if self.overlay.isStreamingActive {
+                        self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
+                    } else {
+                        self.overlay.show(
+                            tldr: result.tldr,
+                            suggestionDetails: self.currentSuggestionDetails
+                        )
+                    }
+                    self.soundEffects.play(.resultReady)
+                    self.status("ready - press 1/2/3 to expand")
+                    self.emitEvent(
+                        requestID: requestID,
+                        type: "overlay_shown",
+                        allowLogging: allowEventLogging,
+                        clientMetadata: clientMetadata,
+                        details: ["suggestion_count": self.currentSuggestions.count, "reroll": true]
+                    )
+                }
+            } catch {
+                let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
+                    if self.cancelledSubmissionTokens.remove(token) != nil {
+                        return true
+                    }
+                    return self.currentRequestID != requestID
+                }
+                if wasAbandoned { return }
+                emitEvent(
+                    requestID: requestID,
+                    type: "request_upload_failed",
+                    allowLogging: allowEventLogging,
+                    clientMetadata: clientMetadata,
+                    details: [
+                        "reroll": true,
+                        "error": shortErrorSummary(error),
+                    ]
+                )
+                DispatchQueue.main.async {
+                    self.overlay.endSuggestionRefresh()
+                }
+                reportFailure(
+                    title: "Blink Failed",
+                    statusText: "reroll failed: \(shortErrorSummary(error))",
+                    detail: detailedErrorMessage(error)
+                )
+            }
+        }
+    }
+
+    private func rerollScreenshotURLs(in bundleDir: URL) -> [URL] {
+        if let frameLogs = JSONFiles.readArray(at: bundleDir.appendingPathComponent("frames.json")) {
+            let urls = frameLogs.compactMap { item -> (Int, URL)? in
+                guard let object = item as? [String: Any],
+                      let index = object["index"] as? Int,
+                      let filename = object["filename"] as? String
+                else {
+                    return nil
+                }
+                let url = bundleDir.appendingPathComponent(filename)
+                return FileManager.default.fileExists(atPath: url.path) ? (index, url) : nil
+            }
+            let sorted = urls.sorted { $0.0 < $1.0 }.map(\.1)
+            if !sorted.isEmpty {
+                return sorted
+            }
+        }
+        let fallback = bundleDir.appendingPathComponent("screenshot.png")
+        return FileManager.default.fileExists(atPath: fallback.path) ? [fallback] : []
+    }
+
+    private func normalizedSuggestionDetails(
+        _ details: [SuggestionDetail],
+        fallbackSuggestions: [String],
+        draft: String
+    ) -> [SuggestionDetail] {
+        let source = details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
+        return Array(source.prefix(3)).enumerated().map { offset, detail in
+            let text = SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
+                from: detail.text,
+                draft: draft
+            )
+            return SuggestionDetail(
+                text: text,
+                tags: normalizedSuggestionTags(detail.tags, text: text, index: offset)
+            )
+        }
+    }
+
+    private func normalizedSuggestionTags(_ tags: [String], text: String, index: Int) -> [String] {
+        let trimmed = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !trimmed.isEmpty {
+            return Array(trimmed.prefix(2))
+        }
+        return [fallbackSuggestionTag(for: text, index: index)]
+    }
+
+    private func fallbackSuggestionTag(for text: String, index: Int) -> String {
+        let normalized = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if normalized.contains("?")
+            || normalized.hasPrefix("can you")
+            || normalized.hasPrefix("could you")
+            || normalized.hasPrefix("would you")
+            || normalized.hasPrefix("please") {
+            return "Ask"
+        }
+        if normalized.hasPrefix("wait")
+            || normalized.hasPrefix("hold on")
+            || normalized.hasPrefix("i don't")
+            || normalized.hasPrefix("no,") {
+            return "Pushback"
+        }
+        if normalized.hasPrefix("show me")
+            || normalized.hasPrefix("check")
+            || normalized.hasPrefix("fix")
+            || normalized.hasPrefix("add")
+            || normalized.hasPrefix("update")
+            || normalized.hasPrefix("implement")
+            || normalized.hasPrefix("push") {
+            return "Next step"
+        }
+        return ["Reply", "Ask", "Next step"][min(max(index, 0), 2)]
     }
 
     private func recordFrameCaptured(_ active: CaptureSession, frame: CapturedFrame, mode: String) {
@@ -1277,6 +1655,7 @@ final class BlinkCoordinator {
     @MainActor
     private func resetCurrentRun() {
         currentSuggestions = []
+        currentSuggestionDetails = []
         currentBundleDir = nil
         currentRequestID = nil
         terminalEmittedRequestID = nil
@@ -1287,6 +1666,7 @@ final class BlinkCoordinator {
         overlay.onCustomInsertKey = nil
         overlay.onLeaveCustomInputKey = nil
         overlay.onTextEditingKey = nil
+        overlay.onRerollKey = nil
         overlay.onChoiceKey = nil
         overlay.onInsertKey = nil
         overlay.onDismissKey = nil
@@ -1338,6 +1718,8 @@ final class BlinkCoordinator {
         currentRequestID = nil
         pendingDoubleTapRequestID = nil
         currentBundleDir = nil
+        currentSuggestions = []
+        currentSuggestionDetails = []
         if cancelledMidStream,
            let requestID = resolvedRequestID,
            let bundleDirString = cancelledBundleDir {

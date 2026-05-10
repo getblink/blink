@@ -79,6 +79,21 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertIn("requests or directions to the agent", blink_once.DEFAULT_PROMPT)
         self.assertIn("Avoid \"I agree...\"", blink_once.DEFAULT_PROMPT)
         self.assertIn("multiple screenshots", blink_once.DEFAULT_PROMPT)
+        self.assertIn('"schema_version": 2', blink_once.DEFAULT_PROMPT)
+
+    def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
+        schema = blink_once.response_schema_contract()
+
+        self.assertEqual(schema["required"], ["schema_version", "tldr", "suggestions"])
+        self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
+        suggestions = schema["properties"]["suggestions"]
+        self.assertEqual(suggestions["min_items"], 3)
+        self.assertEqual(suggestions["max_items"], 3)
+        item = suggestions["items"]
+        self.assertEqual(item["required"], ["text", "tags"])
+        self.assertEqual(item["properties"]["text"]["type"], "string")
+        self.assertEqual(item["properties"]["tags"]["min_items"], 1)
+        self.assertEqual(item["properties"]["tags"]["max_items"], 2)
 
     def test_args_screenshot_repeatable(self) -> None:
         args = blink_once.parse_args(
@@ -237,6 +252,76 @@ class BlinkOnceTests(unittest.TestCase):
             },
         )
 
+    def test_proxy_401_from_device_token_clears_and_retries_bundled_token(self) -> None:
+        os.environ["BLINK_PROXY_TOKEN"] = "bootstrap"
+        blink_once.DEVICE_TOKEN_PATH.write_text("tldr_dt_stale\n", encoding="utf-8")
+        authorizations: list[str | None] = []
+
+        class FakeResponse:
+            status = 200
+            code = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "status": "ok",
+                        "schema_version": 2,
+                        "request_id": "req-retry",
+                        "tldr": "Retry worked.",
+                        "suggestions": [
+                            {"text": "One", "tags": ["reply"]},
+                            {"text": "Two", "tags": ["reply"]},
+                            {"text": "Three", "tags": ["reply"]},
+                        ],
+                    }
+                ).encode("utf-8")
+
+        def urlopen(req: object, **__: object) -> object:
+            authorizations.append(req.get_header("Authorization"))  # type: ignore[attr-defined]
+            if len(authorizations) == 1:
+                raise blink_once.error.HTTPError(
+                    "https://proxy.example/v1/tldr",
+                    401,
+                    "Unauthorized",
+                    {"content-type": "application/json"},
+                    BytesIO(b'{"detail":"invalid bearer token"}'),
+                )
+            return FakeResponse()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", side_effect=urlopen):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-retry"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "tldr_dt_stale"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(authorizations, ["Bearer tldr_dt_stale", "Bearer bootstrap"])
+        self.assertFalse(blink_once.DEVICE_TOKEN_PATH.exists())
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn(
+            "Cleared stale cached device token",
+            " ".join(payload.get("warnings", [])),
+        )
+
     def test_proxy_stream_non_sse_response_records_diagnostics(self) -> None:
         class FakeResponse:
             status = 200
@@ -325,6 +410,80 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(payload["suggestions"], ["One", "Two", "Three"])
         self.assertEqual(payload["proxy_diagnostics"]["fallback"], "json_response")
         self.assertNotIn("error_type", payload["proxy_diagnostics"])
+
+    def test_proxy_v2_blank_dict_suggestions_do_not_stringify_dicts(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "request_id": "req-v2-blank",
+                        "status": "ok",
+                        "tldr": "Sarah needs a reply.",
+                        "suggestions": [
+                            {"text": "   ", "tags": ["Reply"]},
+                            {"text": "", "tags": ["Ask"]},
+                        ],
+                        "duration_ms": 12,
+                        "model": "gemini-3-flash-preview",
+                        "warnings": [],
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", return_value=FakeResponse()):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-v2-blank"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["suggestions"], [])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertNotIn("{'text'", json.dumps(payload["suggestions"]))
+
+    def test_request_payload_for_proxy_trims_reroll_context_to_source_id(self) -> None:
+        payload = blink_once.request_payload_for_proxy(
+            {
+                "request_id": "req-reroll",
+                "reroll_context": {
+                    "schema_version": 1,
+                    "source_request_id": "11111111-1111-4111-8111-111111111111",
+                    "previous_suggestions": ["secret local text"],
+                    "previous_suggestion_details": [
+                        {"text": "secret local text", "tags": ["Reply"]}
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(
+            payload["reroll_context"],
+            {
+                "schema_version": 1,
+                "source_request_id": "11111111-1111-4111-8111-111111111111",
+            },
+        )
 
     def test_args_screenshot_cap(self) -> None:
         with self.assertRaisesRegex(ValueError, "At most 8 screenshots"):
@@ -437,11 +596,61 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(parsed["suggestions"], ["a", "b", "c"])
 
     def test_normalize_payload_trims_and_limits_suggestions(self) -> None:
-        tldr, suggestions = blink_once.normalize_payload(
+        tldr, suggestions, details = blink_once.normalize_payload(
             {"tldr": "  hi  ", "suggestions": [" a ", "", " b ", " c ", " d "]}
         )
         self.assertEqual(tldr, "hi")
         self.assertEqual(suggestions, ["a", "b", "c"])
+        self.assertEqual(
+            details,
+            [
+                {"text": "a", "tags": ["Reply"]},
+                {"text": "b", "tags": ["Ask"]},
+                {"text": "c", "tags": ["Next step"]},
+            ],
+        )
+
+    def test_normalize_payload_accepts_v2_suggestions_with_tags(self) -> None:
+        tldr, suggestions, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "  hi  ",
+                "suggestions": [
+                    {"text": " one ", "tags": [" Reply ", "Direct", "Extra"]},
+                    {"text": "two", "tags": ["Ask"]},
+                    {"text": "three", "tags": []},
+                ],
+            }
+        )
+
+        self.assertEqual(tldr, "hi")
+        self.assertEqual(suggestions, ["one", "two", "three"])
+        self.assertEqual(
+            details,
+            [
+                {"text": "one", "tags": ["Reply", "Direct"]},
+                {"text": "two", "tags": ["Ask"]},
+                {"text": "three", "tags": ["Next step"]},
+            ],
+        )
+
+    def test_normalize_payload_fills_blank_v2_tags(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {"text": "Can you check the logs?", "tags": []},
+                    {"text": "Wait, this still seems wrong.", "tags": []},
+                    {"text": "Update the overlay height.", "tags": []},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            [item["tags"] for item in details],
+            [["Ask"], ["Pushback"], ["Next step"]],
+        )
 
     def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:
         captured_config: dict[str, Any] = {}
@@ -599,6 +808,12 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(
             blink_once.extract_partial_suggestions('{"suggestions":["line one\\nline two"'),
             ["line one\nline two"],
+        )
+        self.assertEqual(
+            blink_once.extract_partial_suggestions(
+                '{"suggestions":[{"text":"one","tags":["Reply"]},{"text":"tw'
+            ),
+            ["one", "tw"],
         )
 
     def test_extract_partial_tldr_handles_incomplete_json_and_escapes(self) -> None:
@@ -816,11 +1031,26 @@ class BlinkOnceTests(unittest.TestCase):
             self.assertEqual(len(bundles), 1)
             self.assertEqual(events[0]["bundle_dir"], str(bundles[0]))
             self.assertEqual(events[1]["event"], "phase")
+            self.assertEqual(events[1]["message"], "Reading this screen...")
             self.assertTrue(any(event["event"] == "partial_tldr" for event in events))
             self.assertEqual(events[-1]["event"], "final")
             self.assertEqual(events[-1]["status"], "ok")
             self.assertEqual(len(events[-1]["suggestions"]), 3)
             self.assertTrue((bundles[0] / "run.json").exists())
+
+    def test_stream_phase_message_uses_reroll_copy(self) -> None:
+        self.assertEqual(blink_once.stream_phase_message({}), "Reading this screen...")
+        self.assertEqual(
+            blink_once.stream_phase_message(
+                {
+                    "reroll_context": {
+                        "schema_version": 1,
+                        "source_request_id": "11111111-1111-4111-8111-111111111111",
+                    }
+                }
+            ),
+            "Rerolling suggestions...",
+        )
 
     def test_build_stateful_context_uses_custom_replies_and_same_surface_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

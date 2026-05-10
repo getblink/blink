@@ -14,6 +14,7 @@ final class HotkeyManager {
     private let onCustomInsert: () -> Bool
     private let onLeaveCustomInput: () -> Void
     private let onTextEditing: (TextEditingShortcut) -> Bool
+    private let onReroll: () -> Void
     private let onDismiss: () -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -40,6 +41,7 @@ final class HotkeyManager {
         onCustomInsert: @escaping () -> Bool,
         onLeaveCustomInput: @escaping () -> Void,
         onTextEditing: @escaping (TextEditingShortcut) -> Bool,
+        onReroll: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summaryKeyCode = summaryHotkey.keyCode
@@ -55,6 +57,7 @@ final class HotkeyManager {
         self.onCustomInsert = onCustomInsert
         self.onLeaveCustomInput = onLeaveCustomInput
         self.onTextEditing = onTextEditing
+        self.onReroll = onReroll
         self.onDismiss = onDismiss
     }
 
@@ -124,6 +127,14 @@ final class HotkeyManager {
         }
 
         if manager.isOverlayActive(),
+           keyCode == manager.summaryKeyCode,
+           flags == manager.summaryFlags {
+            // While the overlay is visible, the configured summary hotkey intentionally rerolls instead of starting a fresh capture; the plain R overlay key maps here too.
+            DispatchQueue.main.async { manager.onReroll() }
+            return nil
+        }
+
+        if manager.isOverlayActive(),
            let command = OverlayKeyRouter.command(
             forCGKeyCode: keyCode,
             flags: event.flags,
@@ -142,6 +153,9 @@ final class HotkeyManager {
                 return manager.onCustomInsert() ? nil : Unmanaged.passUnretained(event)
             case .leaveCustomInput:
                 DispatchQueue.main.async { manager.onLeaveCustomInput() }
+                return nil
+            case .reroll:
+                DispatchQueue.main.async { manager.onReroll() }
                 return nil
             case .textEditing(let shortcut):
                 return manager.onTextEditing(shortcut) ? nil : Unmanaged.passUnretained(event)

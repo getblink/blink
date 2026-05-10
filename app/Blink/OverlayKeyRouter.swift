@@ -7,6 +7,7 @@ enum OverlayKeyCommand: Equatable {
     case insert
     case insertCustomInput
     case leaveCustomInput
+    case reroll
     case textEditing(TextEditingShortcut)
 }
 
@@ -27,6 +28,7 @@ struct OverlayKeyRouter {
     ]
     private static let returnKeyCodes: Set<UInt16> = [36, 76]
     private static let escapeKeyCode: UInt16 = 53
+    private static let rerollKeyCode: UInt16 = 15
     private static let blockingCGFlags: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift,
     ]
@@ -82,6 +84,9 @@ struct OverlayKeyRouter {
         }
         if returnKeyCodes.contains(keyCode) {
             return .insert
+        }
+        if keyCode == rerollKeyCode {
+            return .reroll
         }
         return nil
     }

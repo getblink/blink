@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class SoundEffects {
-    enum Event {
+    enum Event: CaseIterable, Hashable {
         case capture
         case resultReady
         case copy
@@ -39,15 +39,32 @@ final class SoundEffects {
     }
 
     private let runtimeStore: RuntimeConfigStore
+    private var sounds: [Event: NSSound] = [:]
 
     init(runtimeStore: RuntimeConfigStore) {
         self.runtimeStore = runtimeStore
+        for event in Event.allCases {
+            if let sound = NSSound(named: NSSound.Name(event.soundName)) {
+                sounds[event] = sound
+            }
+        }
     }
 
     func play(_ event: Event) {
-        guard runtimeStore.soundsEnabled,
-              let sound = NSSound(named: NSSound.Name(event.soundName))
-        else { return }
+        guard runtimeStore.soundsEnabled else { return }
+        let sound: NSSound
+        if let cached = sounds[event] {
+            sound = cached
+        } else if let loaded = NSSound(named: NSSound.Name(event.soundName)) {
+            sounds[event] = loaded
+            sound = loaded
+        } else {
+            return
+        }
+        if sound.isPlaying {
+            sound.stop()
+            sound.currentTime = 0
+        }
         sound.volume = event.volume
         sound.play()
     }

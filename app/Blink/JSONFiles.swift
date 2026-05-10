@@ -9,6 +9,14 @@ enum JSONFiles {
         return payload
     }
 
+    static func readArray(at url: URL) -> [Any]? {
+        guard let data = try? Data(contentsOf: url),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
+            return nil
+        }
+        return payload
+    }
+
     static func writeObject(_ object: Any, to url: URL) throws {
         try ArtifactWriter.writeJSON(object, to: url)
     }

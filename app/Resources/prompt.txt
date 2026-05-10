@@ -92,6 +92,8 @@ Suggestion rules, in priority order:
 
 10. Don't mention the capture mechanism.
 
+For each suggestion, include 1-2 short tags that describe the move at a glance, such as Reply, Ask, Pushback, Next step, Clarify, Evidence, Commit, Defer, or Draft. Tags are labels only; the suggestion text must still be paste-ready by itself.
+
 Output JSON only:
 
-{"tldr": "...", "suggestions": ["...", "...", "..."]}
+{"schema_version": 2, "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}

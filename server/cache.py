@@ -82,3 +82,88 @@ class ResponseCache:
             )
         except Exception:
             return
+
+
+@dataclass
+class ThreadCache:
+    client: Any | None
+    ttl_seconds: int
+    enabled: bool
+    key_prefix: str = "tldr:v1:thread:"
+    root_key_prefix: str = "tldr:v1:thread-root:"
+
+    @classmethod
+    def from_env(cls) -> "ThreadCache":
+        redis_url = (os.environ.get("REDIS_URL") or "").strip()
+        ttl_seconds = int(_env("BLINK_THREAD_CACHE_TTL_SECONDS") or "600")
+        if not redis_url or redis is None:
+            return cls(client=None, ttl_seconds=ttl_seconds, enabled=False)
+        try:
+            client = redis.from_url(redis_url, decode_responses=True)
+        except Exception:
+            return cls(client=None, ttl_seconds=ttl_seconds, enabled=False)
+        return cls(client=client, ttl_seconds=ttl_seconds, enabled=True)
+
+    def _key(self, token_id: str, request_id: str) -> str:
+        return f"{token_id}:{request_id}"
+
+    def get_thread(self, *, token_id: str, root_request_id: str) -> dict[str, Any] | None:
+        if not self.enabled or self.client is None:
+            return None
+        try:
+            raw = self.client.get(self.key_prefix + self._key(token_id, root_request_id))
+        except Exception:
+            return None
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def set_thread(
+        self,
+        *,
+        token_id: str,
+        root_request_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if not self.enabled or self.client is None:
+            return
+        try:
+            self.client.setex(
+                self.key_prefix + self._key(token_id, root_request_id),
+                self.ttl_seconds,
+                json.dumps(payload, ensure_ascii=True, sort_keys=True),
+            )
+        except Exception:
+            return
+
+    def resolve_root(self, *, token_id: str, request_id: str) -> str | None:
+        if not self.enabled or self.client is None:
+            return None
+        try:
+            raw = self.client.get(self.root_key_prefix + self._key(token_id, request_id))
+        except Exception:
+            return None
+        root = str(raw or "").strip()
+        return root or None
+
+    def set_root_alias(
+        self,
+        *,
+        token_id: str,
+        request_id: str,
+        root_request_id: str,
+    ) -> None:
+        if not self.enabled or self.client is None:
+            return
+        try:
+            self.client.setex(
+                self.root_key_prefix + self._key(token_id, request_id),
+                self.ttl_seconds,
+                root_request_id,
+            )
+        except Exception:
+            return

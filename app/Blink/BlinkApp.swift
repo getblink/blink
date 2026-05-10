@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return consumed
             },
+            onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

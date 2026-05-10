@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS tldr_requests (
     ocr_packet JSONB,
     focused_context JSONB,
     stateful_context JSONB,
+    reroll_context JSONB,
     consent JSONB NOT NULL,
     requested_preferences JSONB NOT NULL,
     model_used TEXT,
@@ -43,6 +44,8 @@ ALTER TABLE tldr_requests
     ADD COLUMN IF NOT EXISTS install_id TEXT;
 ALTER TABLE tldr_requests
     ADD COLUMN IF NOT EXISTS stateful_context JSONB;
+ALTER TABLE tldr_requests
+    ADD COLUMN IF NOT EXISTS reroll_context JSONB;
 ALTER TABLE tldr_requests
     ADD COLUMN IF NOT EXISTS summary TEXT;
 ALTER TABLE tldr_requests
@@ -183,6 +186,7 @@ class TelemetryStore:
                         ocr_packet,
                         focused_context,
                         stateful_context,
+                        reroll_context,
                         consent,
                         requested_preferences,
                         model_used,
@@ -197,7 +201,7 @@ class TelemetryStore:
                         error
                     ) VALUES (
                         %s, %s, %s, (%s)::jsonb, %s, %s, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
-                        (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
+                        (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb, (%s)::jsonb,
                         %s, %s, %s, %s, %s, %s, (%s)::jsonb, %s, (%s)::jsonb, %s
                     )
                     ON CONFLICT (request_id) DO UPDATE SET
@@ -212,6 +216,7 @@ class TelemetryStore:
                         ocr_packet = EXCLUDED.ocr_packet,
                         focused_context = EXCLUDED.focused_context,
                         stateful_context = EXCLUDED.stateful_context,
+                        reroll_context = EXCLUDED.reroll_context,
                         consent = EXCLUDED.consent,
                         requested_preferences = EXCLUDED.requested_preferences,
                         model_used = EXCLUDED.model_used,
@@ -238,6 +243,7 @@ class TelemetryStore:
                         json.dumps(payload["ocr_packet"], ensure_ascii=True),
                         json.dumps(payload["focused_context"], ensure_ascii=True),
                         json.dumps(payload["stateful_context"], ensure_ascii=True),
+                        json.dumps(payload["reroll_context"], ensure_ascii=True),
                         json.dumps(payload["consent"], ensure_ascii=True),
                         json.dumps(payload["requested_preferences"], ensure_ascii=True),
                         payload["model_used"],
@@ -253,6 +259,69 @@ class TelemetryStore:
                     ),
                 )
             conn.commit()
+
+    def get_previous_suggestions(
+        self,
+        request_id: str,
+        token_id: str,
+    ) -> list[dict[str, Any]] | None:
+        response = self.get_previous_response(request_id, token_id)
+        if response is None:
+            return None
+        details = response.get("suggestion_details")
+        return details if isinstance(details, list) else None
+
+    def get_previous_response(
+        self,
+        request_id: str,
+        token_id: str,
+    ) -> dict[str, Any] | None:
+        if not self.enabled or self.database_url is None:
+            return None
+        self._ensure_schema()
+        assert psycopg is not None
+        with psycopg.connect(self.database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT summary, suggestions, reroll_context
+                    FROM tldr_requests
+                    WHERE request_id = %s
+                      AND token_id = %s
+                    LIMIT 1
+                    """,
+                    (request_id, token_id),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        summary, suggestions, _ = row
+        if not isinstance(suggestions, list):
+            return None
+        normalized: list[dict[str, Any]] = []
+        for item in suggestions:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                raw_tags = item.get("tags")
+                tags = [
+                    str(tag).strip()
+                    for tag in raw_tags
+                    if str(tag).strip()
+                ][:2] if isinstance(raw_tags, list) else []
+            else:
+                text = str(item or "").strip()
+                tags = []
+            if text:
+                normalized.append({"text": text, "tags": tags})
+            if len(normalized) >= 3:
+                break
+        if not normalized:
+            return None
+        return {
+            "tldr": str(summary or ""),
+            "suggestions": [item["text"] for item in normalized],
+            "suggestion_details": normalized,
+        }
 
     def record_event(self, *, token_id: str, event_type: str, payload: dict[str, Any]) -> bool:
         if not self.enabled or self.database_url is None:
