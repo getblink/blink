@@ -61,6 +61,17 @@ Use `bash app/scripts/install_local_app.sh` for local validation. The installer 
 
 Cutting a public Sparkle release goes through `app/scripts/release.sh`. Bump `app/project.yml`'s `CFBundleShortVersionString`; XcodeGen rewrites `Info.plist` from `project.yml`, so editing `Info.plist` directly is wiped.
 
+One-time host prerequisite: install Sparkle's CLI tools so `release.sh` can sign the update. The Homebrew cask `sparkle` no longer ships them as of 2.9 — pull them from the official tarball:
+
+```bash
+cd /tmp && gh release download 2.9.1 --repo sparkle-project/Sparkle -p 'Sparkle-*.tar.xz' && tar -xf Sparkle-2.9.1.tar.xz
+sudo install /tmp/bin/sign_update      /usr/local/bin/sign_update
+sudo install /tmp/bin/generate_appcast /usr/local/bin/generate_appcast
+which sign_update   # /usr/local/bin/sign_update
+```
+
+Without this, `release.sh` exits with `error: set BLINK_SPARKLE_SIGN_UPDATE to Sparkle's sign_update tool` because its sign-tool check runs before `build.sh` resolves the SPM package that would otherwise produce a workspace-local copy.
+
 Export the repo-root `.env` before invoking the script:
 
 ```bash
