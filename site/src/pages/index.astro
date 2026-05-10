@@ -57,9 +57,11 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
               autocomplete="off"
               aria-hidden="true"
             />
+            <button class="signup__submit" type="submit">join →</button>
           </div>
           <p class="status status--submitting">sending…</p>
           <p class="status status--success">you're on the list.</p>
+          <p class="status status--already">you're already on the list.</p>
           <p class="status status--invalid">that doesn't look like an email.</p>
           <p class="status status--network">
             couldn't reach the server. try again in a moment.
@@ -227,9 +229,40 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
 
     .signup__row {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: auto minmax(0, 1fr) auto;
       gap: 12px;
       align-items: center;
+    }
+
+    .signup__submit {
+      height: 36px;
+      padding: 0 14px;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--bg);
+      background: var(--fg);
+      border: 0;
+      border-radius: 0;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 120ms ease;
+    }
+
+    .signup__submit:hover {
+      opacity: 0.85;
+    }
+
+    .signup__submit:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .signup__submit:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
     }
 
     .signup__label {
@@ -279,6 +312,7 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
 
     .status--submitting,
     .status--success,
+    .status--already,
     .status--invalid,
     .status--network,
     .status--rate {
@@ -287,13 +321,15 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
 
     .signup[data-state="submitting"] .status--submitting,
     .signup[data-state="success"] .status--success,
+    .signup[data-state="already"] .status--already,
     .signup[data-state="error-invalid"] .status--invalid,
     .signup[data-state="error-network"] .status--network,
     .signup[data-state="error-rate-limit"] .status--rate {
       display: block;
     }
 
-    .status--success {
+    .status--success,
+    .status--already {
       color: var(--fg);
       font-weight: 600;
     }
@@ -320,7 +356,11 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       }
 
       .signup__row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .signup__label {
+        grid-column: 1 / -1;
       }
     }
 
@@ -372,15 +412,22 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
           return;
         }
         if (response.ok) {
-          form.dataset.state = "success";
           form.reset();
           let signupId;
+          let alreadySignedUp = false;
           try {
             const body = await response.json();
             signupId = typeof body?.signup_id === "string" ? body.signup_id : undefined;
+            alreadySignedUp = body?.already_signed_up === true;
           } catch {}
-          if (signupId) window.posthog?.alias(signupId);
-          window.posthog?.capture("beta_signup_succeeded");
+          if (alreadySignedUp) {
+            form.dataset.state = "already";
+            window.posthog?.capture("beta_signup_already_on_list");
+          } else {
+            form.dataset.state = "success";
+            if (signupId) window.posthog?.alias(signupId);
+            window.posthog?.capture("beta_signup_succeeded");
+          }
         } else {
           form.dataset.state = "error-network";
           window.posthog?.capture("beta_signup_failed", {

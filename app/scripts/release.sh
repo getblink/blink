@@ -130,9 +130,15 @@ if [[ "$UPLOAD" != "0" ]]; then
     export AWS_DEFAULT_REGION=auto
     export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
     export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+    # Short Cache-Control on the DMG too. Without it, Cloudflare applies a 4-hour
+    # edge TTL to the DMG by default. If the same DMG path is ever re-uploaded
+    # (e.g., dry-run then real release at the same version), Sparkle sees the new
+    # appcast pointing at fresh bytes, but downloads the stale cached DMG —
+    # signature verification then fails silently and updates break.
     aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$DMG_REMOTE_KEY" \
         --endpoint-url "$R2_ENDPOINT" \
-        --content-type application/x-apple-diskimage
+        --content-type application/x-apple-diskimage \
+        --cache-control 'public, max-age=60, must-revalidate'
     # Short Cache-Control so a fresh release is visible to Sparkle within 60s
     # instead of being pinned to Cloudflare's default edge TTL for XML.
     aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
