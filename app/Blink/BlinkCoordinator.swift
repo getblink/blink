@@ -130,6 +130,7 @@ final class BlinkCoordinator {
     }
 
     func summarizeFrontmostWindow() {
+        acknowledgeCaptureHotkey()
         queue.async { [self] in
             if pendingDoubleTap != nil {
                 promoteToMultiFrame()
@@ -144,6 +145,14 @@ final class BlinkCoordinator {
             } else {
                 appendFrameToSession()
             }
+        }
+    }
+
+    private func acknowledgeCaptureHotkey() {
+        DispatchQueue.main.async {
+            self.onStatusChange?("capturing window...")
+            self.statusSubject.send("capturing window...")
+            self.soundEffects.play(.capture)
         }
     }
 
@@ -255,9 +264,6 @@ final class BlinkCoordinator {
                 details: ["frontmost_app": frontmostApp]
             )
             status("capturing window...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             let captureResult = try captureFrame(index: 0, staging: staging)
             let frame = captureResult.frame
             var sessionFrontmost = frame.frontmostApp
@@ -365,9 +371,6 @@ final class BlinkCoordinator {
         defer { running = false }
         do {
             status("capturing frame \(pending.frames.count + 1)...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             let captureResult = try captureFrame(
                 index: pending.frames.count,
                 staging: pending.staging,
@@ -471,9 +474,6 @@ final class BlinkCoordinator {
         defer { running = false }
         do {
             status("capturing frame \(active.frames.count + 1)...")
-            DispatchQueue.main.async {
-                self.soundEffects.play(.capture)
-            }
             // Multi-frame is now an explicit double-tap mode that may span
             // any frontmost window or app. Re-query SCShareableContent on
             // every frame so windows from a different app surface as

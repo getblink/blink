@@ -163,10 +163,6 @@ final class SuggestionsOverlay: NSObject {
             (suggestionCollapsedHeight - suggestionCollapsedTextHeight) / 2
         }
 
-        static func suggestionNumberY(for cardHeight: CGFloat) -> CGFloat {
-            (cardHeight - suggestionNumberHeight) / 2
-        }
-
         static func optionCornerRadius(for height: CGFloat) -> CGFloat {
             min(suggestionCornerRadius, height / 2)
         }
@@ -1099,7 +1095,9 @@ final class SuggestionsOverlay: NSObject {
                     )
                     labelY = Layout.suggestionBottomPaddingExpanded
                     card.tagLabel.alphaValue = 0
-                    numberY = Layout.suggestionNumberY(for: collapsedHeight)
+                    let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
+                    let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
+                    numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
                 } else {
                     setLabelText(
                         card.label,
@@ -1117,7 +1115,7 @@ final class SuggestionsOverlay: NSObject {
                     } else {
                         labelY = (collapsedHeight - labelHeight) / 2
                     }
-                    numberY = Layout.suggestionNumberY(for: collapsedHeight)
+                    numberY = (collapsedHeight - Layout.suggestionNumberHeight) / 2
                     card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
                 }
 
@@ -1206,7 +1204,7 @@ final class SuggestionsOverlay: NSObject {
                 card.outer.animator().frame = card.collapsedFrame
                 card.number.animator().frame = NSRect(
                     x: Layout.suggestionNumberX,
-                    y: Layout.suggestionNumberY(for: collapsedHeight),
+                    y: (collapsedHeight - Layout.suggestionNumberHeight) / 2,
                     width: Layout.suggestionNumberWidth,
                     height: Layout.suggestionNumberHeight
                 )
@@ -1584,7 +1582,7 @@ final class SuggestionsOverlay: NSObject {
         let number = label(
             frame: NSRect(
                 x: Layout.suggestionNumberX,
-                y: Layout.suggestionNumberY(for: frame.height),
+                y: (frame.height - Layout.suggestionNumberHeight) / 2,
                 width: Layout.suggestionNumberWidth,
                 height: Layout.suggestionNumberHeight
             ),
