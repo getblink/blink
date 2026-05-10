@@ -8,10 +8,17 @@ const title = "Blink — reads your screen, writes the rest";
 const betaSignupUrl =
   import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
   "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
-const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
-  .split(",")
-  .map((url: string) => url.trim())
-  .filter((url: string) => url.length > 0);
+const parseUrls = (raw: string) =>
+  raw
+    .split(",")
+    .map((url: string) => url.trim())
+    .filter((url: string) => url.length > 0);
+const desktopDemoUrls = parseUrls(
+  import.meta.env.PUBLIC_DEMO_VIDEO_URL_DESKTOP || "",
+);
+// PUBLIC_DEMO_VIDEO_URL_MOBILE is reserved for a future tighter mobile cut
+// (still documented in .env.example). Until then both viewports render the
+// desktop URLs — see the .demo-cell--mobile block below.
 ---
 
 <Base title={title} description={tagline} animateLandingOnce>
@@ -37,15 +44,31 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
           reads your screen,<br />
           writes the rest.
         </p>
-        <form class="signup" data-state="idle" data-endpoint={betaSignupUrl}>
-          <div class="signup__row">
-            <label class="signup__label" for="email">join the beta</label>
+      </div>
+      <div class="cell cta-cell">
+        <form
+          class="signup"
+          data-state="idle"
+          data-mode="collapsed"
+          data-endpoint={betaSignupUrl}
+        >
+          <button
+            class="signup__open"
+            type="button"
+            aria-expanded="false"
+            aria-controls="signup-field"
+          >
+            <span>join the beta</span>
+            <span class="signup__arrow" aria-hidden="true">→</span>
+          </button>
+          <div class="signup__field" id="signup-field">
             <input
               id="email"
               name="email"
               type="email"
               autocomplete="email"
               placeholder="you@example.com"
+              aria-label="email"
               maxlength="320"
               required
             />
@@ -57,7 +80,10 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
               autocomplete="off"
               aria-hidden="true"
             />
-            <button class="signup__submit" type="submit">join →</button>
+            <button class="signup__submit" type="submit">
+              <span>join the beta</span>
+              <span class="signup__arrow" aria-hidden="true">→</span>
+            </button>
           </div>
           <p class="status status--submitting">sending…</p>
           <p class="status status--success">you're on the list.</p>
@@ -68,13 +94,17 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
           </p>
           <p class="status status--rate">too many tries. give it a minute.</p>
         </form>
+        <a class="signup__secondary" href="/story">
+          <span>read the story</span>
+          <span class="signup__arrow" aria-hidden="true">→</span>
+        </a>
       </div>
       <div
-        class="cell demo-cell"
-        data-video-urls={demoVideoUrls.join("|")}
+        class="cell demo-cell demo-cell--desktop"
+        data-video-urls={desktopDemoUrls.join("|")}
       >
         {
-          demoVideoUrls.length > 0 ? (
+          desktopDemoUrls.length > 0 ? (
             <>
               <video
                 class="demo__video is-active"
@@ -87,7 +117,7 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
                 disableremoteplayback
                 controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
                 tabindex="-1"
-                src={demoVideoUrls[0]}
+                src={desktopDemoUrls[0]}
                 aria-label="Blink demo"
               />
               <video
@@ -100,7 +130,49 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
                 disableremoteplayback
                 controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
                 tabindex="-1"
-                src={demoVideoUrls[1 % demoVideoUrls.length]}
+                src={desktopDemoUrls[1 % desktopDemoUrls.length]}
+              />
+            </>
+          ) : (
+            <div class="demo__placeholder" aria-label="Demo video coming soon">
+              <span>demo</span>
+              <span class="muted">coming soon</span>
+            </div>
+          )
+        }
+      </div>
+      <div
+        class="cell demo-cell demo-cell--mobile"
+        data-video-urls={desktopDemoUrls.join("|")}
+      >
+        {
+          desktopDemoUrls.length > 0 ? (
+            <>
+              <video
+                class="demo__video is-active"
+                data-slot="0"
+                autoplay
+                muted
+                playsinline
+                preload="auto"
+                disablepictureinpicture
+                disableremoteplayback
+                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
+                tabindex="-1"
+                src={desktopDemoUrls[0]}
+                aria-label="Blink demo"
+              />
+              <video
+                class="demo__video"
+                data-slot="1"
+                muted
+                playsinline
+                preload="auto"
+                disablepictureinpicture
+                disableremoteplayback
+                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
+                tabindex="-1"
+                src={desktopDemoUrls[1 % desktopDemoUrls.length]}
               />
             </>
           ) : (
@@ -117,29 +189,43 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
   </main>
 
   <style>
-    /* Hero row — landing-only */
+    /* Hero row — landing-only. CSS Grid so the demo can sit in different
+       positions per breakpoint without duplicating DOM nodes. */
     .hero {
-      display: flex;
-      align-items: stretch;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-rows: 1fr auto;
       min-height: 0;
+      overflow: hidden;
     }
 
     .wordmark-cell {
-      flex: 1;
+      grid-column: 1;
+      grid-row: 1;
       min-width: 0;
       flex-direction: column;
       align-items: flex-start;
       justify-content: flex-start;
-      padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px)
-        clamp(20px, 3vh, 32px);
+      padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0;
       gap: clamp(20px, 3vh, 32px);
+    }
+
+    .cta-cell {
+      grid-column: 1;
+      grid-row: 2;
+      min-width: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: clamp(20px, 3vh, 32px) clamp(28px, 4vw, 56px)
+        clamp(20px, 3vh, 32px);
     }
 
     .wordmark {
       font-size: clamp(4.5rem, 12vw, 11rem);
       font-weight: 700;
       line-height: 0.82;
-      letter-spacing: -0.05em;
+      letter-spacing: -0.04em;
       display: inline-flex;
       align-items: baseline;
     }
@@ -169,7 +255,7 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
     }
 
     .tagline {
-      font-size: clamp(1.05rem, 1.4vw, 1.4rem);
+      font-size: clamp(1rem, 1.2vw, 1.25rem);
       font-weight: 500;
       line-height: 1.4;
       color: var(--fg);
@@ -178,15 +264,24 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
 
     .demo-cell {
       position: relative;
-      flex-shrink: 0;
-      aspect-ratio: 3 / 4;
-      height: 100%;
-      max-width: 50%;
       padding: 0;
       gap: 0;
       background: var(--surface);
       overflow: hidden;
+      border-right: 0;
+    }
+
+    .demo-cell--desktop {
+      grid-column: 2;
+      grid-row: 1 / 3;
+      aspect-ratio: 3 / 4;
+      height: 100%;
+      max-width: 50vw;
       display: block;
+    }
+
+    .demo-cell--mobile {
+      display: none;
     }
 
     .demo__video {
@@ -199,6 +294,10 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       opacity: 0;
       transition: opacity 240ms ease;
       pointer-events: none;
+    }
+
+    .demo-cell--mobile .demo__video {
+      object-fit: cover;
     }
 
     .demo__video.is-active {
@@ -219,42 +318,43 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       font-weight: 600;
     }
 
-    /* Signup form — lives inside the wordmark cell, glued to the bottom */
+    /* Signup form — lives inside cta-cell. */
     .signup {
       width: 100%;
-      margin-top: auto;
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
 
-    .signup__row {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      gap: 12px;
-      align-items: center;
-    }
-
+    .signup__open,
     .signup__submit {
-      height: 36px;
-      padding: 0 14px;
+      height: 48px;
+      padding: 0 22px;
       font: inherit;
-      font-size: 12px;
+      font-size: 14px;
       font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
+      letter-spacing: 0;
       color: var(--bg);
       background: var(--fg);
       border: 0;
       border-radius: 0;
       cursor: pointer;
       white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
       transition: opacity 120ms ease;
     }
 
+    .signup__open {
+      justify-self: start;
+    }
+
+    .signup__open:hover,
     .signup__submit:hover {
       opacity: 0.85;
     }
 
+    .signup__open:focus-visible,
     .signup__submit:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
@@ -265,30 +365,61 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       opacity: 0.5;
     }
 
-    .signup__label {
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--fg);
-      white-space: nowrap;
+    .signup__arrow {
+      color: var(--accent);
+      font-weight: 500;
+      font-size: 1.05em;
+      line-height: 1;
+    }
+
+    .signup__field {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      animation: signup-field-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    .signup[data-mode="collapsed"] .signup__field {
+      display: none;
+    }
+
+    .signup[data-mode="expanded"] .signup__open {
+      display: none;
+    }
+
+    @keyframes signup-field-in {
+      from {
+        opacity: 0;
+        transform: translateY(3px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
     }
 
     input {
-      height: 36px;
+      height: 48px;
       font: inherit;
-      font-size: 14px;
+      font-size: 16px;
     }
 
     input[type="email"] {
       width: 100%;
       min-width: 0;
       border: 0;
+      border-bottom: 1px solid var(--line);
       border-radius: 0;
       background: transparent;
       color: var(--fg);
-      padding: 0;
+      padding: 0 4px;
       outline: none;
+      transition: border-color 160ms ease;
+    }
+
+    input[type="email"]:focus {
+      border-bottom-color: var(--accent);
     }
 
     input[type="email"]::placeholder {
@@ -334,33 +465,96 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       font-weight: 600;
     }
 
+    .signup__secondary {
+      display: none;
+    }
+
     @media (max-width: 880px) {
+      /* Single-column flow. wordmark+tagline pinned to top, form+secondary
+         pinned to bottom, demo absorbs all remaining vertical space. */
       .hero {
-        flex-direction: column;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+        min-height: 0;
       }
 
       .wordmark-cell {
+        grid-column: 1;
+        grid-row: 1;
         border-right: 0;
         border-bottom: 1px solid var(--line);
-        gap: 24px;
+        padding: clamp(20px, 3vh, 32px) clamp(24px, 6vw, 40px)
+          clamp(16px, 2vh, 24px);
+        gap: clamp(12px, 2vh, 18px);
       }
 
       .wordmark {
-        font-size: clamp(4rem, 22vw, 8rem);
+        font-size: clamp(5rem, 26vw, 8.5rem);
       }
 
-      .demo-cell {
+      .demo-cell--desktop {
+        display: none;
+      }
+
+      .demo-cell--mobile {
+        display: block;
+        grid-column: 1;
+        grid-row: 2;
         width: 100%;
         max-width: 100%;
-        height: auto;
+        min-height: 0;
+        border-bottom: 1px solid var(--line);
       }
 
-      .signup__row {
-        grid-template-columns: minmax(0, 1fr) auto;
+      .cta-cell {
+        grid-column: 1;
+        grid-row: 3;
+        border-right: 0;
+        border-bottom: 0;
+        padding: clamp(16px, 2.4vh, 24px) clamp(24px, 6vw, 40px)
+          clamp(16px, 2.4vh, 24px);
       }
 
-      .signup__label {
-        grid-column: 1 / -1;
+      /* On touch widths, skip the staging step — show the field by default
+         and hide the open button. The desktop click-to-expand still applies
+         above 880px. */
+      .signup[data-mode="collapsed"] .signup__open {
+        display: none;
+      }
+
+      .signup[data-mode="collapsed"] .signup__field {
+        display: grid;
+        animation: none;
+      }
+
+      .signup__field {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .signup__submit {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .signup__secondary {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        align-self: center;
+        height: 48px;
+        padding: 0 22px;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: var(--fg);
+        border-bottom-color: transparent;
+      }
+
+      .signup__secondary:hover {
+        color: var(--fg);
+        opacity: 0.7;
+        border-bottom-color: transparent;
       }
     }
 
@@ -369,16 +563,35 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
         animation: none;
         opacity: 1;
       }
+
+      .signup__field {
+        animation: none;
+      }
+
+      input[type="email"] {
+        transition: none;
+      }
     }
   </style>
 
   <script type="module">
     const form = document.querySelector(".signup");
     const endpoint = form?.dataset.endpoint;
+    const openButton = form?.querySelector(".signup__open");
+    const emailInput = form?.querySelector('input[type="email"]');
+    openButton?.addEventListener("click", () => {
+      if (!form || form.dataset.mode === "expanded") return;
+      form.dataset.mode = "expanded";
+      openButton.setAttribute("aria-expanded", "true");
+      window.posthog?.capture("beta_signup_expanded", {
+        source: "useblink.dev",
+      });
+      requestAnimationFrame(() => emailInput?.focus());
+    });
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!endpoint) return;
-      const button = form.querySelector("button");
+      const button = form.querySelector(".signup__submit");
       const data = new FormData(form);
       form.dataset.state = "submitting";
       button?.setAttribute("disabled", "true");
@@ -412,7 +625,6 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
           return;
         }
         if (response.ok) {
-          form.reset();
           let signupId;
           let alreadySignedUp = false;
           try {
@@ -446,12 +658,12 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
       }
     });
 
-    const demoCell = document.querySelector(".demo-cell");
-    const demoUrls = (demoCell?.dataset.videoUrls || "")
-      .split("|")
-      .filter(Boolean);
-    const slots = demoCell?.querySelectorAll("video") || [];
-    if (slots.length === 2 && demoUrls.length > 0) {
+    document.querySelectorAll(".demo-cell").forEach((demoCell) => {
+      const demoUrls = (demoCell.dataset.videoUrls || "")
+        .split("|")
+        .filter(Boolean);
+      const slots = demoCell.querySelectorAll("video");
+      if (slots.length !== 2 || demoUrls.length === 0) return;
       let videoIndex = 0;
       let activeSlot = 0;
       const total = demoUrls.length;
@@ -480,6 +692,6 @@ const demoVideoUrls = (import.meta.env.PUBLIC_DEMO_VIDEO_URL || "")
           advance();
         });
       });
-    }
+    });
   </script>
 </Base>
