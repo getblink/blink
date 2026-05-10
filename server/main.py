@@ -565,6 +565,7 @@ def _ok_response(payload: dict[str, Any], request_id: str, warnings: list[str]) 
 def _hydrate_reroll_context_for_model(
     reroll_context: dict[str, Any] | None,
     token_id: str,
+    warnings: list[str],
 ) -> dict[str, Any] | None:
     if not reroll_context:
         return None
@@ -582,6 +583,7 @@ def _hydrate_reroll_context_for_model(
             source_request_id,
             _sanitized_error_message(exc),
         )
+        warnings.append("reroll_context_lookup_failed")
         previous = None
     if not previous:
         logger.warning(
@@ -589,7 +591,9 @@ def _hydrate_reroll_context_for_model(
             token_id,
             source_request_id,
         )
+        warnings.append("reroll_context_missing_previous")
         return hydrated
+    warnings.append("reroll_context_hydrated")
     hydrated["previous_suggestion_details"] = previous
     hydrated["previous_suggestions"] = [
         str(item.get("text") or "").strip()
@@ -768,6 +772,7 @@ async def _run_tldr_request(
     hydrated_reroll_context = _hydrate_reroll_context_for_model(
         envelope.get("reroll_context"),
         token_id,
+        warnings,
     )
     if hydrated_reroll_context is not None:
         model_envelope["reroll_context"] = hydrated_reroll_context

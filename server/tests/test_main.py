@@ -177,6 +177,7 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("reroll_context_hydrated", response.json()["warnings"])
         telemetry_store.get_previous_suggestions.assert_called_once()
         lookup_args = telemetry_store.get_previous_suggestions.call_args.args
         self.assertEqual(lookup_args[0], source_id)
@@ -243,6 +244,7 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("reroll_context_missing_previous", response.json()["warnings"])
         recorded = telemetry_store.record_request.call_args.args[0]
         self.assertEqual(
             recorded["reroll_context"],
@@ -296,6 +298,7 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("reroll_context_missing_previous", response.json()["warnings"])
         telemetry_store.get_previous_suggestions.assert_called_once()
         lookup_args = telemetry_store.get_previous_suggestions.call_args.args
         self.assertEqual(lookup_args[0], source_id)
