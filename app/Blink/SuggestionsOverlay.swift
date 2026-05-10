@@ -1632,8 +1632,10 @@ final class SuggestionsOverlay: NSObject {
         pane.content.addSubview(number)
 
         let textWidth = frame.width - Layout.suggestionTextX - Layout.cardPaddingX
-        let tagText = renderTags(detail.tags)
-        let hasTags = !tagText.isEmpty
+        let renderedTags = renderedTags(detail.tags)
+        let tagText = renderTags(renderedTags)
+        let hasTags = !renderedTags.isEmpty
+        let primaryTagColor = tagColor(for: renderedTags.first)
         let textBlockY = hasTags
             ? (frame.height - Layout.suggestionCollapsedTextHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
             : (frame.height - Layout.suggestionCollapsedTextHeight) / 2
@@ -1659,7 +1661,7 @@ final class SuggestionsOverlay: NSObject {
             y: textBlockY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
             width: Layout.tagIconSize,
             height: Layout.tagIconSize
-        ))
+        ), color: primaryTagColor)
         tagIcon.alphaValue = hasTags ? Layout.tagAlpha : 0
         tagIcon.isHidden = !hasTags
         pane.content.addSubview(tagIcon)
@@ -1673,8 +1675,12 @@ final class SuggestionsOverlay: NSObject {
             ),
             text: tagText,
             font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold),
-            color: .systemBlue,
+            color: primaryTagColor,
             singleLine: true
+        )
+        tagLabel.attributedStringValue = makeTagAttributedString(
+            tags: renderedTags,
+            font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold)
         )
         tagLabel.alphaValue = hasTags ? Layout.tagAlpha : 0
         tagLabel.isHidden = !hasTags
@@ -1700,22 +1706,101 @@ final class SuggestionsOverlay: NSObject {
         return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint)
     }
 
-    private func makeTagIcon(frame: NSRect) -> NSImageView {
+    private func makeTagIcon(frame: NSRect, color: NSColor) -> NSImageView {
         let imageView = NSImageView(frame: frame)
         imageView.image = NSImage(systemSymbolName: "tag.fill", accessibilityDescription: "Tag")
-        imageView.contentTintColor = .systemBlue
+        imageView.contentTintColor = color
         imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Layout.tagFontSize, weight: .semibold)
         imageView.imageScaling = .scaleProportionallyDown
         return imageView
     }
 
     private func renderTags(_ tags: [String]) -> String {
+        let rendered = renderedTags(tags)
+        return rendered.isEmpty ? "" : rendered.joined(separator: "  \u{00B7}  ")
+    }
+
+    private func renderedTags(_ tags: [String]) -> [String] {
         let rendered = tags
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .prefix(2)
             .map { $0.uppercased() }
-        return rendered.isEmpty ? "" : rendered.joined(separator: "  \u{00B7}  ")
+        return Array(rendered)
+    }
+
+    private func makeTagAttributedString(tags: [String], font: NSFont) -> NSAttributedString {
+        let attributed = NSMutableAttributedString()
+        for (index, tag) in tags.enumerated() {
+            if index > 0 {
+                attributed.append(NSAttributedString(
+                    string: "  \u{00B7}  ",
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                ))
+            }
+            attributed.append(NSAttributedString(
+                string: tag,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: tagColor(for: tag),
+                ]
+            ))
+        }
+        return attributed
+    }
+
+    private func tagColor(for tag: String?) -> NSColor {
+        guard let tag, !tag.isEmpty else {
+            return .systemBlue
+        }
+        switch normalizedTagKey(tag) {
+        case "reply", "respond", "response", "confirm", "ack", "acknowledge":
+            return .systemBlue
+        case "ask", "question", "request":
+            return .systemPurple
+        case "pushback", "disagree", "objection", "challenge":
+            return .systemRed
+        case "nextstep", "next", "action", "todo", "update", "implement", "fix":
+            return .systemGreen
+        case "clarify", "clarification":
+            return .systemTeal
+        case "evidence", "proof", "logs", "check", "verify":
+            return .systemIndigo
+        case "commit", "ship", "done":
+            return .systemMint
+        case "defer", "later", "wait":
+            return .systemOrange
+        case "draft", "rewrite", "edit":
+            return .systemPink
+        default:
+            let palette: [NSColor] = [
+                .systemBlue,
+                .systemPurple,
+                .systemTeal,
+                .systemGreen,
+                .systemOrange,
+                .systemPink,
+                .systemIndigo,
+            ]
+            return palette[stableTagIndex(for: tag, count: palette.count)]
+        }
+    }
+
+    private func normalizedTagKey(_ tag: String) -> String {
+        tag
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    private func stableTagIndex(for tag: String, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let value = tag.unicodeScalars.reduce(0) { partial, scalar in
+            (partial &* 31 &+ Int(scalar.value)) & 0x7fffffff
+        }
+        return value % count
     }
 
     private func makeCustomInputCard(
