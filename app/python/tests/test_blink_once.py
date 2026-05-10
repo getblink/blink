@@ -79,6 +79,21 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertIn("requests or directions to the agent", blink_once.DEFAULT_PROMPT)
         self.assertIn("Avoid \"I agree...\"", blink_once.DEFAULT_PROMPT)
         self.assertIn("multiple screenshots", blink_once.DEFAULT_PROMPT)
+        self.assertIn('"schema_version": 2', blink_once.DEFAULT_PROMPT)
+
+    def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
+        schema = blink_once.response_schema_contract()
+
+        self.assertEqual(schema["required"], ["schema_version", "tldr", "suggestions"])
+        self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
+        suggestions = schema["properties"]["suggestions"]
+        self.assertEqual(suggestions["min_items"], 3)
+        self.assertEqual(suggestions["max_items"], 3)
+        item = suggestions["items"]
+        self.assertEqual(item["required"], ["text", "tags"])
+        self.assertEqual(item["properties"]["text"]["type"], "string")
+        self.assertEqual(item["properties"]["tags"]["min_items"], 1)
+        self.assertEqual(item["properties"]["tags"]["max_items"], 2)
 
     def test_args_screenshot_repeatable(self) -> None:
         args = blink_once.parse_args(
@@ -326,6 +341,80 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(payload["proxy_diagnostics"]["fallback"], "json_response")
         self.assertNotIn("error_type", payload["proxy_diagnostics"])
 
+    def test_proxy_v2_blank_dict_suggestions_do_not_stringify_dicts(self) -> None:
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "request_id": "req-v2-blank",
+                        "status": "ok",
+                        "tldr": "Sarah needs a reply.",
+                        "suggestions": [
+                            {"text": "   ", "tags": ["Reply"]},
+                            {"text": "", "tags": ["Ask"]},
+                        ],
+                        "duration_ms": 12,
+                        "model": "gemini-3-flash-preview",
+                        "warnings": [],
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", return_value=FakeResponse()):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-v2-blank"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["suggestions"], [])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertNotIn("{'text'", json.dumps(payload["suggestions"]))
+
+    def test_request_payload_for_proxy_trims_reroll_context_to_source_id(self) -> None:
+        payload = blink_once.request_payload_for_proxy(
+            {
+                "request_id": "req-reroll",
+                "reroll_context": {
+                    "schema_version": 1,
+                    "source_request_id": "11111111-1111-4111-8111-111111111111",
+                    "previous_suggestions": ["secret local text"],
+                    "previous_suggestion_details": [
+                        {"text": "secret local text", "tags": ["Reply"]}
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(
+            payload["reroll_context"],
+            {
+                "schema_version": 1,
+                "source_request_id": "11111111-1111-4111-8111-111111111111",
+            },
+        )
+
     def test_args_screenshot_cap(self) -> None:
         with self.assertRaisesRegex(ValueError, "At most 8 screenshots"):
             with tempfile.TemporaryDirectory() as tmp:
@@ -437,11 +526,39 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(parsed["suggestions"], ["a", "b", "c"])
 
     def test_normalize_payload_trims_and_limits_suggestions(self) -> None:
-        tldr, suggestions = blink_once.normalize_payload(
+        tldr, suggestions, details = blink_once.normalize_payload(
             {"tldr": "  hi  ", "suggestions": [" a ", "", " b ", " c ", " d "]}
         )
         self.assertEqual(tldr, "hi")
         self.assertEqual(suggestions, ["a", "b", "c"])
+        self.assertEqual(
+            details,
+            [{"text": "a", "tags": []}, {"text": "b", "tags": []}, {"text": "c", "tags": []}],
+        )
+
+    def test_normalize_payload_accepts_v2_suggestions_with_tags(self) -> None:
+        tldr, suggestions, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "  hi  ",
+                "suggestions": [
+                    {"text": " one ", "tags": [" Reply ", "Direct", "Extra"]},
+                    {"text": "two", "tags": ["Ask"]},
+                    {"text": "three", "tags": []},
+                ],
+            }
+        )
+
+        self.assertEqual(tldr, "hi")
+        self.assertEqual(suggestions, ["one", "two", "three"])
+        self.assertEqual(
+            details,
+            [
+                {"text": "one", "tags": ["Reply", "Direct"]},
+                {"text": "two", "tags": ["Ask"]},
+                {"text": "three", "tags": []},
+            ],
+        )
 
     def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:
         captured_config: dict[str, Any] = {}
@@ -599,6 +716,12 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(
             blink_once.extract_partial_suggestions('{"suggestions":["line one\\nline two"'),
             ["line one\nline two"],
+        )
+        self.assertEqual(
+            blink_once.extract_partial_suggestions(
+                '{"suggestions":[{"text":"one","tags":["Reply"]},{"text":"tw'
+            ),
+            ["one", "tw"],
         )
 
     def test_extract_partial_tldr_handles_incomplete_json_and_escapes(self) -> None:

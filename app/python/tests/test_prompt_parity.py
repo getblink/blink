@@ -18,6 +18,9 @@ SHARED_LIMIT_CONSTANTS = (
     "VOICE_SAMPLE_MAX_CHARS",
     "SURFACE_TEXT_MAX_CHARS",
     "PREFERENCE_TEXT_MAX_CHARS",
+    "RESPONSE_SCHEMA_VERSION",
+    "SUGGESTION_TAG_LIMIT",
+    "SUGGESTION_TAG_MAX_CHARS",
 )
 
 
@@ -77,6 +80,33 @@ class PromptParityTests(unittest.TestCase):
         self.assertEqual(
             blink_once.prompt_with_stateful_context("BASE PROMPT", fixture),
             gemini.prompt_with_stateful_context("BASE PROMPT", fixture),
+        )
+
+    def test_prompt_with_context_matches_for_reroll_fixture(self) -> None:
+        reroll_context = {
+            "schema_version": 1,
+            "previous_suggestions": [
+                "Sounds good, I'll take a look.",
+                "Can you send the doc?",
+                "Let's revisit this tomorrow.",
+            ],
+        }
+
+        self.assertEqual(
+            blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
+            gemini.prompt_with_context("BASE PROMPT", None, reroll_context),
+        )
+        self.assertIn(
+            "avoid repeating these previous suggestions",
+            blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
+        )
+        self.assertIn(
+            "Reroll instructions:",
+            blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
+        )
+        self.assertNotIn(
+            "Stateful Blink context:",
+            blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
 
 

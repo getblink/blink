@@ -71,6 +71,9 @@ MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOT_FRAMES = 8
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 GEMINI_UPSTREAM = "https://generativelanguage.googleapis.com"
 PROXY_TIMEOUT_SECONDS = 120.0
@@ -110,6 +113,7 @@ REDACTED_CONTENT_KEYS = {
     "custom_reply_text",
     "chosen_text",
     "tldr",
+    "previous_suggestions",
 }
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -287,6 +291,37 @@ def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context must be a JSON object",
+        )
+    source_request_id = str(value.get("source_request_id") or "").strip()
+    if (
+        not source_request_id
+        or len(source_request_id) > 64
+        or UUID_RE.fullmatch(source_request_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context.source_request_id must be a UUID",
+        )
+    try:
+        schema_version = int(value.get("schema_version") or 1)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="reroll_context.schema_version must be an integer",
+        ) from exc
+    return {
+        "schema_version": schema_version,
+        "source_request_id": source_request_id,
+    }
+
+
 def _redacted_text_summary(value: str) -> dict[str, Any]:
     return {
         "redacted": True,
@@ -301,8 +336,18 @@ def _sanitize_content_payload(value: Any, *, allow_content_retention: bool) -> A
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            if isinstance(item, str) and key in REDACTED_CONTENT_KEYS:
+            if key in REDACTED_CONTENT_KEYS and isinstance(item, str):
                 sanitized[key] = _redacted_text_summary(item)
+            elif key in REDACTED_CONTENT_KEYS and isinstance(item, list):
+                sanitized[key] = [
+                    _redacted_text_summary(str(entry))
+                    if isinstance(entry, str)
+                    else _sanitize_content_payload(
+                        entry,
+                        allow_content_retention=allow_content_retention,
+                    )
+                    for entry in item
+                ]
             else:
                 sanitized[key] = _sanitize_content_payload(
                     item,
@@ -335,6 +380,10 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     )
     sanitized["stateful_context"] = _sanitize_content_payload(
         envelope.get("stateful_context"),
+        allow_content_retention=allow_content_retention,
+    )
+    sanitized["reroll_context"] = _sanitize_content_payload(
+        envelope.get("reroll_context"),
         allow_content_retention=allow_content_retention,
     )
     return sanitized
@@ -384,6 +433,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
+        "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
         "consent": {
             "allow_event_logging": bool(consent_dict.get("allow_event_logging", True)),
             "allow_content_retention": bool(consent_dict.get("allow_content_retention", False)),
@@ -428,6 +478,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "ocr_packet": None,
         "focused_context": None,
         "stateful_context": None,
+        "reroll_context": None,
         "consent": {
             "allow_event_logging": False,
             "allow_content_retention": False,
@@ -484,6 +535,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
         "stateful_context": envelope.get("stateful_context"),
+        "reroll_context": envelope.get("reroll_context"),
     }
     image_hash = _ordered_image_hash(image_bytes_list)
     if image_hash is not None:
@@ -499,10 +551,52 @@ def _ok_response(payload: dict[str, Any], request_id: str, warnings: list[str]) 
         "status": "ok",
         "tldr": payload["tldr"],
         "suggestions": payload["suggestions"],
+        "suggestion_details": payload.get("suggestion_details")
+        or [
+            {"text": str(item), "tags": []}
+            for item in payload.get("suggestions") or []
+        ],
         "duration_ms": payload["duration_ms"],
         "model": payload["model"],
         "warnings": warnings,
     }
+
+
+def _hydrate_reroll_context_for_model(
+    reroll_context: dict[str, Any] | None,
+    token_id: str,
+) -> dict[str, Any] | None:
+    if not reroll_context:
+        return None
+    source_request_id = str(reroll_context.get("source_request_id") or "").strip()
+    hydrated = dict(reroll_context)
+    try:
+        previous = _telemetry_store().get_previous_suggestions(
+            source_request_id,
+            token_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "reroll_context_lookup_failed token_id=%s source_request_id=%s error=%s",
+            token_id,
+            source_request_id,
+            _sanitized_error_message(exc),
+        )
+        previous = None
+    if not previous:
+        logger.warning(
+            "reroll_context_missing_previous token_id=%s source_request_id=%s",
+            token_id,
+            source_request_id,
+        )
+        return hydrated
+    hydrated["previous_suggestion_details"] = previous
+    hydrated["previous_suggestions"] = [
+        str(item.get("text") or "").strip()
+        for item in previous
+        if str(item.get("text") or "").strip()
+    ][:3]
+    return hydrated
 
 
 def _record_request(
@@ -518,6 +612,7 @@ def _record_request(
     error: str | None,
     summary: str | None = None,
     suggestions: list[str] | None = None,
+    suggestion_details: list[dict[str, Any]] | None = None,
     raw_model_output: str | None = None,
 ) -> None:
     try:
@@ -536,6 +631,7 @@ def _record_request(
                 "ocr_packet": envelope.get("ocr_packet") or {},
                 "focused_context": envelope.get("focused_context") or {},
                 "stateful_context": envelope.get("stateful_context") or {},
+                "reroll_context": envelope.get("reroll_context") or {},
                 "consent": envelope.get("consent") or {},
                 "requested_preferences": envelope.get("preferences") or {},
                 "model_used": settings.get("model"),
@@ -544,7 +640,7 @@ def _record_request(
                 "usage_tokens": usage_tokens,
                 "input_hash": input_hash,
                 "summary": summary,
-                "suggestions": suggestions,
+                "suggestions": suggestion_details if suggestion_details is not None else suggestions,
                 "raw_model_output": raw_model_output,
                 "warnings": warnings,
                 "error": error,
@@ -668,7 +764,13 @@ async def _run_tldr_request(
             detail="request must include a screenshot",
         )
 
-    model_envelope = envelope
+    model_envelope = dict(envelope)
+    hydrated_reroll_context = _hydrate_reroll_context_for_model(
+        envelope.get("reroll_context"),
+        token_id,
+    )
+    if hydrated_reroll_context is not None:
+        model_envelope["reroll_context"] = hydrated_reroll_context
     storage_envelope = _privacy_safe_envelope(envelope)
     settings = _selected_settings(envelope, warnings)
     distinct_id = envelope.get("install_id") or f"token:{token_id}"
@@ -697,6 +799,11 @@ async def _run_tldr_request(
                 error=None,
                 summary=str(cached.get("tldr") or ""),
                 suggestions=[str(item) for item in cached.get("suggestions") or []],
+                suggestion_details=(
+                    cached.get("suggestion_details")
+                    if isinstance(cached.get("suggestion_details"), list)
+                    else None
+                ),
             )
             _posthog_capture(
                 distinct_id,
@@ -719,9 +826,10 @@ async def _run_tldr_request(
         )
 
     client = gemini.create_client(api_key, settings)
-    prompt_text = gemini.prompt_with_stateful_context(
+    prompt_text = gemini.prompt_with_context(
         _prompt_text(),
         model_envelope.get("stateful_context"),
+        model_envelope.get("reroll_context"),
     )
     if stream:
         def stream_events() -> Any:
@@ -755,6 +863,11 @@ async def _run_tldr_request(
                                 error=None,
                                 summary=str(data.get("tldr") or ""),
                                 suggestions=[str(item) for item in data.get("suggestions") or []],
+                                suggestion_details=(
+                                    data.get("suggestion_details")
+                                    if isinstance(data.get("suggestion_details"), list)
+                                    else None
+                                ),
                                 raw_model_output=str(data.get("raw") or ""),
                             )
                             _posthog_capture(
@@ -910,6 +1023,7 @@ async def _run_tldr_request(
                 {
                     "tldr": payload["tldr"],
                     "suggestions": payload["suggestions"],
+                    "suggestion_details": payload.get("suggestion_details"),
                     "duration_ms": payload["duration_ms"],
                     "model": payload["model"],
                 },
@@ -926,6 +1040,11 @@ async def _run_tldr_request(
             error=None,
             summary=str(payload.get("tldr") or ""),
             suggestions=[str(item) for item in payload.get("suggestions") or []],
+            suggestion_details=(
+                payload.get("suggestion_details")
+                if isinstance(payload.get("suggestion_details"), list)
+                else None
+            ),
             raw_model_output=str(payload.get("raw") or ""),
         )
         _posthog_capture(

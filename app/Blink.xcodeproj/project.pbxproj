@@ -38,6 +38,7 @@
 		A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B874CA83CFFA290563A148F /* ModelChoices.swift */; };
+		C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */; };
 		C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */; };
 		C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */; };
 		CD09576539039F9AE8E7F933 /* BlinkEventClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */; };
@@ -75,6 +76,7 @@
 		306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriverTests.swift; sourceTree = "<group>"; };
 		3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundEffects.swift; sourceTree = "<group>"; };
 		40A3234FC54834D91492DCC2 /* ApplicationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT; };
+		426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionDetail.swift; sourceTree = "<group>"; };
 		48431B2C296BDB92BF0BB93C /* Blink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Blink.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionsOverlay.swift; sourceTree = "<group>"; };
 		5003916E3C9E51FF96494423 /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
@@ -182,6 +184,7 @@
 				BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */,
 				3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */,
 				9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */,
+				426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */,
 				4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */,
 			);
 			path = Blink;
@@ -349,6 +352,7 @@
 				E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */,
 				379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */,
 				C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */,
+				C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */,
 				A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

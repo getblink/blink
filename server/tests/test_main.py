@@ -115,6 +115,214 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["warnings"], [])
 
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_reroll_hydrates_previous_suggestions_from_store(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        source_id = "11111111-1111-4111-8111-111111111111"
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            prompt_text = kwargs["prompt_text"]
+            self.assertIn("Reroll instructions:", prompt_text)
+            self.assertIn("Please send the doc.", prompt_text)
+            self.assertNotIn("Stateful Blink context:", prompt_text)
+            return {
+                "status": "ok",
+                "tldr": "Sarah needs a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "suggestion_details": [
+                    {"text": "One", "tags": ["Reply"]},
+                    {"text": "Two", "tags": ["Ask"]},
+                    {"text": "Three", "tags": ["Next"]},
+                ],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+        telemetry_store.get_previous_suggestions.return_value = [
+            {"text": "Please send the doc.", "tags": ["Ask"]},
+            {"text": "I'll take a look.", "tags": ["Reply"]},
+        ]
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-reroll",
+                            "schema_version": 1,
+                            "capture_mode": "frontmost_window",
+                            "input_mode": "screenshot",
+                            "reroll_context": {
+                                "schema_version": 1,
+                                "source_request_id": source_id,
+                            },
+                            "consent": {
+                                "allow_event_logging": True,
+                                "allow_content_retention": False,
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        telemetry_store.get_previous_suggestions.assert_called_once()
+        lookup_args = telemetry_store.get_previous_suggestions.call_args.args
+        self.assertEqual(lookup_args[0], source_id)
+        self.assertIsInstance(lookup_args[1], str)
+        self.assertTrue(lookup_args[1])
+        recorded = telemetry_store.record_request.call_args.args[0]
+        self.assertEqual(
+            recorded["reroll_context"],
+            {"schema_version": 1, "source_request_id": source_id},
+        )
+        self.assertEqual(
+            recorded["suggestions"],
+            [
+                {"text": "One", "tags": ["Reply"]},
+                {"text": "Two", "tags": ["Ask"]},
+                {"text": "Three", "tags": ["Next"]},
+            ],
+        )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_reroll_context_strips_extra_keys(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        source_id = "22222222-2222-4222-8222-222222222222"
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertNotIn("malicious previous text", kwargs["prompt_text"])
+            return {
+                "status": "ok",
+                "tldr": "Sarah needs a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+        telemetry_store.get_previous_suggestions.return_value = None
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-reroll-extra",
+                            "input_mode": "screenshot",
+                            "reroll_context": {
+                                "schema_version": 1,
+                                "source_request_id": source_id,
+                                "previous_suggestions": ["malicious previous text"],
+                                "unexpected": {"nested": "payload"},
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        recorded = telemetry_store.record_request.call_args.args[0]
+        self.assertEqual(
+            recorded["reroll_context"],
+            {"schema_version": 1, "source_request_id": source_id},
+        )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_reroll_missing_source_degrades_gracefully(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+        source_id = "33333333-3333-4333-8333-333333333333"
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            prompt_text = kwargs["prompt_text"]
+            self.assertNotIn("Reroll instructions:", prompt_text)
+            self.assertNotIn("Please send the doc.", prompt_text)
+            return {
+                "status": "ok",
+                "tldr": "Sarah needs a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 77,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        telemetry_store = mock.Mock()
+        telemetry_store.get_previous_suggestions.return_value = None
+
+        with mock.patch("server.main._telemetry_store", return_value=telemetry_store):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-reroll-missing",
+                            "input_mode": "screenshot",
+                            "reroll_context": {
+                                "schema_version": 1,
+                                "source_request_id": source_id,
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        telemetry_store.get_previous_suggestions.assert_called_once()
+        lookup_args = telemetry_store.get_previous_suggestions.call_args.args
+        self.assertEqual(lookup_args[0], source_id)
+        self.assertIsInstance(lookup_args[1], str)
+        self.assertTrue(lookup_args[1])
+
+    def test_v1_tldr_reroll_rejects_malformed_source_request_id(self) -> None:
+        response = self.client.post(
+            "/v1/tldr",
+            headers={"Authorization": "Bearer dev-token"},
+            data={
+                "request": json.dumps(
+                    {
+                        "request_id": "req-reroll-bad",
+                        "input_mode": "screenshot",
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "source_request_id": "not-a-uuid",
+                        },
+                    }
+                )
+            },
+            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions_streaming")
     @mock.patch("server.main.gemini.create_client")
     def test_v1_tldr_streams_sse_frames(
@@ -261,6 +469,44 @@ class MainTests(unittest.TestCase):
             )
 
         self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_MEDIUM")
+
+    def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
+        schema = gemini.response_schema_contract()
+
+        self.assertEqual(schema["required"], ["schema_version", "tldr", "suggestions"])
+        self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
+        suggestions = schema["properties"]["suggestions"]
+        self.assertEqual(suggestions["min_items"], 3)
+        self.assertEqual(suggestions["max_items"], 3)
+        item = suggestions["items"]
+        self.assertEqual(item["required"], ["text", "tags"])
+        self.assertEqual(item["properties"]["text"]["type"], "string")
+        self.assertEqual(item["properties"]["tags"]["min_items"], 1)
+        self.assertEqual(item["properties"]["tags"]["max_items"], 2)
+
+    def test_gemini_normalizes_v2_suggestions_with_tags(self) -> None:
+        tldr, suggestions, details = gemini._normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "Sarah needs a reply.",
+                "suggestions": [
+                    {"text": "One", "tags": ["Reply", "Direct"]},
+                    {"text": "Two", "tags": ["Ask"]},
+                    {"text": "Three", "tags": ["Next step"]},
+                ],
+            }
+        )
+
+        self.assertEqual(tldr, "Sarah needs a reply.")
+        self.assertEqual(suggestions, ["One", "Two", "Three"])
+        self.assertEqual(
+            details,
+            [
+                {"text": "One", "tags": ["Reply", "Direct"]},
+                {"text": "Two", "tags": ["Ask"]},
+                {"text": "Three", "tags": ["Next step"]},
+            ],
+        )
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")

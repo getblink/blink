@@ -106,6 +106,9 @@ VOICE_SAMPLE_MIN_CHARS = 15
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 SURFACE_CONTEXT_WINDOW_SECONDS = 15 * 60
+RESPONSE_SCHEMA_VERSION = 2
+SUGGESTION_TAG_LIMIT = 2
+SUGGESTION_TAG_MAX_CHARS = 24
 
 DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
@@ -184,9 +187,11 @@ Suggestion rules, in priority order:
 
 10. Don't mention that you saw a screenshot.
 
+For each suggestion, include 1-2 short tags that describe the move at a glance, such as Reply, Ask, Pushback, Next step, Clarify, Evidence, Commit, Defer, or Draft. Tags are labels only; the suggestion text must still be paste-ready by itself.
+
 Output JSON only:
 
-{"tldr": "...", "suggestions": ["...", "...", "..."]}
+{"schema_version": 2, "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
 """
 
 
@@ -526,9 +531,13 @@ def build_stateful_context(
     }
 
 
-def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, Any] | None) -> str:
+def prompt_with_context(
+    prompt_text: str,
+    stateful_context: dict[str, Any] | None,
+    reroll_context: dict[str, Any] | None = None,
+) -> str:
     if not stateful_context:
-        return prompt_text
+        stateful_context = {}
     voice_samples = stateful_context.get("voice_samples")
     preference_examples = stateful_context.get("preference_examples")
     surface_history = stateful_context.get("recent_surface_history")
@@ -538,8 +547,19 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
         preference_examples = []
     if not isinstance(surface_history, list):
         surface_history = []
-    if not voice_samples and not preference_examples and not surface_history:
+    if not isinstance(reroll_context, dict):
+        reroll_context = {}
+    previous_suggestions = reroll_context.get("previous_suggestions")
+    if not isinstance(previous_suggestions, list):
+        previous_suggestions = []
+    previous_suggestion_texts = [
+        text
+        for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in previous_suggestions)
+        if text
+    ][:3]
+    if not voice_samples and not preference_examples and not surface_history and not previous_suggestion_texts:
         return prompt_text
+    has_stateful_context = bool(voice_samples or preference_examples or surface_history)
     preference_texts = {
         text
         for example in preference_examples
@@ -547,13 +567,25 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
         for text in [_bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)]
         if text
     }
-    lines = [
-        "",
-        "Stateful Blink context:",
-        "Use user preference examples to infer which suggestions are useful in this surface.",
-        "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
-        "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
-    ]
+    lines = [""]
+    if has_stateful_context:
+        lines.extend(
+            [
+                "Stateful Blink context:",
+                "Use user preference examples to infer which suggestions are useful in this surface.",
+                "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
+                "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
+            ]
+        )
+    if previous_suggestion_texts:
+        lines.extend(
+            [
+                "Reroll instructions:",
+                "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:",
+            ]
+        )
+        for suggestion in previous_suggestion_texts:
+            lines.append(f"- {suggestion}")
     if preference_examples:
         lines.extend(
             [
@@ -627,20 +659,93 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
 
 
+def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, Any] | None) -> str:
+    return prompt_with_context(prompt_text, stateful_context)
+
+
+def response_schema_contract() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["schema_version", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "tldr", "suggestions"],
+        "properties": {
+            "schema_version": {
+                "type": "integer",
+                "description": "Response schema version. Always 2.",
+            },
+            "tldr": {
+                "type": "string",
+                "max_length": 360,
+            },
+            "suggestions": {
+                "type": "array",
+                "min_items": 3,
+                "max_items": 3,
+                "items": {
+                    "type": "object",
+                    "required": ["text", "tags"],
+                    "property_ordering": ["text", "tags"],
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "A candidate reply or next action the user might send next.",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "min_items": 1,
+                            "max_items": 2,
+                            "items": {
+                                "type": "string",
+                                "max_length": SUGGESTION_TAG_MAX_CHARS,
+                                "description": "A short label describing the suggestion's move.",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 def response_schema():
     from google.genai import types
 
+    contract = response_schema_contract()
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["tldr", "suggestions"],
-        propertyOrdering=["tldr", "suggestions"],
+        required=contract["required"],
+        propertyOrdering=contract["property_ordering"],
         properties={
+            "schema_version": types.Schema(
+                type=types.Type.INTEGER,
+                description="Response schema version. Always 2.",
+            ),
             "tldr": types.Schema(type=types.Type.STRING, maxLength=360),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
                 minItems=3,
                 maxItems=3,
-                items=types.Schema(type=types.Type.STRING),
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["text", "tags"],
+                    propertyOrdering=["text", "tags"],
+                    properties={
+                        "text": types.Schema(
+                            type=types.Type.STRING,
+                            description="A candidate reply or next action the user might send next.",
+                        ),
+                        "tags": types.Schema(
+                            type=types.Type.ARRAY,
+                            minItems=1,
+                            maxItems=2,
+                            items=types.Schema(
+                                type=types.Type.STRING,
+                                maxLength=SUGGESTION_TAG_MAX_CHARS,
+                                description="A short label describing the suggestion's move.",
+                            ),
+                        ),
+                    },
+                ),
             ),
         },
     )
@@ -660,13 +765,42 @@ def parse_json_response(raw_text: str) -> tuple[Any | None, str | None]:
             return None, str(second_error)
 
 
-def normalize_payload(parsed: dict[str, Any]) -> tuple[str, list[str]]:
-    tldr = str(parsed.get("tldr") or "").strip()
+def _normalize_tag(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text[:SUGGESTION_TAG_MAX_CHARS]
+
+
+def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]:
     raw_suggestions = parsed.get("suggestions")
     if not isinstance(raw_suggestions, list):
         raw_suggestions = []
-    suggestions = [str(item).strip() for item in raw_suggestions if str(item).strip()]
-    return tldr, suggestions[:3]
+    details: list[dict[str, Any]] = []
+    for item in raw_suggestions:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("suggestion") or "").strip()
+            raw_tags = item.get("tags")
+            if not isinstance(raw_tags, list):
+                raw_tags = []
+            tags = [
+                tag
+                for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
+                if tag
+            ][:SUGGESTION_TAG_LIMIT]
+        else:
+            text = str(item or "").strip()
+            tags = []
+        if text:
+            details.append({"text": text, "tags": tags})
+    return details[:3]
+
+
+def normalize_payload(parsed: dict[str, Any]) -> tuple[str, list[str], list[dict[str, Any]]]:
+    tldr = str(parsed.get("tldr") or "").strip()
+    suggestion_details = normalize_suggestion_details(parsed)
+    suggestions = [item["text"] for item in suggestion_details]
+    return tldr, suggestions, suggestion_details
 
 
 def build_response_payload(
@@ -704,7 +838,7 @@ def build_response_payload(
             }
         )
         return payload
-    tldr, suggestions = normalize_payload(parsed)
+    tldr, suggestions, suggestion_details = normalize_payload(parsed)
     if len(suggestions) != 3:
         payload.update(
             {
@@ -714,7 +848,15 @@ def build_response_payload(
             }
         )
         return payload
-    payload.update({"status": "ok", "tldr": tldr, "suggestions": suggestions})
+    payload.update(
+        {
+            "status": "ok",
+            "schema_version": RESPONSE_SCHEMA_VERSION,
+            "tldr": tldr,
+            "suggestions": suggestions,
+            "suggestion_details": suggestion_details,
+        }
+    )
     return payload
 
 
@@ -798,6 +940,15 @@ def extract_partial_suggestions(raw_text: str) -> list[str]:
     bracket_index = raw_text.find("[", marker_index + len(marker))
     if bracket_index < 0:
         return []
+    array_prefix = raw_text[bracket_index + 1:]
+    if array_prefix.lstrip().startswith("{"):
+        suggestions = []
+        for match in re.finditer(r'"text"\s*:\s*"', array_prefix):
+            parsed = _parse_partial_json_string(array_prefix[match.end() - 1:])
+            if parsed:
+                suggestions.append(parsed)
+        return suggestions
+
     suggestions: list[str] = []
     chars: list[str] = []
     in_string = False
@@ -833,6 +984,33 @@ def extract_partial_suggestions(raw_text: str) -> list[str]:
     if in_string and chars:
         suggestions.append("".join(chars))
     return suggestions
+
+
+def _parse_partial_json_string(raw_text: str) -> str | None:
+    if not raw_text.startswith('"'):
+        return None
+    chars: list[str] = []
+    escaped = False
+    for char in raw_text[1:]:
+        if escaped:
+            if char == "n":
+                chars.append("\n")
+            elif char == "t":
+                chars.append("\t")
+            elif char == "r":
+                chars.append("\r")
+            else:
+                chars.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            break
+        chars.append(char)
+    text = "".join(chars).strip()
+    return text or None
 
 
 def extract_partial_tldr(raw_text: str) -> str | None:
@@ -1259,10 +1437,30 @@ def generate_via_proxy(
             proxy_diagnostics=proxy_diagnostics,
         )
 
+    suggestion_details = normalize_suggestion_details(parsed)
+    if suggestion_details:
+        suggestions = [item["text"] for item in suggestion_details]
+    else:
+        raw_suggestions = parsed.get("suggestions")
+        if not isinstance(raw_suggestions, list):
+            raw_suggestions = []
+        suggestions = []
+        for item in raw_suggestions:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+            else:
+                text = str(item or "").strip()
+            if text:
+                suggestions.append(text)
+            if len(suggestions) >= 3:
+                break
+        suggestion_details = [{"text": text, "tags": []} for text in suggestions]
+
     payload: dict[str, Any] = {
         "status": str(parsed.get("status") or "error"),
         "tldr": str(parsed.get("tldr") or ""),
-        "suggestions": [str(item) for item in parsed.get("suggestions") or [] if str(item).strip()],
+        "suggestions": suggestions,
+        "suggestion_details": suggestion_details,
         "raw": raw_text,
         "usage": None,
         "duration_ms": int(parsed.get("duration_ms") or round((finished - started) * 1000)),
@@ -1272,6 +1470,21 @@ def generate_via_proxy(
         "model": parsed.get("model"),
         "proxy_diagnostics": parsed.get("proxy_diagnostics") if isinstance(parsed.get("proxy_diagnostics"), dict) else proxy_diagnostics,
     }
+    return payload
+
+
+def request_payload_for_proxy(request_payload: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(request_payload)
+    reroll_context = payload.get("reroll_context")
+    if isinstance(reroll_context, dict):
+        source_request_id = str(reroll_context.get("source_request_id") or "").strip()
+        if source_request_id:
+            payload["reroll_context"] = {
+                "schema_version": int(reroll_context.get("schema_version") or 1),
+                "source_request_id": source_request_id,
+            }
+        else:
+            payload.pop("reroll_context", None)
     return payload
 
 
@@ -1406,8 +1619,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.skip_gemini
         else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
     )
+    reroll_context = request_payload.get("reroll_context") if isinstance(request_payload.get("reroll_context"), dict) else None
     model_prompt_text = (
-        prompt_with_stateful_context(prompt_text, stateful_context)
+        prompt_with_context(prompt_text, stateful_context, reroll_context)
         if generation_path in {"proxy", "local_gemini"}
         else prompt_text
     )
@@ -1494,6 +1708,11 @@ def main(argv: list[str] | None = None) -> int:
                     "Nice, the packaged Blink flow is working.",
                     "Let's try it on one more real conversation.",
                 ],
+                "suggestion_details": [
+                    {"text": "This looks good to me.", "tags": ["Reply"]},
+                    {"text": "Nice, the packaged Blink flow is working.", "tags": ["Confirm"]},
+                    {"text": "Let's try it on one more real conversation.", "tags": ["Next step"]},
+                ],
                 "raw": "",
                 "usage": None,
                 "duration_ms": 0,
@@ -1511,7 +1730,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if proxy_settings is not None and request_payload.get("request_id"):
                 response = generate_via_proxy(
-                    request_payload=request_payload,
+                    request_payload=request_payload_for_proxy(request_payload),
                     settings=settings,
                     proxy_settings=proxy_settings,
                     image_paths=screenshot_outputs,
@@ -1547,6 +1766,7 @@ def main(argv: list[str] | None = None) -> int:
                 "response": {
                     "tldr": response["tldr"],
                     "suggestions": response["suggestions"],
+                    "suggestion_details": response.get("suggestion_details"),
                     "duration_ms": response.get("duration_ms"),
                     "model": response.get("model"),
                     "warnings": response.get("warnings"),
@@ -1572,6 +1792,7 @@ def main(argv: list[str] | None = None) -> int:
             "bundle_dir": str(run_dir),
             "tldr": response["tldr"],
             "suggestions": response["suggestions"],
+            "suggestion_details": response.get("suggestion_details"),
             "request_id": response.get("request_id"),
             "duration_ms": response.get("duration_ms"),
             "warnings": response.get("warnings"),
