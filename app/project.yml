@@ -46,7 +46,7 @@ targets:
         CFBundleName: Blink
         CFBundleDisplayName: Blink
         CFBundleIdentifier: com.henryz2004.blink
-        CFBundleShortVersionString: "0.2.1"
+        CFBundleShortVersionString: "0.2.2"
         # Build-time placeholder. Auto-stamped by app/scripts/build.sh from
         # `git rev-list --count HEAD` (or BLINK_BUILD_NUMBER); editing this
         # value has no effect on shipped builds.
