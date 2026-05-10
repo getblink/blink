@@ -40,7 +40,9 @@ const softwareApplicationSchema = {
     "@type": "Offer",
     price: "0",
     priceCurrency: "USD",
-    url: "https://dl.useblink.dev/releases/0.2.1/Blink-0.2.1.dmg",
+    // Stable alias maintained by app/scripts/release.sh — points at the
+    // most recent published DMG so this offer URL doesn't go stale.
+    url: "https://dl.useblink.dev/latest/Blink.dmg",
   },
 };
 
