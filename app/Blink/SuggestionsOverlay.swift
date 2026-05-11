@@ -275,6 +275,40 @@ final class SuggestionsOverlay: NSObject {
         return measuredTextHeight <= singleLineHeight
     }
 
+    private func collapsedTextIsTruncated(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> Bool {
+        let measuredTextHeight = measureHeight(detail.text, width: width, font: font, lineSpacing: 2)
+        let collapsedHeight = collapsedTextHeight(for: detail, width: width, font: font)
+        return measuredTextHeight > collapsedHeight + 1
+    }
+
+    private func collapsedDisplayText(for detail: SuggestionDetail, width: CGFloat, font: NSFont) -> String {
+        guard collapsedTextIsTruncated(for: detail, width: width, font: font) else {
+            return detail.text
+        }
+
+        let collapsedHeight = collapsedTextHeight(for: detail, width: width, font: font)
+        let source = detail.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = "..."
+        guard source.count > suffix.count else { return source }
+
+        var low = 0
+        var high = source.count
+        var best = suffix
+        while low <= high {
+            let mid = (low + high) / 2
+            let end = source.index(source.startIndex, offsetBy: mid)
+            let candidate = String(source[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + suffix
+            let height = measureHeight(candidate, width: width, font: font, lineSpacing: 2)
+            if height <= collapsedHeight + 1 {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return best
+    }
+
     func show(tldr: String, suggestions: [String]) {
         show(tldr: tldr, suggestionDetails: suggestions.map(SuggestionDetail.plain))
     }
@@ -285,7 +319,7 @@ final class SuggestionsOverlay: NSObject {
             suggestionDetails: suggestionDetails,
             showsCustomInput: true,
             hintText: nil,
-            bottomHintText: "Press 1 / 2 / 3 to expand \u{00B7} R to reroll \u{00B7} Esc to dismiss",
+            bottomHintText: "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R to reroll \u{00B7} Esc to dismiss",
             showsTldrHeader: true
         )
     }
@@ -564,7 +598,7 @@ final class SuggestionsOverlay: NSObject {
                 tagLabel: card.tagLabel,
                 enterHint: card.enterHint,
                 collapsedFrame: rowFrame,
-                collapsedText: detail.text,
+                collapsedText: collapsedDisplayText(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 fullText: detail.text,
                 expandedHeight: expandedHeights[offset],
                 hasTags: !renderTags(detail.tags).isEmpty,
@@ -878,7 +912,7 @@ final class SuggestionsOverlay: NSObject {
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let bottomHintText = showsTldrHeader
-            ? "Press 1 / 2 / 3 to expand \u{00B7} R to reroll \u{00B7} Esc to dismiss"
+            ? "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R to reroll \u{00B7} Esc to dismiss"
             : nil
         let contentWidth = Layout.panelWidth
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
@@ -954,7 +988,7 @@ final class SuggestionsOverlay: NSObject {
                 tagLabel: card.tagLabel,
                 enterHint: card.enterHint,
                 collapsedFrame: rowFrame,
-                collapsedText: detail.text,
+                collapsedText: collapsedDisplayText(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 fullText: detail.text,
                 expandedHeight: expandedHeights[offset],
                 hasTags: !renderTags(detail.tags).isEmpty,
@@ -1773,6 +1807,7 @@ final class SuggestionsOverlay: NSObject {
         let primaryTagColor = tagColor(for: renderedTags.first)
         let collapsedLabelHeight = collapsedTextHeight(for: detail, width: textWidth, font: font)
         let collapsedSingleLine = collapsedTextIsSingleLine(for: detail, width: textWidth, font: font)
+        let collapsedText = collapsedDisplayText(for: detail, width: textWidth, font: font)
         let textBlockY = hasTags
             ? (frame.height - collapsedLabelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
             : (frame.height - collapsedLabelHeight) / 2
@@ -1783,7 +1818,7 @@ final class SuggestionsOverlay: NSObject {
                 width: textWidth,
                 height: collapsedLabelHeight
             ),
-            text: detail.text,
+            text: collapsedText,
             font: font,
             color: .labelColor,
             lineSpacing: collapsedSingleLine ? 0 : 2,

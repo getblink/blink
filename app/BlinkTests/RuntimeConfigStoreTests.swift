@@ -84,4 +84,65 @@ final class RuntimeConfigStoreTests: XCTestCase {
             XCTAssertEqual(decoded.thinkingLevel, level)
         }
     }
+
+    func testRuntimeConfigFileDefaultsStyleWhenMissing() throws {
+        let data = """
+        {
+          "version": 1,
+          "auto_paste": true,
+          "model": "gemini-3-flash-preview"
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(RuntimeConfigFile.self, from: data)
+
+        XCTAssertEqual(config.style, .default)
+        XCTAssertEqual(config.style.initiative, "balanced")
+        XCTAssertEqual(config.style.aboutMe, "")
+    }
+
+    func testRuntimeConfigFileDecodesAndRoundTripsStyle() throws {
+        let data = """
+        {
+          "version": 1,
+          "style": {
+            "initiative": "agentic",
+            "tone": "casual",
+            "length": "terse",
+            "directness": "direct",
+            "voice_mirror": "mirror",
+            "about_me": "I'm a backend engineer."
+          }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(RuntimeConfigFile.self, from: data)
+        XCTAssertEqual(config.style.initiative, "agentic")
+        XCTAssertEqual(config.style.tone, "casual")
+        XCTAssertEqual(config.style.length, "terse")
+        XCTAssertEqual(config.style.directness, "direct")
+        XCTAssertEqual(config.style.voiceMirror, "mirror")
+        XCTAssertEqual(config.style.aboutMe, "I'm a backend engineer.")
+
+        let reEncoded = try JSONEncoder().encode(config)
+        let reDecoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: reEncoded)
+        XCTAssertEqual(reDecoded.style, config.style)
+
+        // The on-disk key is snake_case to stay readable from Python.
+        let object = try JSONSerialization.jsonObject(with: reEncoded) as? [String: Any]
+        let styleDict = object?["style"] as? [String: Any]
+        XCTAssertEqual(styleDict?["voice_mirror"] as? String, "mirror")
+        XCTAssertEqual(styleDict?["about_me"] as? String, "I'm a backend engineer.")
+    }
+
+    func testStylePrefsDefaultsIndividualFieldsWhenMissing() throws {
+        let data = """
+        { "initiative": "agentic" }
+        """.data(using: .utf8)!
+
+        let style = try JSONDecoder().decode(StylePrefs.self, from: data)
+        XCTAssertEqual(style.initiative, "agentic")
+        XCTAssertEqual(style.tone, "balanced")
+        XCTAssertEqual(style.aboutMe, "")
+    }
 }

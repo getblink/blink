@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyDisplay: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let launchedAt = DispatchTime.now()
         Self.logLaunchIdentity()
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
@@ -60,7 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runtimeStore: runtimeStore,
             eventClient: eventClient,
             summaryHotkey: summaryHotkey,
-            soundEffects: soundEffects
+            soundEffects: soundEffects,
+            launchedAt: launchedAt
         )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)
@@ -107,9 +109,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
-            onSummarize: { [weak coordinator, weak nudges] in
+            onSummarize: { [weak coordinator, weak nudges] pressedAt in
+                let summarizeEnteredAt = DispatchTime.now()
                 Task { @MainActor in nudges?.noteHotkeyInvoked() }
-                coordinator?.summarizeFrontmostWindow()
+                coordinator?.summarizeFrontmostWindow(
+                    pressedAt: pressedAt,
+                    summarizeEnteredAt: summarizeEnteredAt
+                )
+            },
+            onSummaryHotkeyWhileOverlay: { [weak coordinator, weak nudges] pressedAt in
+                let summarizeEnteredAt = DispatchTime.now()
+                Task { @MainActor in nudges?.noteHotkeyInvoked() }
+                coordinator?.acknowledgeSummaryHotkeyForReroll(
+                    pressedAt: pressedAt,
+                    summarizeEnteredAt: summarizeEnteredAt
+                )
             },
             onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
             onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },

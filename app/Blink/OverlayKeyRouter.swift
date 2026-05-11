@@ -60,6 +60,10 @@ struct OverlayKeyRouter {
         hasBlockingModifier: Bool,
         customInputActive: Bool
     ) -> OverlayKeyCommand? {
+        if keyCode == rerollKeyCode, hasCommandOnlyModifier {
+            return .reroll
+        }
+
         if customInputActive {
             if hasCommandOnlyModifier, let shortcut = textEditingKeyCodes[keyCode] {
                 return .textEditing(shortcut)
@@ -84,9 +88,6 @@ struct OverlayKeyRouter {
         }
         if returnKeyCodes.contains(keyCode) {
             return .insert
-        }
-        if keyCode == rerollKeyCode {
-            return .reroll
         }
         return nil
     }

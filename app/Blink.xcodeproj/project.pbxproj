@@ -13,6 +13,7 @@
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
 		2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */; };
 		25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DBB159CA5CB427CCCADEF /* BlinkApp.swift */; };
+		2A8396E4B0522D8835B8C8C3 /* StyleWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699096349C929C3CB76DAA67 /* StyleWindow.swift */; };
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */; };
 		379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */; };
@@ -91,6 +92,7 @@
 		63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeCoordinator.swift; sourceTree = "<group>"; };
 		642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClient.swift; sourceTree = "<group>"; };
 		66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkCoordinator.swift; sourceTree = "<group>"; };
+		699096349C929C3CB76DAA67 /* StyleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleWindow.swift; sourceTree = "<group>"; };
 		71B0F9AAF9A7972C08DC337C /* Inserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inserter.swift; sourceTree = "<group>"; };
 		733316E4538EF5998654016C /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		74B1FFD588F30CF37132F363 /* PendingRunStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStoreTests.swift; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 				F508C4F9E4A91770F8CAB40E /* RuntimeEnvironment.swift */,
 				BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */,
 				3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */,
+				699096349C929C3CB76DAA67 /* StyleWindow.swift */,
 				9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */,
 				426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */,
 				4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */,
@@ -367,6 +370,7 @@
 				8D89F453B4B447F3C165D8C2 /* RuntimeEnvironment.swift in Sources */,
 				E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */,
 				379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */,
+				2A8396E4B0522D8835B8C8C3 /* StyleWindow.swift in Sources */,
 				C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */,
 				C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */,
 				A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */,

@@ -32,6 +32,26 @@ final class BlinkEventClient: BlinkEventSending {
         details: [String: Any] = [:],
         completion: ((Bool) -> Void)? = nil
     ) {
+        send(
+            requestID: requestID,
+            eventType: eventType,
+            allowLogging: allowLogging,
+            clientMetadata: clientMetadata,
+            details: details,
+            createdAt: nil,
+            completion: completion
+        )
+    }
+
+    func send(
+        requestID: String,
+        eventType: String,
+        allowLogging: Bool,
+        clientMetadata: [String: Any],
+        details: [String: Any] = [:],
+        createdAt: String?,
+        completion: ((Bool) -> Void)? = nil
+    ) {
         guard allowLogging, let proxyConfig else {
             completion?(false)
             return
@@ -41,7 +61,7 @@ final class BlinkEventClient: BlinkEventSending {
             "schema_version": 1,
             "request_id": requestID,
             "event_type": eventType,
-            "created_at": JSONFiles.isoString(),
+            "created_at": createdAt ?? JSONFiles.isoString(),
             "client": clientMetadata,
         ]
         if !details.isEmpty {
