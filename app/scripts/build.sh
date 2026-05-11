@@ -19,6 +19,33 @@ if [[ -f "$SCRIPT_DIR/config.env" ]]; then
     source "$SCRIPT_DIR/config.env"
 fi
 
+# Production-release flows (release.sh) set this so the build pulls
+# BLINK_PROXY_URL/BLINK_PROXY_TOKEN from .env.production rather than from
+# the local-dev .env that was just sourced above. Local-dev flows
+# (install_local_app.sh, raw build.sh) leave this unset and keep
+# embedding whatever's in .env (typically staging). Without this two-file
+# split, release.sh's .env.production exports got clobbered by build.sh's
+# re-source of .env, which shipped staging into the 0.2.3 and 0.2.4 DMGs.
+if [[ "${BLINK_REQUIRE_PRODUCTION_PROXY:-}" == "1" ]]; then
+    PROD_ENV="$APP_DIR/../.env.production"
+    if [[ ! -f "$PROD_ENV" ]]; then
+        echo "[blink] error: BLINK_REQUIRE_PRODUCTION_PROXY=1 but $PROD_ENV not found." >&2
+        echo "[blink] Create it with BLINK_PROXY_URL and BLINK_PROXY_TOKEN (see .env.production.example)." >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1090
+    source "$PROD_ENV"
+    echo "[blink] sourced production proxy config from $PROD_ENV"
+    if [[ -z "${BLINK_PROXY_URL:-}" || -z "${BLINK_PROXY_TOKEN:-}" ]]; then
+        echo "[blink] error: $PROD_ENV must define both BLINK_PROXY_URL and BLINK_PROXY_TOKEN" >&2
+        exit 1
+    fi
+    if [[ "$BLINK_PROXY_URL" == *staging* ]]; then
+        echo "[blink] error: BLINK_PROXY_URL in $PROD_ENV points at staging ($BLINK_PROXY_URL); release builds must embed production." >&2
+        exit 1
+    fi
+fi
+
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/env_compat.sh"
 blink_apply_legacy_env_aliases
