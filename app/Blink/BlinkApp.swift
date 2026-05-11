@@ -234,8 +234,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPermissionsWindow() {
         if permissionsWindow == nil {
+            // The wizard header shows the user-configured hotkey; the
+            // onboarding sample always exercises ⌃⌥Space so the demo is
+            // deterministic for first-run users regardless of settings.
+            let activeHotkey = coordinator.currentHotkey
             permissionsWindow = PermissionsWindowController(
-                hotkeyDisplay: coordinator?.currentHotkey.displayString ?? hotkeyDisplay,
+                hotkeyDisplay: activeHotkey.displayString,
+                sampleHotkey: .default,
                 eventClient: eventClient,
                 allowLogging: { [weak runtimeStore] in
                     runtimeStore?.allowEventLogging ?? false
@@ -245,6 +250,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 setOnboardingSampleActive: { [weak coordinator] active in
                     coordinator?.setOnboardingSampleActive(active)
+                },
+                attemptHotkeyStart: { [weak self] in
+                    self?.hotkeys?.start() ?? false
                 },
                 onFinished: { [weak self] in
                     self?.showControlWindow()
