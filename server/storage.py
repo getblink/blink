@@ -337,8 +337,9 @@ class TelemetryStore:
                         token_id,
                         install_id,
                         event_type,
-                        payload
-                    ) VALUES (%s, %s, %s, %s, (%s)::jsonb)
+                        payload,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, (%s)::jsonb, COALESCE(NULLIF(%s, '')::timestamptz, NOW()))
                     """,
                     (
                         str(payload.get("request_id") or ""),
@@ -346,6 +347,7 @@ class TelemetryStore:
                         payload.get("install_id"),
                         event_type,
                         json.dumps(payload, ensure_ascii=True),
+                        str(payload.get("created_at") or ""),
                     ),
                 )
             conn.commit()
