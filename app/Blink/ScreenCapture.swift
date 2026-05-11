@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import ScreenCaptureKit
@@ -211,6 +212,54 @@ enum ScreenCapture {
         }
         semaphore.wait()
         return try result.get()
+    }
+
+    /// Probe Accessibility for the focused (or main) window's screen rect for the given PID.
+    /// Three-tier: AXFocusedWindow → AXMainWindow → nil (today's behavior as last resort).
+    /// A 200ms messaging timeout prevents a hung target from stalling capture.
+    static func focusedWindowGlobalRect(for pid: pid_t) -> CGRect? {
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.2)
+
+        var windowRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef) != .success || windowRef == nil {
+            AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &windowRef)
+        }
+        guard let windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID() else {
+            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=no_window_attribute")
+            return nil
+        }
+        let windowElement = windowRef as! AXUIElement  // safe: CFGetTypeID verified above
+        // The 200ms cap set on `appElement` doesn't propagate to elements vended by it;
+        // re-apply on `windowElement` so the position/size reads stay bounded too.
+        AXUIElementSetMessagingTimeout(windowElement, 0.2)
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, CFGetTypeID(posRef) == AXValueGetTypeID(),
+              let sizeRef, CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
+            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=no_position_or_size")
+            return nil
+        }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(posRef as! AXValue, .cgPoint, &position),  // safe: AXValueGetTypeID verified above
+              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size) else {
+            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=value_type_mismatch")
+            return nil
+        }
+
+        guard size.width >= 80, size.height >= 80 else {
+            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=too_small width=\(size.width) height=\(size.height)")
+            return nil
+        }
+
+        let rect = CGRect(origin: position, size: size)
+        TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=\(NSStringFromRect(rect))")
+        return rect
     }
 
     // `kSCStreamErrorUserDeclined` — the genuine TCC denial. Everything else

@@ -387,7 +387,8 @@ final class BlinkCoordinator {
                 details: ["frontmost_app": frontmostApp]
             )
             status("capturing window...")
-            let captureResult = try captureFrame(index: 0, staging: staging)
+            let frontmostPID = (frontmostApp["pid"] as? Int).map { pid_t($0) }
+            let captureResult = try captureFrame(index: 0, staging: staging, preferredPID: frontmostPID)
             let frame = captureResult.frame
             var sessionFrontmost = frame.frontmostApp
             if sessionFrontmost["bundle_id"] == nil, let bundle = frontmostApp["bundle_id"] {
@@ -674,13 +675,26 @@ final class BlinkCoordinator {
         shareableContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil
     ) throws -> CapturedFrameResult {
+        dispatchPrecondition(condition: .notOnQueue(.main))
         TCCDiagnostics.log(
             "capture_frame_start index=\(index) preferred_pid=\(preferredPID.map(String.init) ?? "nil") cached_shareable_content=\(shareableContent != nil)"
         )
         let captureStartedPerf = monotonicNow()
+
+        let effectivePID: pid_t?
+        if let preferredPID {
+            effectivePID = preferredPID
+        } else {
+            effectivePID = DispatchQueue.main.sync {
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+            }
+        }
+        let axRect = effectivePID.flatMap { ScreenCapture.focusedWindowGlobalRect(for: $0) }
+
         let capture = try ScreenCapture.captureFrontmostWindowSync(
+            preferredGlobalRect: axRect,
             shareableContent: shareableContent,
-            preferredPID: preferredPID
+            preferredPID: effectivePID
         )
         let captureMS = durationMS(since: captureStartedPerf)
         TCCDiagnostics.log(
