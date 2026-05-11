@@ -185,10 +185,29 @@ final class SuggestionChoiceStateTests: XCTestCase {
         )
     }
 
-    func testOverlayRouterAcceptsPlainRForRerollOutsideCustomInput() {
+    func testOverlayRouterAcceptsCommandRForRerollOutsideCustomInput() {
         XCTAssertEqual(
-            OverlayKeyRouter.command(forCGKeyCode: 15, flags: [], customInputActive: false),
+            OverlayKeyRouter.command(forCGKeyCode: 15, flags: [.maskCommand], customInputActive: false),
             .reroll
+        )
+    }
+
+    func testOverlayRouterAcceptsCommandRForRerollWhileCustomInputIsActive() {
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 15, flags: [.maskCommand], customInputActive: true),
+            .reroll
+        )
+    }
+
+    func testOverlayRouterDoesNotAcceptPlainRForReroll() {
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 15, flags: [], customInputActive: false)
+        )
+    }
+
+    func testOverlayRouterDoesNotAcceptCommandRWithExtraActionModifiers() {
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 15, flags: [.maskCommand, .maskShift], customInputActive: false)
         )
     }
 

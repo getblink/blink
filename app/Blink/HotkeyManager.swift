@@ -6,7 +6,8 @@ final class HotkeyManager {
     private let isOverlayActive: () -> Bool
     private let isCustomInputActive: () -> Bool
     private let isCollectingActive: () -> Bool
-    private let onSummarize: () -> Void
+    private let onSummarize: (DispatchTime) -> Void
+    private let onSummaryHotkeyWhileOverlay: (DispatchTime) -> Void
     private let onSubmitCollecting: () -> Void
     private let onCancelCollecting: () -> Void
     private let onChoice: (Int) -> Void
@@ -33,7 +34,8 @@ final class HotkeyManager {
         isOverlayActive: @escaping () -> Bool,
         isCustomInputActive: @escaping () -> Bool,
         isCollectingActive: @escaping () -> Bool,
-        onSummarize: @escaping () -> Void,
+        onSummarize: @escaping (DispatchTime) -> Void,
+        onSummaryHotkeyWhileOverlay: @escaping (DispatchTime) -> Void,
         onSubmitCollecting: @escaping () -> Void,
         onCancelCollecting: @escaping () -> Void,
         onChoice: @escaping (Int) -> Void,
@@ -50,6 +52,7 @@ final class HotkeyManager {
         self.isCustomInputActive = isCustomInputActive
         self.isCollectingActive = isCollectingActive
         self.onSummarize = onSummarize
+        self.onSummaryHotkeyWhileOverlay = onSummaryHotkeyWhileOverlay
         self.onSubmitCollecting = onSubmitCollecting
         self.onCancelCollecting = onCancelCollecting
         self.onChoice = onChoice
@@ -113,7 +116,8 @@ final class HotkeyManager {
 
         if manager.isCollectingActive() {
             if keyCode == manager.summaryKeyCode && flags == manager.summaryFlags {
-                DispatchQueue.main.async { manager.onSummarize() }
+                let pressedAt = DispatchTime.now()
+                DispatchQueue.main.async { manager.onSummarize(pressedAt) }
                 return nil
             }
             if keyCode == manager.returnKeyCode && flags.isEmpty {
@@ -129,8 +133,12 @@ final class HotkeyManager {
         if manager.isOverlayActive(),
            keyCode == manager.summaryKeyCode,
            flags == manager.summaryFlags {
-            // While the overlay is visible, the configured summary hotkey intentionally rerolls instead of starting a fresh capture; the plain R overlay key maps here too.
-            DispatchQueue.main.async { manager.onReroll() }
+            // While the overlay is visible, the configured summary hotkey intentionally rerolls instead of starting a fresh capture; Cmd-R maps here too.
+            let pressedAt = DispatchTime.now()
+            DispatchQueue.main.async {
+                manager.onSummaryHotkeyWhileOverlay(pressedAt)
+                manager.onReroll()
+            }
             return nil
         }
 
@@ -163,7 +171,8 @@ final class HotkeyManager {
         }
 
         if keyCode == manager.summaryKeyCode && flags == manager.summaryFlags {
-            DispatchQueue.main.async { manager.onSummarize() }
+            let pressedAt = DispatchTime.now()
+            DispatchQueue.main.async { manager.onSummarize(pressedAt) }
             return nil
         }
 

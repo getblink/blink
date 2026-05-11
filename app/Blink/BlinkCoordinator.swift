@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CryptoKit
 import Foundation
+import OSLog
 import ScreenCaptureKit
 
 final class BlinkCoordinator {
@@ -41,11 +42,39 @@ final class BlinkCoordinator {
         var run: PythonRunner.StreamingRun?
     }
 
+    private struct ChimeLatencyDetails {
+        let segmentAMS: Int
+        let segmentBMS: Int
+        let segmentCMS: Int
+        let totalMS: Int
+        let pressIndex: Int
+        let launchAgeMS: Int
+        let soundsOn: Bool
+
+        var eventDetails: [String: Any] {
+            [
+                "chime_segment_a_ms": segmentAMS,
+                "chime_segment_b_ms": segmentBMS,
+                "chime_segment_c_ms": segmentCMS,
+                "chime_total_ms": totalMS,
+                "press_index": pressIndex,
+                "launch_age_ms": launchAgeMS,
+                "sounds_on": soundsOn,
+            ]
+        }
+    }
+
+    private let latencyLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.henryz2004.blink",
+        category: "latency"
+    )
+
     private let config: Config
     private let runtimeStore: RuntimeConfigStore
     private let eventClient: BlinkEventClient
     private let summaryHotkey: Hotkey
     private let soundEffects: SoundEffects
+    private let launchedAt: DispatchTime
     private let queue = DispatchQueue(label: "blink.coordinator", qos: .userInitiated)
     private let submitQueue = DispatchQueue(label: "blink.coordinator.submit", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
@@ -75,6 +104,7 @@ final class BlinkCoordinator {
     private let doubleTapWindowMS = 400
     private let collectingTimeoutSeconds = 8
     private let maxCapturedFrames = 8
+    private var captureHotkeyPressIndex = 0
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
@@ -90,13 +120,15 @@ final class BlinkCoordinator {
         runtimeStore: RuntimeConfigStore,
         eventClient: BlinkEventClient,
         summaryHotkey: Hotkey,
-        soundEffects: SoundEffects
+        soundEffects: SoundEffects,
+        launchedAt: DispatchTime
     ) {
         self.config = config
         self.runtimeStore = runtimeStore
         self.eventClient = eventClient
         self.summaryHotkey = summaryHotkey
         self.soundEffects = soundEffects
+        self.launchedAt = launchedAt
     }
 
     var isOverlayActive: Bool {
@@ -129,8 +161,29 @@ final class BlinkCoordinator {
         ]
     }
 
+    func summarizeFrontmostWindow(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
+        acknowledgeCaptureHotkey(
+            pressedAt: pressedAt,
+            summarizeEnteredAt: summarizeEnteredAt,
+            statusText: "capturing window..."
+        )
+        enqueueSummarize()
+    }
+
+    func acknowledgeSummaryHotkeyForReroll(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
+        acknowledgeCaptureHotkey(
+            pressedAt: pressedAt,
+            summarizeEnteredAt: summarizeEnteredAt,
+            statusText: nil
+        )
+    }
+
     func summarizeFrontmostWindow() {
         acknowledgeCaptureHotkey()
+        enqueueSummarize()
+    }
+
+    private func enqueueSummarize() {
         queue.async { [self] in
             if pendingDoubleTap != nil {
                 promoteToMultiFrame()
@@ -145,6 +198,44 @@ final class BlinkCoordinator {
             } else {
                 appendFrameToSession()
             }
+        }
+    }
+
+    private func acknowledgeCaptureHotkey(
+        pressedAt: DispatchTime,
+        summarizeEnteredAt: DispatchTime,
+        statusText: String?
+    ) {
+        DispatchQueue.main.async {
+            let acknowledgeStartedAt = self.monotonicNow()
+            if let statusText {
+                self.onStatusChange?(statusText)
+                self.statusSubject.send(statusText)
+            }
+            let soundsOn = self.runtimeStore.soundsEnabled
+            self.soundEffects.play(.capture)
+            let soundReturnedAt = self.monotonicNow()
+            self.captureHotkeyPressIndex += 1
+            let pressIndex = self.captureHotkeyPressIndex
+            let details = ChimeLatencyDetails(
+                segmentAMS: self.durationMS(from: pressedAt, to: summarizeEnteredAt),
+                segmentBMS: self.durationMS(from: summarizeEnteredAt, to: acknowledgeStartedAt),
+                segmentCMS: self.durationMS(from: acknowledgeStartedAt, to: soundReturnedAt),
+                totalMS: self.durationMS(from: pressedAt, to: soundReturnedAt),
+                pressIndex: pressIndex,
+                launchAgeMS: self.durationMS(from: self.launchedAt, to: pressedAt),
+                soundsOn: soundsOn
+            )
+            self.latencyLogger.info(
+                "chime_lag press=\(details.pressIndex, privacy: .public) launch_age_ms=\(details.launchAgeMS, privacy: .public) a=\(details.segmentAMS, privacy: .public) b=\(details.segmentBMS, privacy: .public) c=\(details.segmentCMS, privacy: .public) total=\(details.totalMS, privacy: .public) sounds_on=\(details.soundsOn, privacy: .public)"
+            )
+            self.eventClient.send(
+                requestID: UUID().uuidString.lowercased(),
+                eventType: "chime_latency",
+                allowLogging: self.runtimeStore.allowEventLogging,
+                clientMetadata: Self.clientMetadata(),
+                details: details.eventDetails
+            )
         }
     }
 
@@ -259,6 +350,7 @@ final class BlinkCoordinator {
             emitEvent(
                 requestID: requestID,
                 type: "capture_started",
+                createdAt: JSONFiles.isoString(startedAt),
                 allowLogging: runtime.allowEventLogging,
                 clientMetadata: clientMetadata,
                 details: ["frontmost_app": frontmostApp]
@@ -1975,6 +2067,7 @@ final class BlinkCoordinator {
     private func emitEvent(
         requestID: String,
         type: String,
+        createdAt: String? = nil,
         allowLogging: Bool,
         clientMetadata: [String: Any],
         details: [String: Any] = [:]
@@ -1984,7 +2077,8 @@ final class BlinkCoordinator {
             eventType: type,
             allowLogging: allowLogging,
             clientMetadata: clientMetadata,
-            details: details
+            details: details,
+            createdAt: createdAt
         )
     }
 
@@ -2015,7 +2109,11 @@ final class BlinkCoordinator {
     }
 
     private func durationMS(since start: DispatchTime) -> Int {
-        Int(Double(monotonicNow().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000.0)
+        durationMS(from: start, to: monotonicNow())
+    }
+
+    private func durationMS(from start: DispatchTime, to end: DispatchTime) -> Int {
+        Int(Double(end.uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000.0)
     }
 
     private func monotonicNow() -> DispatchTime {
