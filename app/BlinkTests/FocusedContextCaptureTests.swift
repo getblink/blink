@@ -2,6 +2,62 @@ import XCTest
 @testable import Blink
 
 final class FocusedContextCaptureTests: XCTestCase {
+    func testPasteTargetDecisionAcceptsTextRoles() {
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXTextArea", descendantRoles: []),
+            .textTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXTextField", descendantRoles: []),
+            .textTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXSearchField", descendantRoles: []),
+            .textTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXComboBox", descendantRoles: []),
+            .textTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXGroup", descendantRoles: ["AXTextField"]),
+            .textTarget
+        )
+    }
+
+    func testPasteTargetDecisionTreatsNonTextRolesAsConfidentSkip() {
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXButton", descendantRoles: []),
+            .confidentNoTextTarget
+        )
+        // Containers with no text-input descendant are now treated as
+        // confident-no-text-target — caret resolution is the truth signal,
+        // and a container with no inputs is strong evidence ⌘V has nowhere
+        // to land.
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXWebArea", descendantRoles: []),
+            .confidentNoTextTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXGroup", descendantRoles: []),
+            .confidentNoTextTarget
+        )
+        // Roles that used to fall through to an indeterminate result
+        // (link, heading, custom/unknown) now skip with a fallback toast.
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXLink", descendantRoles: []),
+            .confidentNoTextTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: "AXHeading", descendantRoles: []),
+            .confidentNoTextTarget
+        )
+        XCTAssertEqual(
+            FocusedContextCapture.textTargetDecision(focusedRole: nil, descendantRoles: []),
+            .confidentNoTextTarget
+        )
+    }
+
     func testMeaningfulTextTreatsEmptyAndWhitespaceAsNoDraft() {
         XCTAssertNil(FocusedContextCapture.meaningfulText(""))
         XCTAssertNil(FocusedContextCapture.meaningfulText("\n"))

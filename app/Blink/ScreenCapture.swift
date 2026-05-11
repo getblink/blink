@@ -65,6 +65,9 @@ enum ScreenCapture {
         preferredPID: pid_t? = nil
     ) async throws -> Capture {
         let startedAt = Date()
+        TCCDiagnostics.log(
+            "screen_capture_start preferred_pid=\(preferredPID.map(String.init) ?? "nil") preferred_rect=\(preferredGlobalRect.map { NSStringFromRect($0) } ?? "nil") cached_shareable_content=\(cachedContent != nil)"
+        )
 
         // Preflight is informational only — we do NOT guard on it (see class
         // doc). If permission is denied, the SCK call below surfaces the real
@@ -83,6 +86,7 @@ enum ScreenCapture {
             pid = frontmost.processIdentifier
             ownerName = frontmost.localizedName
         }
+        TCCDiagnostics.log("screen_capture_owner pid=\(pid) owner_name=\(ownerName ?? "nil")")
 
         let content: SCShareableContent
         do {
@@ -91,7 +95,11 @@ enum ScreenCapture {
                 pid: pid,
                 preferredGlobalRect: preferredGlobalRect
             )
+            TCCDiagnostics.log(
+                "shareable_content_success pid=\(pid) windows=\(content.windows.count) displays=\(content.displays.count)"
+            )
         } catch {
+            logSCKError("shareable_content_failed", error: error)
             // Only the real TCC denial code is a permission error. Other SCK
             // errors (e.g. ineligible window, transient stream config issues)
             // are bubbled as `.underlying` so they aren't mislabeled as a
@@ -107,14 +115,23 @@ enum ScreenCapture {
             from: candidates,
             preferredGlobalRect: preferredGlobalRect
         ) else {
+            TCCDiagnostics.log(
+                "screen_capture_no_window pid=\(pid) candidate_count=\(candidates.count) owner_name=\(ownerName ?? "nil")"
+            )
             throw CaptureError.noCapturableWindow(ownerName: ownerName)
         }
+        TCCDiagnostics.log(
+            "screen_capture_window_selected pid=\(pid) window_id=\(window.windowID) title=\(window.title ?? "nil") frame=\(NSStringFromRect(window.frame))"
+        )
 
         let scale = await MainActor.run { backingScaleFactor(for: window.frame) }
 
         if shouldUseDisplayFallback(windowFrame: window.frame, scale: scale),
            let display = displayForWindow(window, in: content) {
             do {
+                TCCDiagnostics.log(
+                    "display_capture_attempt display_id=\(display.displayID) frame=\(NSStringFromRect(display.frame))"
+                )
                 let pngData = try await captureDisplayPNG(display)
                 await MainActor.run {
                     CaptureConfirmationOverlay.flash(frame: display.frame)
@@ -131,6 +148,7 @@ enum ScreenCapture {
                     shareableContent: content
                 )
             } catch {
+                logSCKError("display_capture_failed", error: error)
                 if isPermissionDenialError(error) {
                     throw CaptureError.permissionDenied
                 }
@@ -139,6 +157,7 @@ enum ScreenCapture {
             }
         }
 
+        TCCDiagnostics.log("window_capture_attempt window_id=\(window.windowID) scale=\(scale)")
         let cgImage = try await captureWindowImage(window, scale: scale)
         guard let pngData = cgImageToPNG(cgImage) else {
             throw CaptureError.imageEncodingFailed
@@ -213,11 +232,13 @@ enum ScreenCapture {
             from: candidateWindows(in: preferred, pid: pid),
             preferredGlobalRect: preferredGlobalRect
            ) != nil {
+            TCCDiagnostics.log("shareable_content_reused pid=\(pid)")
             return preferred
         }
         // `onScreenWindowsOnly: false` so fullscreen-Space windows of the
         // frontmost app still surface as candidates. From Blink's menu-bar Space,
         // ScreenCaptureKit reports those windows with `isOnScreen == false`.
+        TCCDiagnostics.log("shareable_content_request pid=\(pid) excluding_desktop_windows=false on_screen_windows_only=false")
         return try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false
         )
@@ -304,11 +325,16 @@ enum ScreenCapture {
         config.scalesToFit = true
 
         do {
-            return try await SCScreenshotManager.captureImage(
+            let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
+            TCCDiagnostics.log(
+                "window_capture_success window_id=\(window.windowID) width=\(image.width) height=\(image.height)"
+            )
+            return image
         } catch {
+            logSCKError("window_capture_failed", error: error)
             if isPermissionDenialError(error) {
                 throw CaptureError.permissionDenied
             }
@@ -334,7 +360,11 @@ enum ScreenCapture {
                 contentFilter: filter,
                 configuration: config
             )
+            TCCDiagnostics.log(
+                "display_capture_success display_id=\(display.displayID) width=\(cgImage.width) height=\(cgImage.height)"
+            )
         } catch {
+            logSCKError("display_capture_failed", error: error)
             if isPermissionDenialError(error) {
                 throw CaptureError.permissionDenied
             }
@@ -378,6 +408,13 @@ enum ScreenCapture {
     private static func cgImageToPNG(_ image: CGImage) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
         return rep.representation(using: .png, properties: [:])
+    }
+
+    private static func logSCKError(_ event: String, error: Error) {
+        let nsError = error as NSError
+        TCCDiagnostics.log(
+            "\(event) domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)"
+        )
     }
 }
 

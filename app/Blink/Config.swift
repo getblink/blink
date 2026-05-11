@@ -38,8 +38,20 @@ enum Paths {
         runtimeDir.appendingPathComponent("runtime-config.json")
     }
 
+    static var tccDiagnosticsPath: URL {
+        runtimeDir.appendingPathComponent("tcc-diagnostics.log")
+    }
+
     static var runtimeSettingsPath: URL {
         runtimeDir.appendingPathComponent("settings.json")
+    }
+
+    static var onboardedPath: URL {
+        runtimeDir.appendingPathComponent("onboarded")
+    }
+
+    static var firstHotkeyNudgePath: URL {
+        runtimeDir.appendingPathComponent("first_hotkey_nudge_shown")
     }
 
     static var installIDPath: URL {
@@ -94,6 +106,46 @@ enum Paths {
         return dir
     }
 
+    static func requiresFirstRunOnboarding(
+        runtimeDir: URL = Paths.runtimeDir,
+        runsDir: URL = Paths.runsDir
+    ) -> Bool {
+        let onboarded = runtimeDir.appendingPathComponent("onboarded")
+        if FileManager.default.fileExists(atPath: onboarded.path) {
+            return false
+        }
+        let runNames = (try? FileManager.default.contentsOfDirectory(
+            atPath: runsDir.path
+        )) ?? []
+        return runNames.isEmpty
+    }
+
+    static func markOnboarded(runtimeDir: URL = Paths.runtimeDir) {
+        let path = runtimeDir.appendingPathComponent("onboarded")
+        try? JSONFiles.isoString().write(to: path, atomically: true, encoding: .utf8)
+    }
+
+    static func shouldShowFirstHotkeyNudge(
+        runtimeDir: URL = Paths.runtimeDir,
+        runsDir: URL = Paths.runsDir
+    ) -> Bool {
+        let onboarded = runtimeDir.appendingPathComponent("onboarded")
+        let nudgeShown = runtimeDir.appendingPathComponent("first_hotkey_nudge_shown")
+        guard FileManager.default.fileExists(atPath: onboarded.path),
+              !FileManager.default.fileExists(atPath: nudgeShown.path) else {
+            return false
+        }
+        let runNames = (try? FileManager.default.contentsOfDirectory(
+            atPath: runsDir.path
+        )) ?? []
+        return runNames.isEmpty
+    }
+
+    static func markFirstHotkeyNudgeShown(runtimeDir: URL = Paths.runtimeDir) {
+        let path = runtimeDir.appendingPathComponent("first_hotkey_nudge_shown")
+        try? JSONFiles.isoString().write(to: path, atomically: true, encoding: .utf8)
+    }
+
     static var pendingDir: URL {
         let dir = appSupportDir.appendingPathComponent("pending", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -140,6 +192,23 @@ enum Paths {
             return runtimeSettingsPath
         }
         return bundledResource(named: "settings.json")
+    }
+}
+
+enum TCCDiagnostics {
+    static func log(_ message: String) {
+        let line = "\(JSONFiles.isoString()) BlinkTCC: \(message)\n"
+        NSLog("%@", line.trimmingCharacters(in: .newlines))
+        let path = Paths.tccDiagnosticsPath
+        guard let data = line.data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: path.path),
+           let handle = try? FileHandle(forWritingTo: path) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: path, options: .atomic)
+        }
     }
 }
 

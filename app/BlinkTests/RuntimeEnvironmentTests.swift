@@ -3,6 +3,30 @@ import XCTest
 @testable import Blink
 
 final class RuntimeEnvironmentTests: XCTestCase {
+    func testFirstRunOnboardingRequiresNoMarkerAndNoRuns() throws {
+        let base = try makeTempDirectory()
+        let runtime = base.appendingPathComponent("runtime", isDirectory: true)
+        let runs = base.appendingPathComponent("runs", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+
+        XCTAssertTrue(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
+
+        Paths.markOnboarded(runtimeDir: runtime)
+        XCTAssertFalse(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
+    }
+
+    func testFirstRunOnboardingSkipsExistingRunHistory() throws {
+        let base = try makeTempDirectory()
+        let runtime = base.appendingPathComponent("runtime", isDirectory: true)
+        let runs = base.appendingPathComponent("runs", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+        try "done".write(to: runs.appendingPathComponent("existing-run"), atomically: true, encoding: .utf8)
+
+        XCTAssertFalse(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
+    }
+
     func testMergeEnvTextKeepsExistingValuesAndAddsMissingValues() {
         var env = ["BLINK_PROXY_URL": "https://override.example"]
 
@@ -33,5 +57,12 @@ final class RuntimeEnvironmentTests: XCTestCase {
         )
 
         XCTAssertTrue(RuntimeEnvironment.proxyDisabled(in: env))
+    }
+
+    private func makeTempDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 }

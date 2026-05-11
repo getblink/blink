@@ -35,8 +35,10 @@
 		980F1B428389277B4F6AAD36 /* NudgeOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */; };
 		989A18FB0C1C4C8D04079543 /* NudgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */; };
 		9C4F5B01E1D71DEF511D97ED /* JSONFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5003916E3C9E51FF96494423 /* JSONFiles.swift */; };
+		A343378F57CCFA1434935296 /* tldr.json in Resources */ = {isa = PBXBuildFile; fileRef = 9C2C613B92765D6101795F64 /* tldr.json */; };
 		A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
+		B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */; };
 		C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B874CA83CFFA290563A148F /* ModelChoices.swift */; };
 		C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */; };
 		C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */; };
@@ -82,6 +84,7 @@
 		5003916E3C9E51FF96494423 /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
 		5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		5B0476F717FE6D32A76C485D /* ControlWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlWindow.swift; sourceTree = "<group>"; };
+		5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingChatMockWindow.swift; sourceTree = "<group>"; };
 		5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironmentTests.swift; sourceTree = "<group>"; };
 		63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundActivityMonitor.swift; sourceTree = "<group>"; };
@@ -98,6 +101,7 @@
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		989DBB159CA5CB427CCCADEF /* BlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkApp.swift; sourceTree = "<group>"; };
 		9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceState.swift; sourceTree = "<group>"; };
+		9C2C613B92765D6101795F64 /* tldr.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tldr.json; sourceTree = "<group>"; };
 		9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayKeyRouter.swift; sourceTree = "<group>"; };
 		A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStoreTests.swift; sourceTree = "<group>"; };
 		A2EF34A50A57C1CF8722B81A /* Hotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hotkey.swift; sourceTree = "<group>"; };
@@ -148,6 +152,7 @@
 			isa = PBXGroup;
 			children = (
 				904AE99B338B9CB4A3594DDB /* Assets.xcassets */,
+				A8260CA27F5E4933AB860222 /* onboarding */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -175,6 +180,7 @@
 				1B874CA83CFFA290563A148F /* ModelChoices.swift */,
 				63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */,
 				154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */,
+				5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */,
 				9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */,
 				D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */,
 				D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */,
@@ -188,6 +194,14 @@
 				4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */,
 			);
 			path = Blink;
+			sourceTree = "<group>";
+		};
+		A8260CA27F5E4933AB860222 /* onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				9C2C613B92765D6101795F64 /* tldr.json */,
+			);
+			path = onboarding;
 			sourceTree = "<group>";
 		};
 		B23DD3B5EFB562B7C2FAEE85 = {
@@ -315,6 +329,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				610D54EBF0E3177C8EF6C88B /* Assets.xcassets in Resources */,
+				A343378F57CCFA1434935296 /* tldr.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -343,6 +358,7 @@
 				C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */,
 				989A18FB0C1C4C8D04079543 /* NudgeCoordinator.swift in Sources */,
 				980F1B428389277B4F6AAD36 /* NudgeOverlay.swift in Sources */,
+				B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */,
 				141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */,
 				683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */,
 				B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */,

@@ -3,6 +3,11 @@ import ApplicationServices
 import Foundation
 
 enum FocusedContextCapture {
+    enum TextTargetDecision {
+        case textTarget
+        case confidentNoTextTarget
+    }
+
     struct Snapshot {
         let uploadPayload: [String: Any]
         let meaningfulDraftText: String?
@@ -113,7 +118,7 @@ enum FocusedContextCapture {
         return nil
     }
 
-    private static func systemWideFocusedElement() -> AXUIElement? {
+    static func systemWideFocusedElement() -> AXUIElement? {
         let systemWide = AXUIElementCreateSystemWide()
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -128,7 +133,7 @@ enum FocusedContextCapture {
     /// alternate-root candidates that might be the real text input. Each
     /// element appears at most once. Bounded to keep the AX queries cheap
     /// even on huge webviews.
-    private static func candidateElements(starting focused: AXUIElement) -> [AXUIElement] {
+    static func candidateElements(starting focused: AXUIElement) -> [AXUIElement] {
         var results: [AXUIElement] = [focused]
         var seen = Set<UInt>()
         seen.insert(addressKey(focused))
@@ -281,7 +286,62 @@ enum FocusedContextCapture {
         selectedRangeAttr(element) != nil || selectedRangesAttr(element) != nil
     }
 
-    private static func roleLooksLikeTextInput(_ role: String?) -> Bool {
+    static func textTargetDecision(starting focused: AXUIElement) -> TextTargetDecision {
+        // Bound the AX work: ⌘V is on the main thread after a 150ms delay,
+        // and a slow/unresponsive AX app can stall the default 6s timeout.
+        AXUIElementSetMessagingTimeout(focused, 0.1)
+        let candidates = candidateElements(starting: focused)
+        if hasResolvableCaret(candidates: candidates) {
+            return .textTarget
+        }
+        // Belt-and-suspenders for native inputs that don't expose
+        // AXBoundsForRange (rare but possible): if the focused element or
+        // a focused-child candidate is itself a text-input-shaped role,
+        // treat it as a paste target.
+        for candidate in candidates {
+            let role = stringAttr(candidate, kAXRoleAttribute as CFString)
+            if roleLooksLikeTextInput(role) {
+                return .textTarget
+            }
+        }
+        let focusedRole = stringAttr(focused, kAXRoleAttribute as CFString)
+        return textTargetDecision(focusedRole: focusedRole, descendantRoles: [])
+    }
+
+    /// True iff some candidate near the focused element exposes a real text
+    /// caret via the parameterized `AXBoundsForRange` attribute. That
+    /// attribute only succeeds when the element backs real text storage —
+    /// read-only AXStaticText, selectable list rows, web spans, buttons,
+    /// etc. fail — making this a much sharper "can ⌘V land here?" signal
+    /// than role inspection. The bounds-approximation fallback used by
+    /// `caretScreenPoint()` is intentionally skipped here: it returns a
+    /// point for any input-shaped frame without confirming editability.
+    private static func hasResolvableCaret(candidates: [AXUIElement]) -> Bool {
+        // We only care about the *existence* of a caret rect, not its
+        // coordinates, so the primary-screen height passed to
+        // `caretFromRangeAttrs` doesn't have to be accurate — a non-nil
+        // return is the signal. Default to 1 if no screen is attached
+        // (headless) so the AXBoundsForRange call still runs.
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 1
+        for candidate in candidates {
+            if caretFromRangeAttrs(candidate, primaryHeight: primaryHeight) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    static func textTargetDecision(
+        focusedRole: String?,
+        descendantRoles: [String]
+    ) -> TextTargetDecision {
+        if roleLooksLikeTextInput(focusedRole) || descendantRoles.contains(where: roleLooksLikeTextInput) {
+            return .textTarget
+        }
+        return .confidentNoTextTarget
+    }
+
+    static func roleLooksLikeTextInput(_ role: String?) -> Bool {
         guard let role else { return false }
         let normalized = role.hasPrefix("AX") ? String(role.dropFirst(2)) : role
         switch normalized {
@@ -292,7 +352,7 @@ enum FocusedContextCapture {
         }
     }
 
-    private static func roleIsContainer(_ role: String?) -> Bool {
+    static func roleIsContainer(_ role: String?) -> Bool {
         guard let role else { return false }
         let normalized = role.hasPrefix("AX") ? String(role.dropFirst(2)) : role
         switch normalized {

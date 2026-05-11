@@ -1,0 +1,30 @@
+{
+  "tldr": "tl;dr Sam is asking whether the launch checklist is ready before tomorrow's beta invite. They mostly need a concise go/no-go and any remaining blocker.",
+  "suggestions": [
+    "Yes, the launch checklist is ready. I only want one last pass on the permissions wording before we send the beta invite.",
+    "Almost. The core flow is ready, but I still need to verify the fresh-install permission path once more.",
+    "Not yet. I found one first-run issue and will send a clean go/no-go after I retest it."
+  ],
+  "messages": [
+    {
+      "role": "incoming",
+      "name": "Sam",
+      "text": "Hey — quick check before tomorrow. Is the launch checklist actually ready?"
+    },
+    {
+      "role": "incoming",
+      "name": "Sam",
+      "text": "I want to send the beta invite first thing in the morning, but only if we're a clean go."
+    },
+    {
+      "role": "outgoing",
+      "name": "You",
+      "text": "Let me confirm the last couple items."
+    },
+    {
+      "role": "incoming",
+      "name": "Sam",
+      "text": "Cool. Mostly I just need a go / no-go, plus any remaining blocker."
+    }
+  ]
+}
