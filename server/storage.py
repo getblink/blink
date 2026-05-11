@@ -155,6 +155,15 @@ class TelemetryStore:
         assert psycopg is not None
         with psycopg.connect(self.database_url) as conn:
             with conn.cursor() as cur:
+                # Drop the view before any table migrations so REQUESTS_SCHEMA's
+                # `ADD COLUMN IF NOT EXISTS` calls can shift the column layout
+                # of `tldr_requests` without colliding with the view's frozen
+                # column ordering. CREATE OR REPLACE VIEW can only append
+                # columns; renaming or repositioning existing ones raises
+                # "cannot change name of view column ...". The whole block
+                # runs inside one transaction, so readers never see a missing
+                # view (production hit this when reroll_context was added).
+                cur.execute("DROP VIEW IF EXISTS tldr_requests_with_outcome;")
                 cur.execute(REQUESTS_SCHEMA)
                 cur.execute(EVENTS_SCHEMA)
                 cur.execute(DEVICE_TOKENS_SCHEMA)
