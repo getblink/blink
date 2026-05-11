@@ -65,8 +65,10 @@ else
 fi
 
 env_source=""
+prod_env_source=""
 if [ -n "${CONDUCTOR_ROOT_PATH:-}" ]; then
   env_source="$CONDUCTOR_ROOT_PATH/.env"
+  prod_env_source="$CONDUCTOR_ROOT_PATH/.env.production"
 fi
 
 env_status="missing"
@@ -79,6 +81,23 @@ if [ -f "$env_source" ]; then
 else
   echo "WARNING: no .env at \$CONDUCTOR_ROOT_PATH/.env." >&2
   echo "         Create it once (see .env.example) so future workspaces inherit the key." >&2
+fi
+
+# .env.production holds the production proxy URL/token that release.sh
+# embeds into shipped DMGs. Required only for release flows; local-dev
+# builds (install_local_app.sh, raw build.sh) read .env (staging) and
+# ignore this file entirely. Missing-here is a soft warning, not fatal,
+# since most workspaces never cut a release.
+prod_env_status="missing"
+if [ -f "$prod_env_source" ]; then
+  cp "$prod_env_source" .env.production
+  chmod 600 .env.production
+  prod_env_status="copied"
+  echo "[setup] copied .env.production from $prod_env_source" >&2
+else
+  echo "INFO:  no .env.production at \$CONDUCTOR_ROOT_PATH/.env.production." >&2
+  echo "       Skipped — only needed if you cut a Sparkle release from this workspace." >&2
+  echo "       See .env.production.example to populate it in central." >&2
 fi
 
 fixtures_mode="missing"
@@ -104,6 +123,8 @@ SETUP_FIXTURES_TARGET="$fixtures_target" \
 SETUP_SHARED_POOL="$POOL" \
 SETUP_ENV_SOURCE="$env_source" \
 SETUP_ENV_STATUS="$env_status" \
+SETUP_PROD_ENV_SOURCE="$prod_env_source" \
+SETUP_PROD_ENV_STATUS="$prod_env_status" \
 python3 - <<'PY'
 import json
 import os
@@ -127,6 +148,8 @@ payload = {
     "shared_fixture_pool": os.environ["SETUP_SHARED_POOL"],
     "env_source": optional_env("SETUP_ENV_SOURCE"),
     "env_status": os.environ["SETUP_ENV_STATUS"],
+    "prod_env_source": optional_env("SETUP_PROD_ENV_SOURCE"),
+    "prod_env_status": os.environ["SETUP_PROD_ENV_STATUS"],
 }
 
 path = Path(os.environ["SETUP_RECEIPT_PATH"])
