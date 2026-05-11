@@ -67,6 +67,7 @@ final class HotkeyManager {
     @discardableResult
     func start() -> Bool {
         stop()
+        TCCDiagnostics.log("hotkey_event_tap_create_attempt")
         let mask = (1 << CGEventType.keyDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -77,6 +78,7 @@ final class HotkeyManager {
             callback: HotkeyManager.tapCallback,
             userInfo: refcon
         ) else {
+            TCCDiagnostics.log("hotkey_event_tap_create_failed")
             return false
         }
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -84,6 +86,7 @@ final class HotkeyManager {
         CGEvent.tapEnable(tap: tap, enable: true)
         self.eventTap = tap
         self.runLoopSource = source
+        TCCDiagnostics.log("hotkey_event_tap_create_succeeded")
         return true
     }
 

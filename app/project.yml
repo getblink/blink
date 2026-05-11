@@ -33,6 +33,8 @@ targets:
       - Blink
       - path: Resources/Assets.xcassets
         buildPhase: resources
+      - path: Resources/onboarding
+        buildPhase: resources
     dependencies:
       - sdk: AppKit.framework
       - sdk: ApplicationServices.framework

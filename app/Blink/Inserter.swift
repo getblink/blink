@@ -1,10 +1,16 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 /// Clipboard + Cmd+V insertion. Leaves the inserted text on the pasteboard so
 /// that if Cmd+V doesn't land (no focused text field, AX denied, app refused),
 /// the user can still recover via manual paste.
 enum Inserter {
+    enum InsertOutcome {
+        case pasted
+        case skippedNoTextTarget
+    }
+
     enum InsertError: LocalizedError {
         case eventPostFailed
         case noEventSource
@@ -27,21 +33,33 @@ enum Inserter {
     static func insert(
         text: String,
         activationDelay: TimeInterval = 0,
-        completion: @escaping (Result<Void, Error>) -> Void
+        completion: @escaping (Result<InsertOutcome, Error>) -> Void
     ) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + activationDelay) {
+            if shouldSkipPasteForFocusedElement() {
+                completion(.success(.skippedNoTextTarget))
+                return
+            }
             do {
                 try synthesizeCmdV()
             } catch {
                 completion(.failure(error))
                 return
             }
-            completion(.success(()))
+            completion(.success(.pasted))
         }
+    }
+
+    private static func shouldSkipPasteForFocusedElement() -> Bool {
+        guard AXIsProcessTrusted(),
+              let focused = FocusedContextCapture.systemWideFocusedElement() else {
+            return false
+        }
+        return FocusedContextCapture.textTargetDecision(starting: focused) == .confidentNoTextTarget
     }
 
     // MARK: - Cmd+V synthesis

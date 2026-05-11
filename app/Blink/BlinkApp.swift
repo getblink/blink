@@ -1,6 +1,6 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
-import IOKit.hid
 import Sparkle
 
 @main
@@ -24,21 +24,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
+    private let firstHotkeyOverlay = NudgeOverlay()
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
     private var hotkeyDisplay: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let launchedAt = DispatchTime.now()
-
-        _ = CGRequestScreenCaptureAccess()
-        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-
+        Self.logLaunchIdentity()
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         self.hotkeyDisplay = summaryHotkey.displayString
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
+        // Backfill the onboarded marker for users who installed before the
+        // first-run wizard existed. !requiresFirstRunOnboarding() AND no
+        // marker implies a non-empty runs/ directory, i.e. they've already
+        // used the app — they shouldn't see the wizard or the discovery nudge.
+        if !Paths.requiresFirstRunOnboarding(),
+           !FileManager.default.fileExists(atPath: Paths.onboardedPath.path) {
+            Paths.markOnboarded()
+        }
         DeviceTokenManager.mintIfNeeded(proxyConfig: RuntimeEnvironment.bootstrapProxyConfig())
         let eventClient = BlinkEventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
@@ -60,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         coordinator.onFailureNotice = { [weak self] title, message in
             self?.showFailureAlert(title: title, message: message)
+        }
+        coordinator.onPermissionsNeeded = { [weak self] in
+            self?.showPermissionsWindow()
         }
 
         menubar = MenubarController(
@@ -154,9 +163,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 
-        showControlWindow()
-        if !hotkeys.start() {
-            startHotkeyRetry()
+        if shouldShowPermissionSetup() {
+            showPermissionsWindow()
+        } else {
+            showControlWindow()
+            showFirstHotkeyNudgeIfNeeded()
+            startHotkeysIfNeeded()
         }
     }
 
@@ -164,7 +176,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Dock-icon click while no windows are visible should reopen the
         // control window — same role the menubar item plays.
         if !hasVisibleWindows {
-            showControlWindow()
+            if shouldShowPermissionSetup() {
+                showPermissionsWindow()
+            } else {
+                showControlWindow()
+            }
         }
         return true
     }
@@ -186,21 +202,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func startHotkeysIfNeeded() {
+        guard hotkeys != nil else { return }
+        guard !shouldShowPermissionSetup() else {
+            TCCDiagnostics.log("hotkeys_start_deferred permissions_needed=true")
+            return
+        }
+        if !hotkeys.start() {
+            TCCDiagnostics.log("hotkeys_start_failed retrying=true")
+            startHotkeyRetry()
+        } else {
+            TCCDiagnostics.log("hotkeys_start_succeeded")
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         hotkeyRetryTimer?.invalidate()
         hotkeyRetryTimer = nil
         hotkeys?.stop()
         nudgeCoordinator?.stop()
+        firstHotkeyOverlay.close(userClicked: false, animated: false)
     }
 
     func showPermissionsWindow() {
         if permissionsWindow == nil {
-            permissionsWindow = PermissionsWindowController()
+            permissionsWindow = PermissionsWindowController(
+                hotkeyDisplay: coordinator?.currentHotkey.displayString ?? hotkeyDisplay,
+                eventClient: eventClient,
+                allowLogging: { [weak runtimeStore] in
+                    runtimeStore?.allowEventLogging ?? false
+                },
+                clientMetadata: {
+                    BlinkCoordinator.clientMetadata()
+                },
+                setOnboardingSampleActive: { [weak coordinator] active in
+                    coordinator?.setOnboardingSampleActive(active)
+                },
+                onFinished: { [weak self] in
+                    self?.showControlWindow()
+                    self?.showFirstHotkeyNudgeIfNeeded()
+                    self?.startHotkeysIfNeeded()
+                }
+            )
         }
         permissionsWindow?.show()
     }
 
     func showControlWindow() {
+        guard !shouldShowPermissionSetup() else {
+            showPermissionsWindow()
+            return
+        }
         guard let runtimeStore else { return }
         if controlWindow == nil {
             controlWindow = ControlWindowController(
@@ -211,6 +263,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         controlWindow?.show()
+    }
+
+    private func shouldShowPermissionSetup() -> Bool {
+        Paths.requiresFirstRunOnboarding()
+            || !Self.requiredPermissionsGranted(caller: "AppDelegate.shouldShowPermissionSetup")
+    }
+
+    private static func requiredPermissionsGranted(caller: String) -> Bool {
+        let accessibility = AXIsProcessTrusted()
+        let screenRecording = CGPreflightScreenCaptureAccess()
+        let inputMonitoring = HotkeyManager.inputMonitoringGranted()
+        TCCDiagnostics.log(
+            "required_permissions caller=\(caller) accessibility=\(accessibility) screen_recording_preflight=\(screenRecording) input_monitoring=\(inputMonitoring)"
+        )
+        return accessibility && screenRecording && inputMonitoring
+    }
+
+    private static func logLaunchIdentity() {
+        let bundle = Bundle.main
+        let info = bundle.infoDictionary ?? [:]
+        TCCDiagnostics.log(
+            "launch_identity bundle_id=\(bundle.bundleIdentifier ?? "nil") bundle_url=\(bundle.bundleURL.path) executable=\(bundle.executableURL?.path ?? "nil") version=\(info["CFBundleShortVersionString"] as? String ?? "nil") build=\(info["CFBundleVersion"] as? String ?? "nil")"
+        )
+    }
+
+    private func showFirstHotkeyNudgeIfNeeded() {
+        // Re-evaluate against the filesystem rather than a cached flag so the
+        // post-wizard "Done" path (which writes the marker mid-launch) still
+        // qualifies. The nudge-shown marker, written below, prevents repeats.
+        guard Paths.shouldShowFirstHotkeyNudge() else { return }
+        Paths.markFirstHotkeyNudgeShown()
+        let anchor = menubar.statusItemScreenFrame()
+            ?? NSRect(x: NSScreen.main?.visibleFrame.midX ?? 720,
+                      y: NSScreen.main?.visibleFrame.maxY ?? 900,
+                      width: 1,
+                      height: 1)
+        firstHotkeyOverlay.show(
+            text: "Press \(hotkeyDisplay) on any window to try it.",
+            anchor: anchor,
+            autoDismissAfter: 4.0
+        ) { _ in }
     }
 
     private func showFailureAlert(title: String, message: String) {

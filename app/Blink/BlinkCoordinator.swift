@@ -104,10 +104,12 @@ final class BlinkCoordinator {
     private let doubleTapWindowMS = 400
     private let collectingTimeoutSeconds = 8
     private let maxCapturedFrames = 8
+    private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
+    var onPermissionsNeeded: (() -> Void)?
 
     /// Combine subject for surfaces that want to subscribe rather than own
     /// the callback (the menubar already owns `onStatusChange`). Mirrors what
@@ -161,7 +163,48 @@ final class BlinkCoordinator {
         ]
     }
 
+    /// Per-invocation client metadata. Merges `source = onboarding_sample`
+    /// when the onboarding mock window is the active capture target so the
+    /// server can distinguish first-run sample invocations from real ones.
+    func clientMetadata() -> [String: Any] {
+        var meta = Self.clientMetadata()
+        if onboardingSampleActive {
+            meta["source"] = "onboarding_sample"
+        }
+        return meta
+    }
+
+    /// The active summary hotkey. Read-only mirror so surfaces (e.g. the
+    /// permissions wizard) can render up-to-date copy without owning the
+    /// HotkeyManager.
+    var currentHotkey: Hotkey { summaryHotkey }
+
+    /// Flips the onboarding-sample flag. Main-thread only; the value is
+    /// read on the capture queue at session start, but the queue dispatches
+    /// to main for the runtime snapshot so a single hop is sufficient.
+    func setOnboardingSampleActive(_ active: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        onboardingSampleActive = active
+    }
+
+    private static func requiredPermissionsGranted(caller: String) -> Bool {
+        let accessibility = AXIsProcessTrusted()
+        let screenRecording = CGPreflightScreenCaptureAccess()
+        let inputMonitoring = HotkeyManager.inputMonitoringGranted()
+        TCCDiagnostics.log(
+            "required_permissions caller=\(caller) accessibility=\(accessibility) screen_recording_preflight=\(screenRecording) input_monitoring=\(inputMonitoring)"
+        )
+        return accessibility && screenRecording && inputMonitoring
+    }
+
     func summarizeFrontmostWindow(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
+        guard Self.requiredPermissionsGranted(caller: "BlinkCoordinator.summarizeFrontmostWindow") else {
+            status("permissions needed")
+            // HotkeyManager dispatches onSummarize on the main queue, so we
+            // can show the wizard inline without another hop.
+            onPermissionsNeeded?()
+            return
+        }
         acknowledgeCaptureHotkey(
             pressedAt: pressedAt,
             summarizeEnteredAt: summarizeEnteredAt,
@@ -176,11 +219,6 @@ final class BlinkCoordinator {
             summarizeEnteredAt: summarizeEnteredAt,
             statusText: nil
         )
-    }
-
-    func summarizeFrontmostWindow() {
-        acknowledgeCaptureHotkey()
-        enqueueSummarize()
     }
 
     private func enqueueSummarize() {
@@ -236,14 +274,6 @@ final class BlinkCoordinator {
                 clientMetadata: Self.clientMetadata(),
                 details: details.eventDetails
             )
-        }
-    }
-
-    private func acknowledgeCaptureHotkey() {
-        DispatchQueue.main.async {
-            self.onStatusChange?("capturing window...")
-            self.statusSubject.send("capturing window...")
-            self.soundEffects.play(.capture)
         }
     }
 
@@ -318,8 +348,9 @@ final class BlinkCoordinator {
         running = true
         defer { running = false }
 
-        let runtime = DispatchQueue.main.sync { runtimeStore.snapshot }
-        let clientMetadata = Self.clientMetadata()
+        let (runtime, clientMetadata) = DispatchQueue.main.sync {
+            (runtimeStore.snapshot, self.clientMetadata())
+        }
         let frontmostApp = frontmostAppMetadata()
         let requestID = UUID().uuidString.lowercased()
         let startedAt = Date()
@@ -643,12 +674,18 @@ final class BlinkCoordinator {
         shareableContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil
     ) throws -> CapturedFrameResult {
+        TCCDiagnostics.log(
+            "capture_frame_start index=\(index) preferred_pid=\(preferredPID.map(String.init) ?? "nil") cached_shareable_content=\(shareableContent != nil)"
+        )
         let captureStartedPerf = monotonicNow()
         let capture = try ScreenCapture.captureFrontmostWindowSync(
             shareableContent: shareableContent,
             preferredPID: preferredPID
         )
         let captureMS = durationMS(since: captureStartedPerf)
+        TCCDiagnostics.log(
+            "capture_frame_success index=\(index) capture_ms=\(captureMS) owner_pid=\(capture.ownerPID) owner_bundle_id=\(capture.ownerBundleID ?? "nil") window_id=\(capture.windowID)"
+        )
         guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
             throw NSError(domain: "BlinkCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
         }
@@ -1032,7 +1069,7 @@ final class BlinkCoordinator {
             return
         }
         let requestID = UUID().uuidString.lowercased()
-        let clientMetadata = Self.clientMetadata()
+        let clientMetadata = self.clientMetadata()
         let runtime = runtimeStore.snapshot
         let allowEventLogging = runtime.allowEventLogging
         let startedAt = Date()
@@ -1608,25 +1645,51 @@ final class BlinkCoordinator {
                 Inserter.insert(text: text, activationDelay: 0.15) { [weak self] result in
                     guard let self else { return }
                     switch result {
-                    case .success:
-                        self.status("inserted suggestion \(index + 1)")
-                        self.soundEffects.play(.insert)
-                        if let requestID {
-                            self.emitEvent(
-                                requestID: requestID,
-                                type: "suggestion_inserted",
-                                allowLogging: self.runtimeStore.allowEventLogging,
-                                clientMetadata: clientMetadata,
-                                details: ["chosen_index": index + 1]
-                            )
-                            self.emitEvent(
-                                requestID: requestID,
-                                type: "run_completed",
-                                allowLogging: self.runtimeStore.allowEventLogging,
-                                clientMetadata: clientMetadata,
-                                details: ["outcome": "inserted", "chosen_index": index + 1]
-                            )
-                            PendingRunStore.finish(requestID: requestID)
+                    case .success(let outcome):
+                        switch outcome {
+                        case .pasted:
+                            self.status("inserted suggestion \(index + 1)")
+                            self.soundEffects.play(.insert)
+                            if let requestID {
+                                self.emitEvent(
+                                    requestID: requestID,
+                                    type: "suggestion_inserted",
+                                    allowLogging: self.runtimeStore.allowEventLogging,
+                                    clientMetadata: clientMetadata,
+                                    details: ["chosen_index": index + 1]
+                                )
+                                self.emitEvent(
+                                    requestID: requestID,
+                                    type: "run_completed",
+                                    allowLogging: self.runtimeStore.allowEventLogging,
+                                    clientMetadata: clientMetadata,
+                                    details: ["outcome": "inserted", "chosen_index": index + 1]
+                                )
+                                PendingRunStore.finish(requestID: requestID)
+                            }
+                        case .skippedNoTextTarget:
+                            self.status("paste skipped - still on clipboard")
+                            self.overlay.confirmPasteFallback()
+                            if let requestID {
+                                self.emitEvent(
+                                    requestID: requestID,
+                                    type: "paste_skipped",
+                                    allowLogging: self.runtimeStore.allowEventLogging,
+                                    clientMetadata: clientMetadata,
+                                    details: [
+                                        "chosen_index": index + 1,
+                                        "reason": "no_text_target",
+                                    ]
+                                )
+                                self.emitEvent(
+                                    requestID: requestID,
+                                    type: "run_completed",
+                                    allowLogging: self.runtimeStore.allowEventLogging,
+                                    clientMetadata: clientMetadata,
+                                    details: ["outcome": "paste_skipped", "chosen_index": index + 1]
+                                )
+                                PendingRunStore.finish(requestID: requestID)
+                            }
                         }
                     case .failure(let error):
                         if let requestID {
@@ -1698,19 +1761,45 @@ final class BlinkCoordinator {
             Inserter.insert(text: trimmed, activationDelay: 0.15) { [weak self] result in
                 guard let self else { return }
                 switch result {
-                case .success:
-                    self.status("inserted your reply")
-                    self.soundEffects.play(.insert)
-                    self.celebrateAtDestinationCaret(modalFallback: modalCaret)
-                    if let requestID {
-                        self.emitEvent(
-                            requestID: requestID,
-                            type: "run_completed",
-                            allowLogging: self.runtimeStore.allowEventLogging,
-                            clientMetadata: clientMetadata,
-                            details: ["outcome": "user_typed"]
-                        )
-                        PendingRunStore.finish(requestID: requestID)
+                case .success(let outcome):
+                    switch outcome {
+                    case .pasted:
+                        self.status("inserted your reply")
+                        self.soundEffects.play(.insert)
+                        self.celebrateAtDestinationCaret(modalFallback: modalCaret)
+                        if let requestID {
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "run_completed",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: ["outcome": "user_typed"]
+                            )
+                            PendingRunStore.finish(requestID: requestID)
+                        }
+                    case .skippedNoTextTarget:
+                        self.status("paste skipped - still on clipboard")
+                        self.overlay.confirmPasteFallback()
+                        if let requestID {
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "paste_skipped",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: [
+                                    "chosen_action": "user_typed",
+                                    "reason": "no_text_target",
+                                ]
+                            )
+                            self.emitEvent(
+                                requestID: requestID,
+                                type: "run_completed",
+                                allowLogging: self.runtimeStore.allowEventLogging,
+                                clientMetadata: clientMetadata,
+                                details: ["outcome": "paste_skipped", "chosen_action": "user_typed"]
+                            )
+                            PendingRunStore.finish(requestID: requestID)
+                        }
                     }
                 case .failure(let error):
                     if let requestID {
