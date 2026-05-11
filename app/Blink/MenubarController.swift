@@ -206,7 +206,8 @@ final class MenubarController: NSObject {
     }
 
     @objc private func triggerSummarize() {
-        coordinator.summarizeFrontmostWindow()
+        let now = DispatchTime.now()
+        coordinator.summarizeFrontmostWindow(pressedAt: now, summarizeEnteredAt: now)
     }
 
     @objc private func openRunsFolder() {

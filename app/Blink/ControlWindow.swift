@@ -283,10 +283,12 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
            prev.processIdentifier != NSRunningApplication.current.processIdentifier {
             prev.activate()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.coordinator.summarizeFrontmostWindow()
+                let now = DispatchTime.now()
+                self?.coordinator.summarizeFrontmostWindow(pressedAt: now, summarizeEnteredAt: now)
             }
         } else {
-            coordinator.summarizeFrontmostWindow()
+            let now = DispatchTime.now()
+            coordinator.summarizeFrontmostWindow(pressedAt: now, summarizeEnteredAt: now)
         }
     }
 
