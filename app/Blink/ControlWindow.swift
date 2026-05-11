@@ -11,6 +11,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     private let runtimeStore: RuntimeConfigStore
     private let hotkeyDisplay: String
     private let onShowPermissions: () -> Void
+    /// `nil` when Sparkle isn't configured — the button is omitted entirely
+    /// rather than shown disabled, matching the menubar item's gating.
+    private let onCheckForUpdates: (() -> Void)?
 
     private var window: NSWindow?
     private var statusLabel: NSTextField?
@@ -51,12 +54,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         coordinator: BlinkCoordinator,
         runtimeStore: RuntimeConfigStore,
         hotkeyDisplay: String,
-        onShowPermissions: @escaping () -> Void
+        onShowPermissions: @escaping () -> Void,
+        onCheckForUpdates: (() -> Void)?
     ) {
         self.coordinator = coordinator
         self.runtimeStore = runtimeStore
         self.hotkeyDisplay = hotkeyDisplay
         self.onShowPermissions = onShowPermissions
+        self.onCheckForUpdates = onCheckForUpdates
     }
 
     func show() {
@@ -164,7 +169,13 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         resetPermsButton.bezelStyle = .rounded
         let styleButton = NSButton(title: "Style…", target: self, action: #selector(openStyle))
         styleButton.bezelStyle = .rounded
-        let buttonRow = NSStackView(views: [runsButton, runtimeButton, styleButton, permsButton, resetPermsButton])
+        var rowViews: [NSView] = [runsButton, runtimeButton, styleButton, permsButton, resetPermsButton]
+        if onCheckForUpdates != nil {
+            let updateButton = NSButton(title: "Check for Updates…", target: self, action: #selector(checkForUpdates))
+            updateButton.bezelStyle = .rounded
+            rowViews.append(updateButton)
+        }
+        let buttonRow = NSStackView(views: rowViews)
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
         stack.addArrangedSubview(buttonRow)
@@ -317,6 +328,10 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
 
     @objc private func openPermissions() {
         onShowPermissions()
+    }
+
+    @objc private func checkForUpdates() {
+        onCheckForUpdates?()
     }
 
     @objc private func openStyle() {

@@ -86,6 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 userDriverDelegate: nil
             )
             menubar.setUpdater(updaterController)
+            // SUScheduledCheckInterval (24h) would skip a check on frequent
+            // relaunches, so nudge Sparkle to run a fresh background check
+            // shortly after launch. Silent unless an update is available, and
+            // still respects the user's "Automatically check for updates"
+            // preference via Sparkle's automaticallyChecksForUpdates gate.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak updaterController] in
+                updaterController?.updater.checkForUpdatesInBackground()
+            }
         }
 
         let nudges = NudgeCoordinator(
@@ -255,11 +263,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let runtimeStore else { return }
         if controlWindow == nil {
+            let updaterAction: (() -> Void)? = updaterController.map { controller in
+                { [weak controller] in controller?.checkForUpdates(nil) }
+            }
             controlWindow = ControlWindowController(
                 coordinator: coordinator,
                 runtimeStore: runtimeStore,
                 hotkeyDisplay: hotkeyDisplay,
-                onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
+                onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
+                onCheckForUpdates: updaterAction
             )
         }
         controlWindow?.show()
