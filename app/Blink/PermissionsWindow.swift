@@ -2,25 +2,30 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 
-/// First-run wizard for Blink's permission setup. The window owns the
-/// explanation and uses System Settings deep links plus the drag fallback;
-/// it deliberately avoids prompt-style TCC calls.
+/// First-run wizard for Blink's permission setup. A single checklist screen
+/// lets the user grant the three required permissions in any order; rows
+/// flip to "Granted" as the user toggles them in System Settings. The
+/// wizard intentionally avoids prompt-style TCC calls and only relies on
+/// preflight probes (`AXIsProcessTrusted`, `IOHIDCheckAccess`,
+/// `CGPreflightScreenCaptureAccess`).
 final class PermissionsWindowController: NSObject, NSWindowDelegate {
-    private enum Step: String, CaseIterable {
-        case welcome
+    private enum Permission: String, CaseIterable {
         case accessibility
         case inputMonitoring
         case screenRecording
-        case relaunch
-        case ready
     }
 
     private struct PermissionCopy {
-        let step: Step
+        let permission: Permission
         let headline: String
         let explainer: String
         let settingsURL: String
         let check: () -> Bool
+    }
+
+    private struct PermissionRowViews {
+        let statusPill: NSTextField
+        let openSettingsButton: NSButton
     }
 
     private let hotkeyDisplay: String
@@ -29,81 +34,99 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
     private let clientMetadata: () -> [String: Any]
     private let onFinished: () -> Void
     private let setOnboardingSampleActive: (Bool) -> Void
+    private let attemptHotkeyStart: () -> Bool
+    private let sampleHotkey: Hotkey
 
     private var window: NSWindow?
     private var contentHost = NSView()
     private var refreshTimer: Timer?
-    private var currentStep: Step
-    private var lastAutoAdvancedStep: Step?
-    private var lastPermissionGrantedState: Bool = false
-    private var lastAllPermissionsGrantedState: Bool = false
+    private var permissionRows: [Permission: PermissionRowViews] = [:]
+    private var hotkeyHeaderField: NSTextField?
+    private var lastGrantedSnapshot: [Permission: Bool] = [:]
+    private var grantMS: [Permission: Int] = [:]
     private var didMarkOnboarded: Bool = false
+    private var didFireCompleted: Bool = false
     private var chatMockController: OnboardingChatMockWindowController?
     private var wizardWindowClosed: Bool = false
+    private var autoDismissWorkItem: DispatchWorkItem?
+    private var hotkeyStartRetryWorkItem: DispatchWorkItem?
+    private var shownAt: Date?
+    private var inRelaunchFallback: Bool = false
 
     init(
         hotkeyDisplay: String,
+        sampleHotkey: Hotkey,
         eventClient: BlinkEventClient? = nil,
         allowLogging: @escaping () -> Bool = { false },
         clientMetadata: @escaping () -> [String: Any] = { [:] },
         setOnboardingSampleActive: @escaping (Bool) -> Void = { _ in },
+        attemptHotkeyStart: @escaping () -> Bool = { false },
         onFinished: @escaping () -> Void = {}
     ) {
         self.hotkeyDisplay = hotkeyDisplay
+        self.sampleHotkey = sampleHotkey
         self.eventClient = eventClient
         self.allowLogging = allowLogging
         self.clientMetadata = clientMetadata
         self.setOnboardingSampleActive = setOnboardingSampleActive
+        self.attemptHotkeyStart = attemptHotkeyStart
         self.onFinished = onFinished
-        self.currentStep = PermissionsWindowController.initialStep()
         super.init()
     }
 
     func show() {
         if window == nil { buildWindow() }
         wizardWindowClosed = false
-        transitionTo(Self.initialStep())
+        inRelaunchFallback = false
+        autoDismissWorkItem?.cancel()
+        autoDismissWorkItem = nil
+        hotkeyStartRetryWorkItem?.cancel()
+        hotkeyStartRetryWorkItem = nil
+        didFireCompleted = false
+        grantMS.removeAll()
+        lastGrantedSnapshot = currentSnapshot()
+        // Seed grant timestamps for permissions already granted at show time
+        // so `grants_ms` is complete in `onboarding_completed`.
+        for (perm, granted) in lastGrantedSnapshot where granted {
+            grantMS[perm] = 0
+        }
+        shownAt = Date()
+        emit(type: "onboarding_shown", details: [
+            "initial_granted": lastGrantedSnapshot
+                .filter { $0.value }
+                .map { $0.key.rawValue }
+        ])
+        renderChecklist()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         startRefreshing()
-    }
-
-    private static func initialStep() -> Step {
-        if Paths.requiresFirstRunOnboarding() {
-            TCCDiagnostics.log("onboarding_initial_step requires_first_run_onboarding=true")
-            return .welcome
+        // If everything was already granted at show time, skip the whole
+        // dance immediately — same path the auto-dismiss takes after a
+        // grant flips.
+        if lastGrantedSnapshot.values.allSatisfy({ $0 }) {
+            scheduleAutoDismiss()
         }
-        if !AXIsProcessTrusted() {
-            return .accessibility
-        }
-        if !inputMonitoringGranted() {
-            return .inputMonitoring
-        }
-        if !screenRecordingGranted(caller: "PermissionsWindow.initialStep") {
-            return .screenRecording
-        }
-        return .ready
     }
 
     private var permissions: [PermissionCopy] {
         [
             PermissionCopy(
-                step: .accessibility,
-                headline: "Allow Accessibility",
+                permission: .accessibility,
+                headline: "Accessibility",
                 explainer: "Blink reads the focused field and pastes your selected reply.",
                 settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
                 check: { AXIsProcessTrusted() }
             ),
             PermissionCopy(
-                step: .inputMonitoring,
-                headline: "Allow Input Monitoring",
+                permission: .inputMonitoring,
+                headline: "Input Monitoring",
                 explainer: "Blink listens for \(hotkeyDisplay) and the overlay number keys.",
                 settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
                 check: { PermissionsWindowController.inputMonitoringGranted() }
             ),
             PermissionCopy(
-                step: .screenRecording,
-                headline: "Allow Screen Recording",
+                permission: .screenRecording,
+                headline: "Screen Recording",
                 explainer: "Blink needs to see the active window before it can summarize it.",
                 settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
                 check: { Self.screenRecordingGranted(caller: "PermissionsWindow.screenRecordingCheck") }
@@ -111,9 +134,17 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         ]
     }
 
+    private func currentSnapshot() -> [Permission: Bool] {
+        var snap: [Permission: Bool] = [:]
+        for copy in permissions {
+            snap[copy.permission] = copy.check()
+        }
+        return snap
+    }
+
     private func buildWindow() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -125,40 +156,48 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         contentHost.translatesAutoresizingMaskIntoConstraints = false
         win.contentView = contentHost
         NSLayoutConstraint.activate([
-            contentHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 540),
-            contentHost.heightAnchor.constraint(greaterThanOrEqualToConstant: 320),
+            contentHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 720),
+            contentHost.heightAnchor.constraint(greaterThanOrEqualToConstant: 620),
         ])
         win.center()
         window = win
     }
 
-    private func transitionTo(_ step: Step) {
-        currentStep = step
-        lastPermissionGrantedState = false
-        lastAutoAdvancedStep = nil
-        lastAllPermissionsGrantedState = allPermissionsGranted()
-        emit(type: "onboarding_step_shown", step: step)
-        renderCurrentStep()
-        // Trigger an immediate refresh so a step that is already granted
-        // auto-advances without waiting for the 1Hz poll.
-        refresh()
-    }
-
-    private func renderCurrentStep() {
+    private func renderChecklist() {
+        permissionRows.removeAll()
         contentHost.subviews.forEach { $0.removeFromSuperview() }
 
-        let view: NSView
-        switch currentStep {
-        case .welcome:
-            view = welcomeView()
-        case .screenRecording, .inputMonitoring, .accessibility:
-            view = permissionView(for: currentStep)
-        case .relaunch:
-            view = relaunchView()
-        case .ready:
-            view = readyView()
-        }
+        let tagline = heading("Blink turns the window you are reading into a short tl;dr and three replies.")
+        tagline.maximumNumberOfLines = 3
+        tagline.preferredMaxLayoutWidth = 480
 
+        let hotkeyRow = hotkeyHeaderView()
+        hotkeyHeaderField = hotkeyRow.field
+
+        let rowsStack = NSStackView(views: permissions.map { permissionRow(for: $0) })
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = 12
+
+        let dragFallback = dragFallbackSection()
+
+        let seeSample = NSButton(title: "See a sample", target: self, action: #selector(showSample))
+        seeSample.bezelStyle = .rounded
+        seeSample.controlSize = .large
+        seeSample.keyEquivalent = "\r"
+
+        let buttons = NSStackView(views: [seeSample])
+        buttons.orientation = .horizontal
+        buttons.alignment = .centerY
+        buttons.spacing = 10
+
+        let view = baseStack(views: [
+            tagline,
+            hotkeyRow.container,
+            rowsStack,
+            dragFallback,
+            buttons,
+        ])
         view.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(view)
         NSLayoutConstraint.activate([
@@ -169,141 +208,120 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         ])
         let target = view.fittingSize
         window?.setContentSize(NSSize(
-            width: max(target.width, 540),
-            height: max(target.height, 320)
+            width: max(target.width, 720),
+            height: max(target.height, 620)
         ))
     }
 
-    private func welcomeView() -> NSView {
-        let title = heading("Blink turns the window you are reading into a short tl;dr and three replies.")
-        title.maximumNumberOfLines = 3
-        title.preferredMaxLayoutWidth = 460
+    private func hotkeyHeaderView() -> (container: NSView, field: NSTextField) {
+        let label = NSTextField(labelWithString: "Hotkey")
+        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .secondaryLabelColor
 
-        let hotkeyRow = labeledValue(label: "Hotkey", value: hotkeyDisplay)
+        let inputMonitoringOn = Self.inputMonitoringGranted()
+        let value = NSTextField(labelWithString: "")
+        applyHotkeyHeaderState(field: value, granted: inputMonitoringOn)
 
-        let allGranted = allPermissionsGranted()
-        let seeSample = NSButton(title: "See a sample", target: self, action: #selector(showSample))
-        seeSample.bezelStyle = .rounded
-        seeSample.controlSize = .large
-        seeSample.isEnabled = allGranted
-
-        let getStarted = NSButton(title: "Get Started", target: self, action: #selector(startPermissions))
-        getStarted.bezelStyle = .rounded
-        getStarted.controlSize = .large
-        getStarted.keyEquivalent = "\r"
-
-        let buttons = NSStackView(views: [seeSample, getStarted])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.spacing = 10
-
-        var stackViews: [NSView] = [title, hotkeyRow, buttons]
-        if !allGranted {
-            let helper = body("Grant the permissions below first to try a real sample.")
-            helper.textColor = .tertiaryLabelColor
-            stackViews.append(helper)
-        }
-        return baseStack(views: stackViews)
+        let stack = NSStackView(views: [label, value])
+        stack.orientation = .horizontal
+        stack.alignment = .firstBaseline
+        stack.spacing = 12
+        return (stack, value)
     }
 
-    private func allPermissionsGranted() -> Bool {
-        permissions.allSatisfy { $0.check() }
+    private func applyHotkeyHeaderState(field: NSTextField, granted: Bool) {
+        if granted {
+            field.stringValue = hotkeyDisplay
+            field.font = NSFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
+            field.textColor = .labelColor
+        } else {
+            field.stringValue = "unlocks once Input Monitoring is granted"
+            field.font = NSFont.systemFont(ofSize: 12)
+            field.textColor = .tertiaryLabelColor
+        }
     }
 
-    private func permissionView(for step: Step) -> NSView {
-        guard let copy = permissions.first(where: { $0.step == step }) else {
-            return readyView()
-        }
+    private func permissionRow(for copy: PermissionCopy) -> NSView {
         let granted = copy.check()
-        let title = heading(copy.headline)
-        let detail = body(copy.explainer)
-        let status = statusLabel(granted: granted)
+
+        let title = NSTextField(labelWithString: copy.headline)
+        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.textColor = .labelColor
+
+        let explainer = NSTextField(wrappingLabelWithString: copy.explainer)
+        explainer.font = NSFont.systemFont(ofSize: 12)
+        explainer.textColor = .secondaryLabelColor
+        explainer.maximumNumberOfLines = 2
+        // Force wrap below actual column width so the longer copy lines
+        // ("…before it can summarize it.", "…paste your selected reply.")
+        // break to a second line instead of getting clipped at the right
+        // edge of the text column.
+        explainer.preferredMaxLayoutWidth = 360
+        explainer.lineBreakMode = .byWordWrapping
+        explainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        explainer.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let textStack = NSStackView(views: [title, explainer])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let pill = statusLabel(granted: granted)
+        pill.setContentHuggingPriority(.required, for: .horizontal)
 
         let openSettings = NSButton(title: "Open Settings", target: self, action: #selector(openSettings))
         openSettings.identifier = NSUserInterfaceItemIdentifier(copy.settingsURL)
+        // The button's tag carries the row's permission so the action handler
+        // can record when this specific row was opened (for stuck-row drag
+        // disclosure logic).
+        openSettings.tag = Self.tag(for: copy.permission)
         openSettings.bezelStyle = .rounded
-        openSettings.controlSize = .large
+        openSettings.controlSize = .regular
+        openSettings.isEnabled = true
 
-        let next = NSButton(
-            title: granted ? "Next" : "Waiting for permission",
-            target: self,
-            action: #selector(nextStep)
-        )
-        next.bezelStyle = .rounded
-        next.controlSize = .large
-        next.isEnabled = granted
-        if granted {
-            next.keyEquivalent = "\r"
-        }
+        let row = NSStackView(views: [textStack, pill, openSettings])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 16
+        row.distribution = .fill
+        row.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.setHuggingPriority(.defaultLow, for: .horizontal)
+        row.wantsLayer = true
+        row.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.4).cgColor
+        row.layer?.cornerRadius = 8
+        row.layer?.borderWidth = 0.5
+        row.layer?.borderColor = NSColor.separatorColor.cgColor
 
-        let buttons = NSStackView(views: [openSettings, next])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.spacing = 10
-
-        let stack = baseStack(views: [
-            title,
-            detail,
-            status,
-            buttons,
-            dragFallbackSection(),
+        NSLayoutConstraint.activate([
+            row.widthAnchor.constraint(greaterThanOrEqualToConstant: 656),
         ])
-        return stack
-    }
 
-    private func relaunchView() -> NSView {
-        let title = heading("Relaunch Blink")
-        let detail = body("Some permissions only take effect after Blink relaunches.")
-
-        let relaunch = NSButton(
-            title: "Quit & Relaunch",
-            target: self,
-            action: #selector(quitAndRelaunch)
+        permissionRows[copy.permission] = PermissionRowViews(
+            statusPill: pill,
+            openSettingsButton: openSettings
         )
-        relaunch.bezelStyle = .rounded
-        relaunch.controlSize = .large
-        relaunch.keyEquivalent = "\r"
-
-        return baseStack(views: [title, detail, relaunch])
-    }
-
-    private func readyView() -> NSView {
-        let title = heading("Blink is ready.")
-        let detail = body("Press \(hotkeyDisplay) on any window to try it.")
-
-        let seeSample = NSButton(title: "See a sample", target: self, action: #selector(showSample))
-        seeSample.bezelStyle = .rounded
-        seeSample.controlSize = .large
-
-        let done = NSButton(title: "Done", target: self, action: #selector(finishWithoutRelaunch))
-        done.bezelStyle = .rounded
-        done.controlSize = .large
-        done.keyEquivalent = "\r"
-
-        let buttons = NSStackView(views: [seeSample, done])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.spacing = 10
-
-        return baseStack(views: [title, detail, buttons])
+        return row
     }
 
     private func baseStack(views: [NSView]) -> NSStackView {
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 18
-        stack.edgeInsets = NSEdgeInsets(top: 28, left: 28, bottom: 28, right: 28)
+        stack.spacing = 22
+        stack.edgeInsets = NSEdgeInsets(top: 32, left: 32, bottom: 32, right: 32)
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }
 
     private func heading(_ text: String) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 21, weight: .semibold)
+        label.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
         label.textColor = .labelColor
         label.maximumNumberOfLines = 0
-        label.preferredMaxLayoutWidth = 460
+        label.preferredMaxLayoutWidth = 480
         return label
     }
 
@@ -312,55 +330,64 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         label.font = NSFont.systemFont(ofSize: 13)
         label.textColor = .secondaryLabelColor
         label.maximumNumberOfLines = 0
-        label.preferredMaxLayoutWidth = 460
+        label.preferredMaxLayoutWidth = 480
         return label
-    }
-
-    private func labeledValue(label: String, value: String) -> NSView {
-        let name = NSTextField(labelWithString: label)
-        name.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        name.textColor = .secondaryLabelColor
-
-        let value = NSTextField(labelWithString: value)
-        value.font = NSFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
-        value.textColor = .labelColor
-
-        let stack = NSStackView(views: [name, value])
-        stack.orientation = .horizontal
-        stack.alignment = .firstBaseline
-        stack.spacing = 12
-        return stack
     }
 
     private func statusLabel(granted: Bool) -> NSTextField {
-        let label = NSTextField(labelWithString: granted ? "Granted" : "Not granted yet")
-        label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let label = NSTextField(labelWithString: granted ? "Granted" : "Not granted")
+        label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = granted ? .systemGreen : .tertiaryLabelColor
+        label.alignment = .right
         return label
     }
 
-    /// Builds the manual-drag fallback footer. Visible on every permission
-    /// step so users can recover when System Settings does not list Blink.
+    private static func tag(for permission: Permission) -> Int {
+        switch permission {
+        case .accessibility: return 1001
+        case .inputMonitoring: return 1002
+        case .screenRecording: return 1003
+        }
+    }
+
+    private static func permission(forTag tag: Int) -> Permission? {
+        switch tag {
+        case 1001: return .accessibility
+        case 1002: return .inputMonitoring
+        case 1003: return .screenRecording
+        default: return nil
+        }
+    }
+
     private func dragFallbackSection() -> NSView {
         let dragView = BundleDragSourceView(bundleURL: Bundle.main.bundleURL)
         NSLayoutConstraint.activate([
-            dragView.widthAnchor.constraint(equalToConstant: 48),
-            dragView.heightAnchor.constraint(equalToConstant: 48),
+            dragView.widthAnchor.constraint(equalToConstant: 96),
+            dragView.heightAnchor.constraint(equalToConstant: 96),
         ])
 
+        let title = NSTextField(labelWithString: "If Blink isn't in the list")
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .labelColor
+
         let label = NSTextField(wrappingLabelWithString:
-            "If Blink is missing from the list, drag this app icon into the System Settings window."
+            "Drag the Blink icon into the System Settings list to add it."
         )
-        label.font = NSFont.systemFont(ofSize: 11)
+        label.font = NSFont.systemFont(ofSize: 12)
         label.textColor = .secondaryLabelColor
         label.maximumNumberOfLines = 3
         label.preferredMaxLayoutWidth = 360
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [dragView, label])
+        let textStack = NSStackView(views: [title, label])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+
+        let stack = NSStackView(views: [dragView, textStack])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 14
+        stack.spacing = 16
         return stack
     }
 
@@ -369,12 +396,13 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
             chatMockController?.show()
             return
         }
-        emit(type: "onboarding_sample_invoked", step: currentStep)
+        emit(type: "onboarding_sample_invoked", details: [:])
         let fixture = OnboardingFixture.load()
         setOnboardingSampleActive(true)
         let controller = OnboardingChatMockWindowController(
-            messages: fixture.messages,
-            hotkeyDisplay: hotkeyDisplay
+            fixture: fixture,
+            hotkey: sampleHotkey,
+            hotkeyDisplay: sampleHotkey.displayString
         ) { [weak self] in
             guard let self else { return }
             self.setOnboardingSampleActive(false)
@@ -384,48 +412,40 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
             // dismissed.
             if !self.wizardWindowClosed {
                 self.window?.makeKeyAndOrderFront(nil)
+                self.onDemoClosed()
             }
         }
         chatMockController = controller
         // Hide the wizard while the sample is up so it doesn't sit in front
-        // of the capture target.
+        // of the demo window. We deliberately don't fire auto-dismiss or
+        // relaunch-fallback while the demo is open — that would yank the
+        // demo window out from under the user. `refresh()` and
+        // `finishChecklist()` both gate on `chatMockController == nil`.
         window?.orderOut(nil)
         controller.show()
     }
 
-    @objc private func startPermissions() {
-        emit(type: "onboarding_step_completed", step: .welcome)
-        transitionTo(.accessibility)
+    private func onDemoClosed() {
+        // The demo's onClose has already cleared `chatMockController`. If the
+        // user granted the last permission while the demo was up, this is
+        // where we finally trigger the auto-dismiss path we suppressed
+        // earlier.
+        if !inRelaunchFallback,
+           !didFireCompleted,
+           lastGrantedSnapshot.values.count == Permission.allCases.count,
+           lastGrantedSnapshot.values.allSatisfy({ $0 }) {
+            scheduleAutoDismiss()
+        }
     }
 
     @objc private func openSettings(_ sender: NSButton) {
+        if let perm = Self.permission(forTag: sender.tag) {
+            emit(type: "onboarding_open_settings_clicked", details: [
+                "permission": perm.rawValue
+            ])
+        }
         guard let id = sender.identifier?.rawValue, let url = URL(string: id) else { return }
         NSWorkspace.shared.open(url)
-    }
-
-    @objc private func nextStep() {
-        emit(type: "onboarding_step_completed", step: currentStep)
-        if let permission = permissions.first(where: { $0.step == currentStep }),
-           permission.check(),
-           lastAutoAdvancedStep != currentStep {
-            // Manual advance for a granted step that the poll hasn't reported
-            // yet — still record the grant so telemetry isn't lopsided.
-            emit(type: "permissions_granted", step: currentStep)
-        }
-        transitionTo(stepAfter(currentStep))
-    }
-
-    @objc private func quitAndRelaunch() {
-        emit(type: "onboarding_step_completed", step: .relaunch)
-        markOnboardedOnce()
-        relaunchSelf()
-    }
-
-    @objc private func finishWithoutRelaunch() {
-        emit(type: "onboarding_step_completed", step: .ready)
-        markOnboardedOnce()
-        window?.close()
-        onFinished()
     }
 
     private func markOnboardedOnce() {
@@ -434,56 +454,156 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         Paths.markOnboarded()
     }
 
-    private func stepAfter(_ step: Step) -> Step {
-        switch step {
-        case .welcome:
-            return .accessibility
-        case .accessibility:
-            return .inputMonitoring
-        case .inputMonitoring:
-            return .screenRecording
-        case .screenRecording:
-            return .relaunch
-        case .relaunch, .ready:
-            return .ready
-        }
-    }
-
     private func startRefreshing() {
         refreshTimer?.invalidate()
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.refresh()
         }
     }
 
     private func refresh() {
-        if currentStep == .welcome {
-            let allGranted = allPermissionsGranted()
-            if allGranted != lastAllPermissionsGrantedState {
-                lastAllPermissionsGrantedState = allGranted
-                renderCurrentStep()
+        let snapshot = currentSnapshot()
+        let shownAt = self.shownAt ?? Date()
+
+        var anyChange = false
+        var inputMonitoringFlipped = false
+        for perm in Permission.allCases {
+            let was = lastGrantedSnapshot[perm] ?? false
+            let isGranted = snapshot[perm] ?? false
+            if was == isGranted { continue }
+            anyChange = true
+            if let row = permissionRows[perm] {
+                let pill = statusLabel(granted: isGranted)
+                row.statusPill.stringValue = pill.stringValue
+                row.statusPill.textColor = pill.textColor
             }
+            if isGranted {
+                let elapsed = Int(Date().timeIntervalSince(shownAt) * 1000)
+                grantMS[perm] = elapsed
+                emit(type: "permission_granted", details: [
+                    "permission": perm.rawValue,
+                    "ms_since_shown": elapsed,
+                ])
+                if perm == .inputMonitoring { inputMonitoringFlipped = true }
+            }
+        }
+        lastGrantedSnapshot = snapshot
+
+        if inputMonitoringFlipped, let field = hotkeyHeaderField {
+            applyHotkeyHeaderState(field: field, granted: true)
+        }
+
+        if anyChange, snapshot.values.allSatisfy({ $0 }) {
+            scheduleAutoDismiss()
+        }
+    }
+
+    private func scheduleAutoDismiss() {
+        guard autoDismissWorkItem == nil, !inRelaunchFallback else { return }
+        // Don't yank the demo out from under the user. `onDemoClosed()` will
+        // re-trigger this once the demo closes.
+        if chatMockController != nil { return }
+        markOnboardedOnce()
+        let work = DispatchWorkItem { [weak self] in
+            self?.finishChecklist()
+        }
+        autoDismissWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func finishChecklist() {
+        guard !didFireCompleted else { return }
+        // Clear the dismiss handle so `onDemoClosed()` can re-schedule us if
+        // the demo opened mid-flight; cancel any stale retry from a prior
+        // finishChecklist that got pre-empted by the demo.
+        autoDismissWorkItem = nil
+        hotkeyStartRetryWorkItem?.cancel()
+        hotkeyStartRetryWorkItem = nil
+        // Demo opened between schedule and fire — wait for `onDemoClosed()`.
+        if chatMockController != nil {
             return
         }
-        guard let permission = permissions.first(where: { $0.step == currentStep }) else { return }
-        let granted = permission.check()
-        guard granted != lastPermissionGrantedState else { return }
-        lastPermissionGrantedState = granted
-        renderCurrentStep()
-        guard granted else {
-            lastAutoAdvancedStep = nil
+        if attemptHotkeyStart() {
+            didFireCompleted = true
+            emitCompleted(relaunchRequired: false)
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+            window?.close()
+            onFinished()
             return
         }
-        guard lastAutoAdvancedStep != currentStep else { return }
-        lastAutoAdvancedStep = currentStep
-        emit(type: "permissions_granted", step: currentStep)
-        let pendingStep = currentStep
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            guard let self, self.currentStep == pendingStep else { return }
-            self.emit(type: "onboarding_step_completed", step: pendingStep)
-            self.transitionTo(self.stepAfter(pendingStep))
+        // First in-process start attempt failed. Retry once after a brief
+        // grace, then fall back to a relaunch card.
+        TCCDiagnostics.log("hotkeys_start_after_onboarding first_attempt_failed=true")
+        let retry = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            // Demo opened during the retry window — defer until it closes.
+            if self.chatMockController != nil { return }
+            if self.attemptHotkeyStart() {
+                self.didFireCompleted = true
+                self.emitCompleted(relaunchRequired: false)
+                TCCDiagnostics.log("hotkeys_start_after_onboarding retry_succeeded=true")
+                self.refreshTimer?.invalidate()
+                self.refreshTimer = nil
+                self.window?.close()
+                self.onFinished()
+            } else {
+                TCCDiagnostics.log("hotkeys_start_after_onboarding retry_failed=true")
+                self.enterRelaunchFallback()
+            }
         }
+        hotkeyStartRetryWorkItem = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: retry)
+    }
+
+    private func enterRelaunchFallback() {
+        guard !inRelaunchFallback else { return }
+        inRelaunchFallback = true
+        autoDismissWorkItem?.cancel()
+        autoDismissWorkItem = nil
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+
+        contentHost.subviews.forEach { $0.removeFromSuperview() }
+        let title = heading("Relaunch Blink")
+        let detail = body("Blink needs a quick relaunch to start listening for your hotkey.")
+        let relaunch = NSButton(
+            title: "Relaunch Blink",
+            target: self,
+            action: #selector(relaunchTapped)
+        )
+        relaunch.bezelStyle = .rounded
+        relaunch.controlSize = .large
+        relaunch.keyEquivalent = "\r"
+
+        let view = baseStack(views: [title, detail, relaunch])
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            view.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            view.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+        ])
+    }
+
+    @objc private func relaunchTapped() {
+        didFireCompleted = true
+        emitCompleted(relaunchRequired: true)
+        markOnboardedOnce()
+        relaunchSelf()
+    }
+
+    private func emitCompleted(relaunchRequired: Bool) {
+        let shownAt = self.shownAt ?? Date()
+        let duration = Int(Date().timeIntervalSince(shownAt) * 1000)
+        let grants: [String: Int] = Dictionary(uniqueKeysWithValues: grantMS.map { ($0.key.rawValue, $0.value) })
+        emit(type: "onboarding_completed", details: [
+            "relaunch_required": relaunchRequired,
+            "duration_ms": duration,
+            "grants_ms": grants,
+        ])
     }
 
     private func relaunchSelf() {
@@ -506,24 +626,29 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         wizardWindowClosed = true
         refreshTimer?.invalidate()
         refreshTimer = nil
-        // If the user closes the wizard while the mock chat window is still
-        // up, tear it down so the onboarding-sample flag clears.
+        autoDismissWorkItem?.cancel()
+        autoDismissWorkItem = nil
+        hotkeyStartRetryWorkItem?.cancel()
+        hotkeyStartRetryWorkItem = nil
         chatMockController?.close()
-        if !didMarkOnboarded, currentStep != .ready {
-            // Intentional: closing the wizard mid-flow leaves the marker
-            // absent so the next launch retries onboarding. We record the
-            // abandonment for telemetry so drop-off is visible.
-            emit(type: "onboarding_abandoned", step: currentStep)
+        if !didMarkOnboarded {
+            // Closing the wizard before all grants leaves the onboarded
+            // marker absent so the next launch retries onboarding. Telemetry
+            // captures which rows the user did complete before bailing.
+            let granted = lastGrantedSnapshot
+                .filter { $0.value }
+                .map { $0.key.rawValue }
+            emit(type: "onboarding_abandoned", details: ["granted": granted])
         }
     }
 
-    private func emit(type: String, step: Step) {
+    private func emit(type: String, details: [String: Any]) {
         eventClient?.send(
             requestID: "onboarding-\(Paths.loadOrCreateInstallID())",
             eventType: type,
             allowLogging: allowLogging(),
             clientMetadata: clientMetadata(),
-            details: ["step": step.rawValue]
+            details: details
         )
     }
 
