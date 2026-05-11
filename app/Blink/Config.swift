@@ -214,32 +214,63 @@ enum TCCDiagnostics {
 
 enum DeviceTokenManager {
     static func mintIfNeeded(proxyConfig: ProxyConfig?) {
-        guard Paths.loadDeviceToken() == nil, let proxyConfig else { return }
+        guard Paths.loadDeviceToken() == nil else { return }
+        guard let proxyConfig else {
+            TCCDiagnostics.log("mint_skipped reason=no_proxy_config")
+            return
+        }
         let installID = Paths.loadOrCreateInstallID()
         guard let body = try? JSONSerialization.data(
             withJSONObject: ["install_id": installID],
             options: []
         ) else {
+            TCCDiagnostics.log("mint_skipped reason=request_body_serialization_failed install_id=\(installID)")
             return
         }
 
-        var request = URLRequest(url: proxyConfig.baseURL.appendingPathComponent("v1/auth/mint"))
+        let mintURL = proxyConfig.baseURL.appendingPathComponent("v1/auth/mint")
+        var request = URLRequest(url: mintURL)
         request.httpMethod = "POST"
         request.setValue("Bearer \(proxyConfig.token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
+        TCCDiagnostics.log("mint_request url=\(mintURL.absoluteString) install_id=\(installID)")
 
         URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, error in
-            guard error == nil,
-                  let httpResponse = response as? HTTPURLResponse,
-                  (200 ..< 300).contains(httpResponse.statusCode),
-                  let data,
-                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let token = payload["token"] as? String,
-                  token.hasPrefix("tldr_dt_") else {
+            if let error {
+                TCCDiagnostics.log("mint_failed reason=transport_error error=\(error.localizedDescription)")
                 return
             }
-            try? Paths.saveDeviceToken(token)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                TCCDiagnostics.log("mint_failed reason=non_http_response")
+                return
+            }
+            // Bound the body slice we log: proxy errors are short JSON
+            // ("invalid bootstrap token", "device token storage unavailable"),
+            // and successful responses contain a token we don't want to log.
+            let bodySnippet: String = {
+                guard let data, let s = String(data: data, encoding: .utf8) else { return "<no-body>" }
+                return String(s.prefix(200))
+            }()
+            guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                TCCDiagnostics.log("mint_failed reason=http_status status=\(httpResponse.statusCode) body=\(bodySnippet)")
+                return
+            }
+            guard let data,
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                TCCDiagnostics.log("mint_failed reason=response_not_json status=\(httpResponse.statusCode) body=\(bodySnippet)")
+                return
+            }
+            guard let token = payload["token"] as? String, token.hasPrefix("tldr_dt_") else {
+                TCCDiagnostics.log("mint_failed reason=token_field_invalid status=\(httpResponse.statusCode)")
+                return
+            }
+            do {
+                try Paths.saveDeviceToken(token)
+                TCCDiagnostics.log("mint_succeeded install_id=\(installID)")
+            } catch {
+                TCCDiagnostics.log("mint_failed reason=save_failed error=\(error.localizedDescription)")
+            }
         }.resume()
     }
 }
