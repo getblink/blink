@@ -17,6 +17,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     private var modelPopup: NSPopUpButton?
     private var thinkingPopup: NSPopUpButton?
     private var soundsCheckbox: NSButton?
+    private var styleWindowController: StyleWindowController?
 
     private var statusSubscription: AnyCancellable?
     private var modelSubscription: AnyCancellable?
@@ -161,7 +162,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         permsButton.bezelStyle = .rounded
         let resetPermsButton = NSButton(title: "Reset Permissions…", target: self, action: #selector(resetPermissions))
         resetPermsButton.bezelStyle = .rounded
-        let buttonRow = NSStackView(views: [runsButton, runtimeButton, permsButton, resetPermsButton])
+        let styleButton = NSButton(title: "Style…", target: self, action: #selector(openStyle))
+        styleButton.bezelStyle = .rounded
+        let buttonRow = NSStackView(views: [runsButton, runtimeButton, styleButton, permsButton, resetPermsButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
         stack.addArrangedSubview(buttonRow)
@@ -312,6 +315,13 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
 
     @objc private func openPermissions() {
         onShowPermissions()
+    }
+
+    @objc private func openStyle() {
+        if styleWindowController == nil {
+            styleWindowController = StyleWindowController(runtimeStore: runtimeStore)
+        }
+        styleWindowController?.show()
     }
 
     /// Mirror of `app/scripts/reset_tcc.sh` — clears every TCC service

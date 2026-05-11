@@ -31,6 +31,49 @@ RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
+STYLE_ABOUT_ME_MAX_CHARS = 280
+STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
+    "initiative": {
+        "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
+        "agentic": "Initiative: take the lead. Produce complete, send-ready drafts the user can use as-is.",
+    },
+    "tone": {
+        "casual": "Tone: casual. Contractions are fine, lowercase is fine, light punctuation.",
+        "formal": "Tone: formal. Proper punctuation, professional register, no slang.",
+    },
+    "length": {
+        "terse": "Length: keep each suggestion to one short sentence.",
+        "thorough": "Length: two or three sentences are fine when the situation calls for it.",
+    },
+    "directness": {
+        "diplomatic": "Directness: lean diplomatic. Soften pushback, hedge, preserve harmony.",
+        "direct": "Directness: be direct. Push back when you disagree; name the real issue without softening.",
+    },
+    "voice_mirror": {
+        "neutral": "Voice mirror: use a clean neutral register; do not lean hard on prior voice samples.",
+        "mirror": "Voice mirror: tightly imitate the user's voice samples even when they clash with the current capture's tone.",
+    },
+}
+STYLE_KNOB_ORDER = ("initiative", "tone", "length", "directness", "voice_mirror")
+
+
+def style_block(style: dict[str, Any] | None) -> str:
+    if not isinstance(style, dict):
+        return ""
+    lines: list[str] = []
+    for knob in STYLE_KNOB_ORDER:
+        value = str(style.get(knob) or "").strip().lower()
+        instruction = STYLE_KNOB_INSTRUCTIONS.get(knob, {}).get(value)
+        if instruction:
+            lines.append(f"- {instruction}")
+    about_me = str(style.get("about_me") or "").strip()
+    if about_me:
+        about_me = about_me[:STYLE_ABOUT_ME_MAX_CHARS]
+        lines.append(f"- About the user: {about_me}")
+    if not lines:
+        return ""
+    return "Style preferences:\n" + "\n".join(lines)
+
 
 def _is_thinking_model(model: str) -> bool:
     """Gemini 3 Pro / Flash are reasoning models with non-trivial thinking budgets."""
@@ -73,6 +116,7 @@ def prompt_with_context(
     prompt_text: str,
     stateful_context: dict[str, Any] | None,
     reroll_context: dict[str, Any] | None = None,
+    style: dict[str, Any] | None = None,
 ) -> str:
     if not stateful_context:
         stateful_context = {}
@@ -95,7 +139,14 @@ def prompt_with_context(
         for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in previous_suggestions)
         if text
     ][:3]
-    if not voice_samples and not preference_examples and not surface_history and not previous_suggestion_texts:
+    style_text = style_block(style)
+    if (
+        not voice_samples
+        and not preference_examples
+        and not surface_history
+        and not previous_suggestion_texts
+        and not style_text
+    ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
     preference_texts = {
@@ -106,6 +157,8 @@ def prompt_with_context(
         if text
     }
     lines = [""]
+    if style_text:
+        lines.append(style_text)
     if has_stateful_context:
         lines.extend(
             [
