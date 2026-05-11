@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env*
 !.env.example
+!.env.production.example
 !server/.env.example
 !site/.env.example
 .context/

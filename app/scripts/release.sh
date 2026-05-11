@@ -14,6 +14,39 @@ fi
 source "$SCRIPT_DIR/env_compat.sh"
 blink_apply_legacy_env_aliases
 
+# Production proxy embedding is mandatory for release builds. Without this,
+# build.sh would fall back to whatever BLINK_PROXY_URL/BLINK_PROXY_TOKEN
+# happen to be in the user's shell or repo-root .env — which is the
+# local-dev/staging config. That regression shipped 0.2.3 and 0.2.4 with
+# the staging URL baked in; the app's silent mintIfNeeded then 401'd
+# against staging and no /v1/* traffic ever reached production.
+REPO_ROOT="$(cd "$APP_DIR/.." && pwd)"
+PROD_ENV_FILE="$REPO_ROOT/.env.production"
+if [[ "${BLINK_DISABLE_PROXY:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    echo "[blink] proxy embedding disabled by BLINK_DISABLE_PROXY"
+elif [[ -f "$PROD_ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$PROD_ENV_FILE"
+    set +a
+    echo "[blink] sourced production proxy config from $PROD_ENV_FILE"
+    if [[ -z "${BLINK_PROXY_URL:-}" || -z "${BLINK_PROXY_TOKEN:-}" ]]; then
+        echo "[blink] error: $PROD_ENV_FILE must define both BLINK_PROXY_URL and BLINK_PROXY_TOKEN" >&2
+        exit 1
+    fi
+    if [[ "$BLINK_PROXY_URL" == *staging* ]]; then
+        echo "[blink] error: BLINK_PROXY_URL in $PROD_ENV_FILE points at staging ($BLINK_PROXY_URL); release builds must embed production." >&2
+        echo "[blink] If you really intend a staging release, set BLINK_DISABLE_PROXY=1 to skip proxy embedding." >&2
+        exit 1
+    fi
+else
+    echo "[blink] error: $PROD_ENV_FILE not found." >&2
+    echo "[blink] release.sh must embed the production proxy URL/token, not the local-dev .env." >&2
+    echo "[blink] Create $PROD_ENV_FILE with BLINK_PROXY_URL and BLINK_PROXY_TOKEN (see .env.production.example)," >&2
+    echo "[blink] or set BLINK_DISABLE_PROXY=1 to skip proxy embedding entirely." >&2
+    exit 1
+fi
+
 SPARKLE_SIGN_UPDATE="${BLINK_SPARKLE_SIGN_UPDATE:-}"
 SPARKLE_KEYCHAIN_ACCOUNT="${BLINK_SPARKLE_KEYCHAIN_ACCOUNT:-}"
 R2_BUCKET="${BLINK_R2_BUCKET:-}"
