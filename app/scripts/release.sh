@@ -164,31 +164,70 @@ if [[ "$UPLOAD" != "0" ]]; then
     export AWS_DEFAULT_REGION=auto
     export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
     export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+
+    # rclone fallback config — lazily materialized if aws s3 cp fails. The
+    # 0.2.6 release hit BAD_RECORD_MAC across every aws-cli/boto3/curl variant
+    # we tried (Python OpenSSL and LibreSSL alike, single-part PUT and
+    # multipart, rate-limited and full-speed); rclone (Go TLS + 5MB chunked
+    # per-part retries) was the only path that completed. Keep aws s3 cp as
+    # the primary path; per-object fall back to rclone on any non-zero exit.
+    BLINK_RCLONE_CONFIG_TEMP=""
+    trap '[[ -n "${BLINK_RCLONE_CONFIG_TEMP:-}" ]] && rm -f "$BLINK_RCLONE_CONFIG_TEMP"' EXIT
+
+    upload_one() {
+        local src="$1" key="$2" content_type="$3"
+        local cache_control='public, max-age=60, must-revalidate'
+        if aws s3 cp "$src" "s3://$R2_BUCKET/$key" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --content-type "$content_type" \
+                --cache-control "$cache_control"; then
+            return 0
+        fi
+        echo "[blink] aws s3 cp failed for $key — falling back to rclone (Go TLS, chunked retries)"
+        if ! command -v rclone >/dev/null 2>&1; then
+            echo "[blink] error: rclone fallback unavailable. Install with 'brew install rclone' and rerun (artifacts in app/build/ are reusable)." >&2
+            return 1
+        fi
+        if [[ -z "$BLINK_RCLONE_CONFIG_TEMP" ]]; then
+            BLINK_RCLONE_CONFIG_TEMP="$(mktemp)"
+            cat > "$BLINK_RCLONE_CONFIG_TEMP" <<EOF
+[r2]
+type = s3
+provider = Cloudflare
+access_key_id = ${R2_ACCESS_KEY_ID}
+secret_access_key = ${R2_SECRET_ACCESS_KEY}
+endpoint = ${R2_ENDPOINT}
+region = auto
+EOF
+        fi
+        RCLONE_CONFIG="$BLINK_RCLONE_CONFIG_TEMP" rclone copyto \
+            --s3-chunk-size=5M \
+            --s3-upload-concurrency=1 \
+            --retries 20 \
+            --low-level-retries 30 \
+            --header-upload "Content-Type: $content_type" \
+            --header-upload "Cache-Control: $cache_control" \
+            --progress --stats=2s --stats-one-line \
+            "$src" "r2:${R2_BUCKET}/${key}"
+    }
+
     # Short Cache-Control on the DMG too. Without it, Cloudflare applies a 4-hour
     # edge TTL to the DMG by default. If the same DMG path is ever re-uploaded
     # (e.g., dry-run then real release at the same version), Sparkle sees the new
     # appcast pointing at fresh bytes, but downloads the stale cached DMG —
     # signature verification then fails silently and updates break.
-    aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$DMG_REMOTE_KEY" \
-        --endpoint-url "$R2_ENDPOINT" \
-        --content-type application/x-apple-diskimage \
-        --cache-control 'public, max-age=60, must-revalidate'
+    upload_one "$DMG_PATH" "$DMG_REMOTE_KEY" application/x-apple-diskimage
     # Stable alias at latest/Blink.dmg for human-facing download links and
     # structured-data offer URLs that don't want to drift on each release.
     # Sparkle still uses the versioned URL via the appcast — this is purely
     # a convenience handle. Same short Cache-Control + must-revalidate so a
     # new release is visible within ~60s.
     LATEST_DMG_KEY="${BLINK_R2_LATEST_DMG_KEY:-latest/Blink.dmg}"
-    aws s3 cp "$DMG_PATH" "s3://$R2_BUCKET/$LATEST_DMG_KEY" \
-        --endpoint-url "$R2_ENDPOINT" \
-        --content-type application/x-apple-diskimage \
-        --cache-control 'public, max-age=60, must-revalidate'
-    # Short Cache-Control so a fresh release is visible to Sparkle within 60s
-    # instead of being pinned to Cloudflare's default edge TTL for XML.
-    aws s3 cp "$APPCAST_LOCAL_PATH" "s3://$R2_BUCKET/$APPCAST_REMOTE_KEY" \
-        --endpoint-url "$R2_ENDPOINT" \
-        --content-type 'application/xml; charset=utf-8' \
-        --cache-control 'public, max-age=60, must-revalidate'
+    upload_one "$DMG_PATH" "$LATEST_DMG_KEY" application/x-apple-diskimage
+    # Appcast LAST — once it's live, installed apps start polling it for the
+    # new DMG. Short Cache-Control so a fresh release is visible to Sparkle
+    # within 60s instead of being pinned to Cloudflare's default edge TTL.
+    upload_one "$APPCAST_LOCAL_PATH" "$APPCAST_REMOTE_KEY" 'application/xml; charset=utf-8'
     echo "[blink] release uploaded: $DMG_URL"
     echo "[blink] latest alias: https://$R2_DOMAIN/$LATEST_DMG_KEY"
     echo "[blink] appcast: https://$R2_DOMAIN/$APPCAST_REMOTE_KEY"
