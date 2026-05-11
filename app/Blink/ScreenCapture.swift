@@ -158,8 +158,18 @@ enum ScreenCapture {
             }
         }
 
-        TCCDiagnostics.log("window_capture_attempt window_id=\(window.windowID) scale=\(scale)")
-        let cgImage = try await captureWindowImage(window, scale: scale)
+        let sizing = preferredCaptureSize(
+            windowFrame: window.frame,
+            preferredGlobalRect: preferredGlobalRect
+        )
+        TCCDiagnostics.log(
+            "window_capture_attempt window_id=\(window.windowID) scale=\(scale) sck_frame=\(NSStringFromRect(window.frame)) ax_rect=\(preferredGlobalRect.map { NSStringFromRect($0) } ?? "nil") sizing_source=\(sizing.source == .ax ? "ax" : "sck")"
+        )
+        let cgImage = try await captureWindowImage(
+            window,
+            captureSize: sizing.size,
+            scale: scale
+        )
         guard let pngData = cgImageToPNG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
@@ -177,6 +187,27 @@ enum ScreenCapture {
             ownerBundleID: window.owningApplication?.bundleIdentifier,
             shareableContent: content
         )
+    }
+
+    enum CaptureSizingSource { case ax, sck }
+
+    // Pick the size we should ask SCK to render into. AX dims are preferred
+    // when available because SCK's window.frame can lie (e.g. Chrome surfaces
+    // a 1512×157 frame while the actual content layer is 1000×700, producing
+    // the "3024×314 mostly-black canvas" bug). Falls back to SCK's frame when
+    // AX is unavailable or returns something degenerate. Returns the source
+    // tag too so callers can log unambiguously even when AX and SCK agree.
+    static func preferredCaptureSize(
+        windowFrame: CGRect,
+        preferredGlobalRect: CGRect?
+    ) -> (size: CGSize, source: CaptureSizingSource) {
+        guard let ax = preferredGlobalRect,
+              !ax.isNull, !ax.isEmpty, !ax.isInfinite,
+              ax.width >= 100, ax.height >= 100
+        else {
+            return (windowFrame.size, .sck)
+        }
+        return (ax.size, .ax)
     }
 
     static func shouldUseDisplayFallback(windowFrame: CGRect, scale: Int) -> Bool {
@@ -363,13 +394,21 @@ enum ScreenCapture {
         return candidates[bestIndex]
     }
 
-    private static func captureWindowImage(_ window: SCWindow, scale: Int) async throws -> CGImage {
+    private static func captureWindowImage(
+        _ window: SCWindow,
+        captureSize: CGSize,
+        scale: Int
+    ) async throws -> CGImage {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()
         // Size the capture buffer to the window's pixel dimensions at the
-        // owning display's backing scale so we don't downsample.
-        config.width = max(1, Int(window.frame.width) * scale)
-        config.height = max(1, Int(window.frame.height) * scale)
+        // owning display's backing scale so we don't downsample. We accept
+        // captureSize from the caller because SCK's window.frame is unreliable
+        // for some Chrome window states (reports a wide-short strip while
+        // Chrome's content layer is normally proportioned), and the AX rect
+        // — when available — is a more faithful source for window dims.
+        config.width = max(1, Int(captureSize.width) * scale)
+        config.height = max(1, Int(captureSize.height) * scale)
         config.showsCursor = false
         config.scalesToFit = true
 
