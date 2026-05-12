@@ -5,7 +5,7 @@ import Foundation
 import OSLog
 import ScreenCaptureKit
 
-final class BlinkCoordinator {
+final class BlinkCoordinator: @unchecked Sendable {
     private struct CapturedFrame {
         let index: Int
         let pngURL: URL
@@ -723,12 +723,18 @@ final class BlinkCoordinator {
         )
         let captureStartedPerf = monotonicNow()
 
+        let ownPID = NSRunningApplication.current.processIdentifier
         let effectivePID: pid_t?
-        if let preferredPID {
+        if let preferredPID, preferredPID != ownPID {
             effectivePID = preferredPID
         } else {
+            // Skip Blink itself — the Control window / Settings can be the
+            // frontmost app when the hotkey or Summarize button fires, and
+            // we never want to capture our own window.
             effectivePID = DispatchQueue.main.sync {
-                NSWorkspace.shared.frontmostApplication?.processIdentifier
+                let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                if let frontmost, frontmost != ownPID { return frontmost }
+                return nil
             }
         }
         let axRect = effectivePID.flatMap { ScreenCapture.focusedWindowGlobalRect(for: $0) }

@@ -54,12 +54,13 @@ enum ScreenCapture {
 
     /// Capture the frontmost on-screen window of the frontmost application.
     ///
-    /// Called from hotkey handlers — the user's source/target app is still
-    /// frontmost because Blink runs as `.accessory` and the hotkey tap doesn't
-    /// steal focus. For multi-frame sessions, callers should pass
-    /// `preferredPID` after frame 0 so subsequent frames stay pinned to the
-    /// original source app even if the collecting overlay momentarily
-    /// activates Blink.
+    /// Blink now runs as `.regular` so its own Control window can be frontmost
+    /// when the hotkey or Summarize button fires. We never want to capture
+    /// Blink itself, so when the resolved frontmost app is Blink we fall back
+    /// to the topmost on-screen standard-layer window owned by a different
+    /// process. For multi-frame sessions, callers should pass `preferredPID`
+    /// after frame 0 so subsequent frames stay pinned to the original source
+    /// app even if the collecting overlay momentarily activates Blink.
     static func captureFrontmostWindow(
         preferredGlobalRect: CGRect? = nil,
         shareableContent cachedContent: SCShareableContent? = nil,
@@ -73,19 +74,20 @@ enum ScreenCapture {
         // Preflight is informational only — we do NOT guard on it (see class
         // doc). If permission is denied, the SCK call below surfaces the real
         // error and macOS shows the Screen Recording prompt at capture time.
+        let ownPID = NSRunningApplication.current.processIdentifier
         let pid: pid_t
         let ownerName: String?
-        if let preferredPID, let app = NSRunningApplication(processIdentifier: preferredPID) {
+        if let preferredPID,
+           preferredPID != ownPID,
+           let app = NSRunningApplication(processIdentifier: preferredPID) {
             pid = preferredPID
             ownerName = app.localizedName
         } else {
-            guard let frontmost = await MainActor.run(body: {
-                NSWorkspace.shared.frontmostApplication
-            }) else {
+            guard let resolved = await MainActor.run(body: { resolveTargetApp(excluding: ownPID) }) else {
                 throw CaptureError.noFrontmostApp
             }
-            pid = frontmost.processIdentifier
-            ownerName = frontmost.localizedName
+            pid = resolved.pid
+            ownerName = resolved.name
         }
         TCCDiagnostics.log("screen_capture_owner pid=\(pid) owner_name=\(ownerName ?? "nil")")
 
@@ -322,6 +324,57 @@ enum ScreenCapture {
         return try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false
         )
+    }
+
+    /// Pick the app to capture, skipping Blink itself. Prefers
+    /// `NSWorkspace.frontmostApplication` when it's not Blink; otherwise walks
+    /// `CGWindowListCopyWindowInfo` (front-to-back z-order) for the topmost
+    /// on-screen standard-layer window owned by a different process.
+    @MainActor
+    private static func resolveTargetApp(excluding ownPID: pid_t) -> (pid: pid_t, name: String?)? {
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != ownPID {
+            return (frontmost.processIdentifier, frontmost.localizedName)
+        }
+        guard let infoList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return nil
+        }
+        guard let pid = topmostNonSelfOwnerPID(in: infoList, excluding: ownPID) else {
+            return nil
+        }
+        let name = NSRunningApplication(processIdentifier: pid)?.localizedName
+        return (pid, name)
+    }
+
+    /// Picks the owner PID of the topmost standard-layer on-screen window not
+    /// owned by `ownPID`. Extracted for testability — `CGWindowListCopyWindowInfo`
+    /// returns dicts in front-to-back z-order, so we take the first match.
+    ///
+    /// Casts go through `NSNumber` because CF returns CFNumber-bridged
+    /// NSNumbers, and `as? pid_t` (a typealias for Int32) is not a reliable
+    /// bridge — it can return nil even when the value is present.
+    static func topmostNonSelfOwnerPID(
+        in windows: [[String: Any]],
+        excluding ownPID: pid_t
+    ) -> pid_t? {
+        for window in windows {
+            guard let ownerNumber = window[kCGWindowOwnerPID as String] as? NSNumber else { continue }
+            let ownerPID = ownerNumber.int32Value
+            guard ownerPID != ownPID else { continue }
+            // Require an explicit layer == 0; missing or non-0 layer means
+            // status item, dock tile, menu, etc., which we never want to capture.
+            guard let layerNumber = window[kCGWindowLayer as String] as? NSNumber,
+                  layerNumber.intValue == 0 else { continue }
+            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+               let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+               bounds.width >= 80, bounds.height >= 80 {
+                return ownerPID
+            }
+        }
+        return nil
     }
 
     private static func candidateWindows(in content: SCShareableContent, pid: pid_t) -> [SCWindow] {

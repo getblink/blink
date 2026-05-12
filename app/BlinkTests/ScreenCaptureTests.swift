@@ -71,6 +71,92 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertEqual(result.source, .ax)
     }
 
+    func testTopmostNonSelfOwnerSkipsBlinkAndPicksNextWindow() {
+        // Front-to-back z-order. Blink's own Control window is on top, then
+        // a Safari window. We should pick Safari's PID.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            blinkWindow(ownerPID: ownPID),
+            standardWindow(ownerPID: 9001, width: 1200, height: 800),
+        ]
+
+        let pid = ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(pid, 9001)
+    }
+
+    func testTopmostNonSelfOwnerRespectsFrontToBackOrderWhenBlinkIsNotFirst() {
+        // Defensive: if some other Blink-owned window (e.g. menubar item)
+        // sits behind a real target, we still want the topmost non-Blink
+        // standard-layer window — not the first occurrence of a different PID.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            standardWindow(ownerPID: 9001, width: 1200, height: 800),
+            blinkWindow(ownerPID: ownPID),
+            standardWindow(ownerPID: 7777, width: 800, height: 600),
+        ]
+
+        let pid = ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(pid, 9001)
+    }
+
+    func testTopmostNonSelfOwnerSkipsNonStandardLayerWindows() {
+        // Status-bar / menu overlays live above layer 0 and should never be
+        // chosen as the capture target.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            standardWindow(ownerPID: 7777, width: 200, height: 24, layer: 25),
+            standardWindow(ownerPID: 8888, width: 900, height: 700),
+        ]
+
+        let pid = ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(pid, 8888)
+    }
+
+    func testTopmostNonSelfOwnerSkipsTinyWindows() {
+        // Tooltips and accessory popovers are tiny. Don't lock onto them.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            standardWindow(ownerPID: 5555, width: 40, height: 20),
+            standardWindow(ownerPID: 6666, width: 1000, height: 700),
+        ]
+
+        let pid = ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(pid, 6666)
+    }
+
+    func testTopmostNonSelfOwnerReturnsNilWhenOnlySelfPresent() {
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [blinkWindow(ownerPID: ownPID)]
+
+        XCTAssertNil(ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID))
+    }
+
+    private func blinkWindow(ownerPID: pid_t) -> [String: Any] {
+        standardWindow(ownerPID: ownerPID, width: 520, height: 220)
+    }
+
+    private func standardWindow(
+        ownerPID: pid_t,
+        width: CGFloat,
+        height: CGFloat,
+        layer: Int = 0
+    ) -> [String: Any] {
+        [
+            kCGWindowOwnerPID as String: ownerPID,
+            kCGWindowLayer as String: layer,
+            kCGWindowBounds as String: [
+                "X": 0.0,
+                "Y": 0.0,
+                "Width": Double(width),
+                "Height": Double(height),
+            ] as [String: Any],
+        ]
+    }
+
     func testPreferredCaptureSizeReportsAxSourceEvenWhenDimsMatchSck() {
         // When AX and SCK happen to agree, the source tag must still report
         // .ax so log audits can confirm the AX path fired.
