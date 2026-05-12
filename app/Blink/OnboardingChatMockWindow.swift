@@ -1,6 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
-import CoreGraphics
 import SwiftUI
 
 struct ChatMockMessage: Identifiable {
@@ -66,367 +64,268 @@ struct OnboardingFixture {
     }
 }
 
-/// Local state shared between the SwiftUI view and the AppKit window. Owned
-/// by the controller so the window's keyDown can mutate state that the view
-/// reads.
-final class OnboardingDemoState: ObservableObject {
-    enum Phase {
-        case awaitingHotkey
-        case showingSuggestions
-        case pasted(index: Int)
-    }
-
-    @Published var phase: Phase = .awaitingHotkey
-}
-
-private struct ChatMockBubble: View {
+private struct SlackMessageRow: View {
     let message: ChatMockMessage
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            if message.role == .outgoing { Spacer(minLength: 60) }
-            VStack(alignment: message.role == .outgoing ? .trailing : .leading, spacing: 2) {
-                if let name = message.name, message.role == .incoming {
-                    Text(name)
-                        .font(.system(size: 11, weight: .semibold))
+        HStack(alignment: .top, spacing: 10) {
+            avatar
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(message.name ?? "Someone")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                    Text("9:42 AM")
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
-                        .padding(.leading, 4)
                 }
                 Text(message.text)
-                    .font(.system(size: 14))
-                    .foregroundColor(message.role == .outgoing ? .white : .primary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(message.role == .outgoing
-                                  ? Color.accentColor
-                                  : Color(nsColor: .controlBackgroundColor))
-                    )
+                    .font(.system(size: 13))
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if message.role == .incoming { Spacer(minLength: 60) }
+            Spacer(minLength: 0)
         }
     }
-}
 
-private struct SuggestionRow: View {
-    let index: Int
-    let text: String
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(alignment: .top, spacing: 10) {
-                Text("\(index)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(Color.accentColor))
-                Text(text)
-                    .font(.system(size: 12))
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+    private var avatar: some View {
+        let name = message.name ?? "?"
+        let initial = String(name.prefix(1)).uppercased()
+        let palette: [Color] = [
+            Color(red: 0.36, green: 0.45, blue: 0.85),
+            Color(red: 0.78, green: 0.38, blue: 0.55),
+            Color(red: 0.30, green: 0.62, blue: 0.48),
+        ]
+        let color = palette[abs(name.hashValue) % palette.count]
+        return Text(initial)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 32, height: 32)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(color)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
 
 private struct OnboardingChatMockView: View {
     let fixture: OnboardingFixture
+    let channelName: String
     let hotkeyDisplay: String
-    let title: String
-    @ObservedObject var state: OnboardingDemoState
-    let onSelect: (Int) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
+            channelHeader
             Divider()
-            chatScroll
-            Divider()
-            footerArea
-        }
-    }
-
-    private var headerBar: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(Color.accentColor.opacity(0.85))
-                .frame(width: 28, height: 28)
-                .overlay(
-                    Text("S")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                )
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                Text("active now")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var chatScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(fixture.messages) { message in
-                    ChatMockBubble(message: message)
-                }
-                if case .pasted(let index) = state.phase {
-                    pastedReply(index: index)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(Color(nsColor: .textBackgroundColor))
-    }
-
-    @ViewBuilder
-    private func pastedReply(index: Int) -> some View {
-        let suggestion = fixture.suggestions.indices.contains(index)
-            ? fixture.suggestions[index]
-            : ""
-        ChatMockBubble(message: ChatMockMessage(
-            role: .outgoing,
-            name: "You",
-            text: suggestion
-        ))
-        .transition(.opacity)
-    }
-
-    @ViewBuilder
-    private var footerArea: some View {
-        switch state.phase {
-        case .awaitingHotkey:
+            messageList
             hotkeyHint
-        case .showingSuggestions:
-            suggestionsPanel
-        case .pasted:
-            pastedHint
         }
     }
 
     private var hotkeyHint: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.accentColor)
             Text("Press")
                 .foregroundColor(.secondary)
             Text(hotkeyDisplay)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundColor(.primary)
-            Text("to summarize · Esc to close")
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+            Text("to ask Blink for a reply")
                 .foregroundColor(.secondary)
+            Spacer()
         }
         .font(.system(size: 12))
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var suggestionsPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("tl;dr")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.secondary)
-                Text(fixture.tldr)
-                    .font(.system(size: 12))
-                    .foregroundColor(.primary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.08))
-            )
-
-            VStack(spacing: 5) {
-                ForEach(Array(fixture.suggestions.prefix(3).enumerated()), id: \.offset) { idx, text in
-                    SuggestionRow(index: idx + 1, text: text) {
-                        onSelect(idx)
-                    }
-                }
-            }
-
-            HStack(spacing: 4) {
-                Text("Press")
-                Text("1").bold().foregroundColor(.primary)
-                Text("/")
-                Text("2").bold().foregroundColor(.primary)
-                Text("/")
-                Text("3").bold().foregroundColor(.primary)
-                Text("to insert · Esc to close")
-            }
-            .font(.system(size: 11))
-            .foregroundColor(.secondary)
+    private var channelHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "number")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(channelName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+            Spacer()
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var pastedHint: some View {
-        HStack(spacing: 6) {
-            Text("Reply inserted. Esc to close.")
-                .foregroundColor(.secondary)
+    private var messageList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(fixture.messages) { message in
+                    SlackMessageRow(message: message)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.system(size: 12))
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
-private final class OnboardingChatMockWindow: NSWindow {
-    var onEsc: (() -> Void)?
-    var onHotkey: (() -> Void)?
-    var onChoice: ((Int) -> Void)?
-    var shouldConsumeChoiceKeys: (() -> Bool)?
-    var hotkey: Hotkey?
+/// AppKit reply composer. SwiftUI's `TextField` doesn't reliably regain
+/// first-responder status after the suggestions overlay grabs key status,
+/// which means the Inserter's synthesized Cmd+V lands on a non-editable
+/// view and beeps. An honest `NSTextField` (with explicit
+/// `makeFirstResponder` from the window delegate) is deterministic.
+private final class ReplyComposerView: NSView {
+    let textField = NSTextField()
 
+    init(channelName: String) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.placeholderString = "Reply to #\(channelName)"
+        textField.font = NSFont.systemFont(ofSize: 13)
+        textField.isBordered = true
+        textField.bezelStyle = .roundedBezel
+        textField.focusRingType = .default
+        textField.isEditable = true
+        textField.isSelectable = true
+        textField.usesSingleLineMode = false
+        textField.cell?.usesSingleLineMode = false
+        textField.cell?.wraps = true
+        textField.cell?.isScrollable = false
+        textField.lineBreakMode = .byWordWrapping
+        textField.maximumNumberOfLines = 5
+
+        addSubview(textField)
+        NSLayoutConstraint.activate([
+            textField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            textField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            textField.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            textField.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+/// NSWindow that closes on Esc. The mock window's footer copy promises
+/// "press Esc when you're done", so the window itself needs to honor that
+/// even though we no longer intercept arbitrary keys.
+private final class EscClosingWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
-
-    override func keyDown(with event: NSEvent) {
-        // Esc always closes.
-        if event.keyCode == CGKeyCode(kVK_Escape) {
-            onEsc?()
-            return
-        }
-        // The configured summary hotkey reveals the suggestions panel.
-        if let hotkey, Self.matches(event: event, hotkey: hotkey) {
-            onHotkey?()
-            return
-        }
-        // 1 / 2 / 3 (no modifiers) selects a suggestion, but only while the
-        // suggestions panel is showing — otherwise let the event fall
-        // through so the OS makes its usual beep.
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if mods.isEmpty, shouldConsumeChoiceKeys?() == true {
-            switch Int(event.keyCode) {
-            case kVK_ANSI_1: onChoice?(0); return
-            case kVK_ANSI_2: onChoice?(1); return
-            case kVK_ANSI_3: onChoice?(2); return
-            default: break
-            }
-        }
-        super.keyDown(with: event)
-    }
-
-    private static func matches(event: NSEvent, hotkey: Hotkey) -> Bool {
-        guard CGKeyCode(event.keyCode) == hotkey.keyCode else { return false }
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        var flags: CGEventFlags = []
-        if mods.contains(.command) { flags.insert(.maskCommand) }
-        if mods.contains(.control) { flags.insert(.maskControl) }
-        if mods.contains(.option) { flags.insert(.maskAlternate) }
-        if mods.contains(.shift) { flags.insert(.maskShift) }
-        // `.function` is set automatically for function-class keys (arrows,
-        // F-keys, page nav). Only treat it as Fn when the hotkey actually
-        // requires it, otherwise e.g. ⌃⌥→ would never match.
-        if hotkey.flags.contains(.maskSecondaryFn), mods.contains(.function) {
-            flags.insert(.maskSecondaryFn)
-        }
-        return flags == hotkey.flags
+    override func cancelOperation(_ sender: Any?) {
+        close()
     }
 }
 
-/// Self-contained onboarding sample. The window owns its own key handling
-/// (no global hotkey tap), renders deterministic tldr + suggestions from the
-/// bundled fixture, and never reaches into screen capture, accessibility, or
-/// the model. As a result, it works before any TCC permission is granted.
+/// Onboarding demo surface. Renders a Slack-style channel from the bundled
+/// fixture and serves as a real capture target for the live Blink pipeline
+/// — the suggestions overlay, hotkey listening, and paste path all come
+/// from the actual coordinator. Owns no key handling of its own beyond Esc.
 final class OnboardingChatMockWindowController: NSObject, NSWindowDelegate {
     private let fixture: OnboardingFixture
-    private let hotkey: Hotkey
+    private let channelName: String
     private let hotkeyDisplay: String
     private let onClose: () -> Void
-    private var window: OnboardingChatMockWindow?
-    private var state = OnboardingDemoState()
+    private var window: NSWindow?
+    private var replyComposer: ReplyComposerView?
     private var didFireClose = false
 
     init(
         fixture: OnboardingFixture,
-        hotkey: Hotkey,
+        channelName: String = "launch-readiness",
         hotkeyDisplay: String,
         onClose: @escaping () -> Void
     ) {
         self.fixture = fixture
-        self.hotkey = hotkey
+        self.channelName = channelName
         self.hotkeyDisplay = hotkeyDisplay
         self.onClose = onClose
         super.init()
     }
 
     func show() {
-        // Re-create on each show so phase state is fresh; older controllers
-        // that lingered with .pasted leftovers would confuse repeat visits.
-        state = OnboardingDemoState()
+        // Re-shows reuse the existing window so a re-entry into the demo
+        // flow doesn't leak the previous one (this controller is held by
+        // AppDelegate across the session).
+        if let existing = window {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        didFireClose = false
 
         let contentRect = NSRect(x: 0, y: 0, width: 720, height: 560)
-        let win = OnboardingChatMockWindow(
+        let win = EscClosingWindow(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        win.title = "Messages — Sam"
+        win.title = "#\(channelName)"
         win.titlebarAppearsTransparent = true
         win.isMovableByWindowBackground = true
         win.isReleasedWhenClosed = false
         win.delegate = self
-        win.hotkey = hotkey
-        win.onEsc = { [weak self] in self?.close() }
-        win.onHotkey = { [weak self] in self?.revealSuggestions() }
-        win.onChoice = { [weak self] idx in self?.choose(index: idx) }
-        win.shouldConsumeChoiceKeys = { [weak self] in
-            guard let self else { return false }
-            if case .showingSuggestions = self.state.phase { return true }
-            return false
-        }
 
-        let host = NSHostingView(rootView: OnboardingChatMockView(
+        let chat = NSHostingView(rootView: OnboardingChatMockView(
             fixture: fixture,
-            hotkeyDisplay: hotkeyDisplay,
-            title: "Sam",
-            state: state,
-            onSelect: { [weak self] idx in self?.choose(index: idx) }
+            channelName: channelName,
+            hotkeyDisplay: hotkeyDisplay
         ))
-        // Use autoresizing rather than auto-layout so the SwiftUI tree's
-        // intrinsic content size (which grows when the suggestions panel
-        // reveals) doesn't drag the window taller.
-        host.translatesAutoresizingMaskIntoConstraints = true
-        host.frame = NSRect(origin: .zero, size: contentRect.size)
-        host.autoresizingMask = [.width, .height]
-        win.contentView = host
+        chat.translatesAutoresizingMaskIntoConstraints = false
+        chat.setContentHuggingPriority(.defaultLow, for: .vertical)
+        chat.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        let composer = ReplyComposerView(channelName: channelName)
+        composer.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        composer.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+        replyComposer = composer
+
+        let stack = NSStackView(views: [chat, composer])
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.alignment = .leading
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            chat.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            chat.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            composer.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            composer.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+        ])
+        win.contentView = container
 
         win.center()
         window = win
         win.makeKeyAndOrderFront(nil)
+        win.makeFirstResponder(composer.textField)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -434,22 +333,28 @@ final class OnboardingChatMockWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    private func revealSuggestions() {
-        // If we've already inserted a reply, the hotkey is a no-op until Esc.
-        if case .pasted = state.phase { return }
-        state.phase = .showingSuggestions
-    }
-
-    private func choose(index: Int) {
-        // Only consume number keys while the suggestions panel is visible.
-        guard case .showingSuggestions = state.phase else { return }
-        guard fixture.suggestions.indices.contains(index) else { return }
-        state.phase = .pasted(index: index)
+    /// Used by the host to re-front the mock right before firing a real
+    /// summarize, so the screenshot targets this window (not whatever was
+    /// frontmost from the System Settings detour during permission grants).
+    func bringToFront() {
+        window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard !didFireClose else { return }
         didFireClose = true
         onClose()
+    }
+
+    /// Re-claim first-responder status for the reply composer every time the
+    /// window regains key status. The suggestions overlay grabs key while
+    /// the user is on 1/2/3, which drops the composer's responder slot —
+    /// without this hook, the Inserter's synthesized Cmd+V hits a
+    /// non-editable view and beeps.
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window, let composer = replyComposer else { return }
+        if window.firstResponder !== composer.textField {
+            window.makeFirstResponder(composer.textField)
+        }
     }
 }

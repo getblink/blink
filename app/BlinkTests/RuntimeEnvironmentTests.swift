@@ -16,7 +16,11 @@ final class RuntimeEnvironmentTests: XCTestCase {
         XCTAssertFalse(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
     }
 
-    func testFirstRunOnboardingSkipsExistingRunHistory() throws {
+    func testFirstRunOnboardingIgnoresExistingRunHistory() throws {
+        // Run history doesn't satisfy onboarding — TCC resets and
+        // multi-version dogfood sessions can leave runs/ populated while
+        // the user has never completed the current wizard, so the wizard
+        // must still show until the explicit marker is written.
         let base = try makeTempDirectory()
         let runtime = base.appendingPathComponent("runtime", isDirectory: true)
         let runs = base.appendingPathComponent("runs", isDirectory: true)
@@ -24,7 +28,7 @@ final class RuntimeEnvironmentTests: XCTestCase {
         try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
         try "done".write(to: runs.appendingPathComponent("existing-run"), atomically: true, encoding: .utf8)
 
-        XCTAssertFalse(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
+        XCTAssertTrue(Paths.requiresFirstRunOnboarding(runtimeDir: runtime, runsDir: runs))
     }
 
     func testMergeEnvTextKeepsExistingValuesAndAddsMissingValues() {

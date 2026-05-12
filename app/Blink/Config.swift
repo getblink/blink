@@ -110,14 +110,13 @@ enum Paths {
         runtimeDir: URL = Paths.runtimeDir,
         runsDir: URL = Paths.runsDir
     ) -> Bool {
+        // Wizard completion is tracked solely by the `onboarded` marker,
+        // which is written only when the user clicks "Get Started" in the
+        // first-run wizard. Run history doesn't count — TCC resets and
+        // multi-version dogfood sessions can leave runs/ populated while
+        // the user has never seen (or completed) the current wizard.
         let onboarded = runtimeDir.appendingPathComponent("onboarded")
-        if FileManager.default.fileExists(atPath: onboarded.path) {
-            return false
-        }
-        let runNames = (try? FileManager.default.contentsOfDirectory(
-            atPath: runsDir.path
-        )) ?? []
-        return runNames.isEmpty
+        return !FileManager.default.fileExists(atPath: onboarded.path)
     }
 
     static func markOnboarded(runtimeDir: URL = Paths.runtimeDir) {
