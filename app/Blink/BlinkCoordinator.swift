@@ -101,6 +101,10 @@ final class BlinkCoordinator {
     private var pendingDoubleTapRequestID: String?
     private let collectingStateLock = NSLock()
     private var collectingState = false
+    private let overlayActiveLock = NSLock()
+    private var overlayActiveValue = false
+    private let customInputActiveLock = NSLock()
+    private var customInputActiveValue = false
     private let doubleTapWindowMS = 400
     private let collectingTimeoutSeconds = 8
     private let maxCapturedFrames = 8
@@ -131,14 +135,21 @@ final class BlinkCoordinator {
         self.summaryHotkey = summaryHotkey
         self.soundEffects = soundEffects
         self.launchedAt = launchedAt
+        self.overlay.onVisibilityChange = { [weak self] active in
+            self?.setOverlayActiveMirror(active)
+        }
     }
 
     var isOverlayActive: Bool {
-        overlay.isVisible
+        overlayActiveLock.lock()
+        defer { overlayActiveLock.unlock() }
+        return overlayActiveValue
     }
 
     var isCustomInputActive: Bool {
-        choiceState.customInputActive
+        customInputActiveLock.lock()
+        defer { customInputActiveLock.unlock() }
+        return customInputActiveValue
     }
 
     var isCollectingActive: Bool {
@@ -178,6 +189,37 @@ final class BlinkCoordinator {
     /// permissions wizard) can render up-to-date copy without owning the
     /// HotkeyManager.
     var currentHotkey: Hotkey { summaryHotkey }
+
+    private func setOverlayActiveMirror(_ active: Bool) {
+        overlayActiveLock.lock()
+        overlayActiveValue = active
+        overlayActiveLock.unlock()
+    }
+
+    private func setCustomInputActiveMirror(_ active: Bool) {
+        customInputActiveLock.lock()
+        customInputActiveValue = active
+        customInputActiveLock.unlock()
+    }
+
+    private func resetChoiceState(suggestionCount: Int, allowsCustomInput: Bool = true) {
+        choiceState = SuggestionChoiceState(
+            suggestionCount: suggestionCount,
+            allowsCustomInput: allowsCustomInput
+        )
+        setCustomInputActiveMirror(choiceState.customInputActive)
+    }
+
+    private func applyChoiceNumber(_ index: Int) -> SuggestionChoiceState.NumberAction {
+        let action = choiceState.pressNumber(index: index)
+        setCustomInputActiveMirror(choiceState.customInputActive)
+        return action
+    }
+
+    private func setCustomInputActive(_ active: Bool) {
+        choiceState.setCustomInputActive(active)
+        setCustomInputActiveMirror(choiceState.customInputActive)
+    }
 
     /// Flips the onboarding-sample flag. Main-thread only; the value is
     /// read on the capture queue at session start, but the queue dispatches
@@ -859,7 +901,7 @@ final class BlinkCoordinator {
                 self.currentSuggestions = []
                 self.currentSuggestionDetails = []
                 self.currentBundleDir = nil
-                self.choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+                self.resetChoiceState(suggestionCount: 0, allowsCustomInput: false)
                 self.overlay.onCustomInputFocusChanged = nil
                 self.overlay.onCustomInsert = nil
                 self.overlay.onCustomInsertKey = nil
@@ -975,9 +1017,9 @@ final class BlinkCoordinator {
                 self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
                 self.currentBundleDir = bundleDir
                 self.currentRequestID = requestID
-                self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
+                self.resetChoiceState(suggestionCount: self.currentSuggestions.count)
                 self.overlay.onCustomInputFocusChanged = { [weak self] active in
-                    self?.choiceState.setCustomInputActive(active)
+                    self?.setCustomInputActive(active)
                 }
                 self.overlay.onCustomInsert = { [weak self] text in
                     self?.insertCustomReply(text: text)
@@ -1163,7 +1205,7 @@ final class BlinkCoordinator {
         currentBundleDir = nil
         currentSuggestions = []
         currentSuggestionDetails = []
-        choiceState = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
+        resetChoiceState(suggestionCount: 0, allowsCustomInput: false)
         overlay.onChoiceKey = { _ in }
         overlay.onInsertKey = { true }
         overlay.onCustomInputFocusChanged = nil
@@ -1281,9 +1323,9 @@ final class BlinkCoordinator {
                     )
                     self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
                     self.currentBundleDir = bundleDir
-                    self.choiceState = SuggestionChoiceState(suggestionCount: self.currentSuggestions.count)
+                    self.resetChoiceState(suggestionCount: self.currentSuggestions.count)
                     self.overlay.onCustomInputFocusChanged = { [weak self] active in
-                        self?.choiceState.setCustomInputActive(active)
+                        self?.setCustomInputActive(active)
                     }
                     self.overlay.onCustomInsert = { [weak self] text in
                         self?.insertCustomReply(text: text)
@@ -1498,7 +1540,7 @@ final class BlinkCoordinator {
         if index != 3 && choiceState.customInputActive {
             leaveCustomInput()
         }
-        switch choiceState.pressNumber(index: index) {
+        switch applyChoiceNumber(index) {
         case .ignored:
             return
         case .expand(let index):
@@ -1535,7 +1577,7 @@ final class BlinkCoordinator {
     @MainActor
     func leaveCustomInput() {
         guard choiceState.customInputActive else { return }
-        choiceState.setCustomInputActive(false)
+        setCustomInputActive(false)
         overlay.leaveCustomInput()
         status("ready - press 1/2/3 to expand")
     }
@@ -1602,7 +1644,7 @@ final class BlinkCoordinator {
 
         recordChoice(index: index, text: text, action: "copied")
         currentBundleDir = nil
-        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        resetChoiceState(suggestionCount: 0)
         let finishingRequestID = requestID
         overlay.confirmCopy { [weak self] in
             guard let self else { return }
@@ -1625,7 +1667,7 @@ final class BlinkCoordinator {
         let clientMetadata = Self.clientMetadata()
         recordChoice(index: index, text: text, action: "inserted")
         currentBundleDir = nil
-        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        resetChoiceState(suggestionCount: 0)
         let finishingRequestID = requestID
         status("inserting suggestion \(index + 1)...")
 
@@ -1855,7 +1897,7 @@ final class BlinkCoordinator {
         currentRequestID = nil
         terminalEmittedRequestID = nil
         currentStreamingRun = nil
-        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        resetChoiceState(suggestionCount: 0)
         overlay.onCustomInputFocusChanged = nil
         overlay.onCustomInsert = nil
         overlay.onCustomInsertKey = nil
@@ -1924,7 +1966,7 @@ final class BlinkCoordinator {
                 firstTokenAt: cancelledFirstTokenAt
             )
         }
-        choiceState = SuggestionChoiceState(suggestionCount: 0)
+        resetChoiceState(suggestionCount: 0)
         // Coordinator-side pending double-tap state lives on its own queue;
         // tear it down so a follow-on hotkey starts a fresh single-shot
         // session instead of trying to promote a session whose UI was

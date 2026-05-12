@@ -240,6 +240,8 @@ final class SuggestionsOverlay: NSObject {
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onRerollKey: (() -> Void)?
     var onDismissKey: (() -> Void)?
+    var onVisibilityChange: ((Bool) -> Void)?
+    private var lastEmittedVisible = false
 
     var isVisible: Bool {
         panel?.isVisible == true
@@ -693,6 +695,7 @@ final class SuggestionsOverlay: NSObject {
                 previousFrontmost = nil
             }
             panel.orderFrontRegardless()
+            emitVisibilityChange(true)
             // Keep the custom field visually unfocused on open; global hotkey
             // routing handles 1/2/3/Return/Esc while the source app remains
             // frontmost.
@@ -716,6 +719,7 @@ final class SuggestionsOverlay: NSObject {
             // state, so we don't need key status.
             previousFrontmost = nil
             panel.orderFrontRegardless()
+            emitVisibilityChange(true)
         }
         installMouseMonitors()
         if !isLoading, !visibleSuggestions.isEmpty {
@@ -1374,6 +1378,7 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func close() {
+        emitVisibilityChange(false)
         tearDownLoadingState()
         softErrorPanel?.close()
         softErrorPanel = nil
@@ -1409,6 +1414,12 @@ final class SuggestionsOverlay: NSObject {
             prev.activate()
         }
         previousFrontmost = nil
+    }
+
+    private func emitVisibilityChange(_ visible: Bool) {
+        guard lastEmittedVisible != visible else { return }
+        lastEmittedVisible = visible
+        onVisibilityChange?(visible)
     }
 
     func dismissAnimated(completion: (() -> Void)? = nil) {
