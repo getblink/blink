@@ -10,6 +10,7 @@ __pycache__/
 *.dmg
 DerivedData/
 *.xcuserstate
+xcuserdata/
 *.p8
 *.pem
 *.key
