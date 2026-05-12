@@ -1608,12 +1608,13 @@ async def beta_signup(
             )
             referrer = None
         if referrer is not None:
-            # Self-referral guard: drop ref when the new signup shares either
-            # the referrer's normalized email or IP hash. Same-IP household
-            # signups are rare enough that the false-positive cost is low.
+            # Self-referral guard: drop ref only when the new signup shares
+            # the referrer's normalized email. We deliberately do not check
+            # ip_hash — shared IPs (households, offices, campus Wi-Fi) are
+            # common enough that gating on IP would false-negative real
+            # referrals more often than it caught self-referral abuse.
             same_email = referrer.get("email_normalized") == email_normalized
-            same_ip = bool(referrer.get("ip_hash")) and referrer.get("ip_hash") == ip_hash
-            if not same_email and not same_ip:
+            if not same_email:
                 referrer_signup_id = ref_candidate
 
     signup_id = uuid4().hex
