@@ -277,12 +277,16 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
                 popup.toolTip = "Backend model used for summaries and replies."
                 rebuildModelPopup(popup, current: runtimeStore.model)
                 modelPopup = popup
+                popup.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
+                    popup.widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+                    popup.heightAnchor.constraint(equalToConstant: 24),
+                ])
                 let item = NSToolbarItem(itemIdentifier: itemIdentifier)
                 item.label = "Model"
                 item.paletteLabel = "Model"
                 item.view = popup
-                item.minSize = NSSize(width: 140, height: 24)
-                item.maxSize = NSSize(width: 240, height: 24)
                 return item
 
             case ToolbarID.reasoning:
@@ -294,12 +298,16 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
                 popup.addItems(withTitles: ReasoningLevels.titles)
                 popup.selectItem(withTitle: ReasoningLevels.title(for: runtimeStore.thinkingLevel))
                 reasoningPopup = popup
+                popup.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate([
+                    popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+                    popup.widthAnchor.constraint(lessThanOrEqualToConstant: 160),
+                    popup.heightAnchor.constraint(equalToConstant: 24),
+                ])
                 let item = NSToolbarItem(itemIdentifier: itemIdentifier)
                 item.label = "Reasoning"
                 item.paletteLabel = "Reasoning"
                 item.view = popup
-                item.minSize = NSSize(width: 100, height: 24)
-                item.maxSize = NSSize(width: 160, height: 24)
                 return item
 
             case ToolbarID.settings:
