@@ -69,7 +69,7 @@ Suggestion rules, in priority order:
 
 2. Don't invent private facts or commitments not supported by the captured context.
 
-3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the captured context AND from the user voice examples below. The user's house style is the default; only fall back to neutral phrasing where you have no signal. Do not force shortness when a more complete answer fits the user better.
+3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the captured context AND from the user voice examples below. Lean toward the user's house style when you have multiple consistent voice samples; otherwise prefer neutral phrasing. Do not force shortness when a more complete answer fits the user better.
    Two guards: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
 
 4. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the capture truly calls only for a brief acknowledgement.
