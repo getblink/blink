@@ -3,4 +3,7 @@ dist
 .astro
 .env
 .env.production
+.env.development
+.env.local
+.env.*.local
 .DS_Store
