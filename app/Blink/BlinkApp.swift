@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import PermissionFlowExtendedStatus
 import Sparkle
 
 @main
@@ -21,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyManager!
     private var permissionsWindow: PermissionsWindowController?
     private var controlWindow: ControlWindowController?
+    private var onboardingSampleWindow: OnboardingChatMockWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
@@ -32,19 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let launchedAt = DispatchTime.now()
         Self.logLaunchIdentity()
+        // Enables `.inputMonitoring` and `.screenRecording` status detection
+        // for the PermissionFlow controller used by the onboarding window.
+        PermissionFlowExtendedStatus.register()
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         self.hotkeyDisplay = summaryHotkey.displayString
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
-        // Backfill the onboarded marker for users who installed before the
-        // first-run wizard existed. !requiresFirstRunOnboarding() AND no
-        // marker implies a non-empty runs/ directory, i.e. they've already
-        // used the app — they shouldn't see the wizard or the discovery nudge.
-        if !Paths.requiresFirstRunOnboarding(),
-           !FileManager.default.fileExists(atPath: Paths.onboardedPath.path) {
-            Paths.markOnboarded()
-        }
+        // Note: we no longer backfill the onboarded marker based on the
+        // runs/ directory. The wizard owns the marker exclusively — it's
+        // written when the user clicks Get Started, so any user who hasn't
+        // explicitly completed the new wizard still sees it on launch,
+        // including testers whose runs/ persists across TCC resets.
         DeviceTokenManager.mintIfNeeded(proxyConfig: RuntimeEnvironment.bootstrapProxyConfig())
         let eventClient = BlinkEventClient(proxyConfig: RuntimeEnvironment.proxyConfig())
         self.eventClient = eventClient
@@ -234,13 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPermissionsWindow() {
         if permissionsWindow == nil {
-            // The wizard header shows the user-configured hotkey; the
-            // onboarding sample always exercises ⌃⌥Space so the demo is
-            // deterministic for first-run users regardless of settings.
-            let activeHotkey = coordinator.currentHotkey
             permissionsWindow = PermissionsWindowController(
-                hotkeyDisplay: activeHotkey.displayString,
-                sampleHotkey: .default,
                 eventClient: eventClient,
                 allowLogging: { [weak runtimeStore] in
                     runtimeStore?.allowEventLogging ?? false
@@ -248,20 +244,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 clientMetadata: {
                     BlinkCoordinator.clientMetadata()
                 },
-                setOnboardingSampleActive: { [weak coordinator] active in
-                    coordinator?.setOnboardingSampleActive(active)
-                },
                 attemptHotkeyStart: { [weak self] in
                     self?.hotkeys?.start() ?? false
                 },
                 onFinished: { [weak self] in
-                    self?.showControlWindow()
-                    self?.showFirstHotkeyNudgeIfNeeded()
                     self?.startHotkeysIfNeeded()
+                    self?.runOnboardingSample()
                 }
             )
         }
         permissionsWindow?.show()
+    }
+
+    /// Opens the chat-mock demo window and lets the user press the real
+    /// summary hotkey themselves — the demo's job is to teach them the key
+    /// they'll use forever. Permissions are guaranteed granted at this
+    /// point; the control window opens once the user closes the mock.
+    private func runOnboardingSample() {
+        guard onboardingSampleWindow == nil else {
+            onboardingSampleWindow?.show()
+            return
+        }
+        let fixture = OnboardingFixture.load()
+        coordinator.setOnboardingSampleActive(true)
+        let mock = OnboardingChatMockWindowController(
+            fixture: fixture,
+            hotkeyDisplay: coordinator.currentHotkey.displayString
+        ) { [weak self] in
+            guard let self else { return }
+            self.coordinator.setOnboardingSampleActive(false)
+            self.onboardingSampleWindow = nil
+            self.showControlWindow()
+            self.showFirstHotkeyNudgeIfNeeded()
+        }
+        onboardingSampleWindow = mock
+        mock.show()
+        // System Settings may still be the OS-level frontmost app from the
+        // last auto-chain hop. Re-activate Blink right after the mock opens
+        // so the global hotkey, when the user presses it, captures the
+        // mock window and not whatever Settings.app left behind.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.onboardingSampleWindow?.bringToFront()
+        }
     }
 
     func showControlWindow() {

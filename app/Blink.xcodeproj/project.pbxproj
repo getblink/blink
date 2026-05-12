@@ -27,6 +27,7 @@
 		614EF5D57340907D29C96DC0 /* ScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */; };
 		6236E723BC574777D616DE37 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 274CBBE4DC64F9737B66DCB6 /* Sparkle */; };
 		683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */; };
+		773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = 71B7439E5F2E382C7BB997BB /* PermissionFlow */; };
 		7A67FB3C16E6F5FA23C06607 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */; };
 		7CF606DC505B6CA2775CB68A /* ApplicationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 40A3234FC54834D91492DCC2 /* ApplicationServices.framework */; };
 		82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */; };
@@ -43,6 +44,7 @@
 		C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B874CA83CFFA290563A148F /* ModelChoices.swift */; };
 		C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */; };
 		C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */; };
+		C864ED9CE85231178F12B9F1 /* PermissionFlowExtendedStatus in Frameworks */ = {isa = PBXBuildFile; productRef = 006F33F7E8CC040624F639A0 /* PermissionFlowExtendedStatus */; };
 		C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */; };
 		CD09576539039F9AE8E7F933 /* BlinkEventClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */; };
 		D0104C9D64B43780F862BA88 /* CaptureModeDeriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */; };
@@ -132,6 +134,8 @@
 				0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */,
 				8550B2497B8E60C5C41CC218 /* IOKit.framework in Frameworks */,
 				6236E723BC574777D616DE37 /* Sparkle in Frameworks */,
+				773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */,
+				C864ED9CE85231178F12B9F1 /* PermissionFlowExtendedStatus in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,6 +265,8 @@
 			name = Blink;
 			packageProductDependencies = (
 				274CBBE4DC64F9737B66DCB6 /* Sparkle */,
+				71B7439E5F2E382C7BB997BB /* PermissionFlow */,
+				006F33F7E8CC040624F639A0 /* PermissionFlowExtendedStatus */,
 			);
 			productName = Blink;
 			productReference = 48431B2C296BDB92BF0BB93C /* Blink.app */;
@@ -313,6 +319,7 @@
 			mainGroup = B23DD3B5EFB562B7C2FAEE85;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				BC88A3C9B91F12CD39B12524 /* XCRemoteSwiftPackageReference "PermissionFlow" */,
 				D7718335EF3CD85006FEDFAD /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -638,6 +645,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		BC88A3C9B91F12CD39B12524 /* XCRemoteSwiftPackageReference "PermissionFlow" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/twodayslate/PermissionFlow.git";
+			requirement = {
+				kind = revision;
+				revision = 362ff1f5d025bc57408717e1a755afd4dd47ff20;
+			};
+		};
 		D7718335EF3CD85006FEDFAD /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -649,10 +664,20 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		006F33F7E8CC040624F639A0 /* PermissionFlowExtendedStatus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BC88A3C9B91F12CD39B12524 /* XCRemoteSwiftPackageReference "PermissionFlow" */;
+			productName = PermissionFlowExtendedStatus;
+		};
 		274CBBE4DC64F9737B66DCB6 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D7718335EF3CD85006FEDFAD /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		71B7439E5F2E382C7BB997BB /* PermissionFlow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BC88A3C9B91F12CD39B12524 /* XCRemoteSwiftPackageReference "PermissionFlow" */;
+			productName = PermissionFlow;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
