@@ -39,5 +39,10 @@ app/python-dist/
 app/Resources/proxy.env
 .wrangler/
 .env
-.claude/
+# Ignore .claude/ contents (settings.local.json, transient lockfiles, etc.)
+# but keep the skills/ subtree tracked so collaborators get them on clone.
+# Note: ignore contents-of, not the directory itself — git won't descend
+# into an ignored directory to evaluate negations.
+.claude/*
+!.claude/skills/
 posthog-setup-report.md
