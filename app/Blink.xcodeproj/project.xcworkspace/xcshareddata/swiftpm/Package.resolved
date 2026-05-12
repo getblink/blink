@@ -1,6 +1,14 @@
 {
-  "originHash" : "e721da7f9826abdffcb6185e886155efa2514bd6234475f1afa893e29eb258d6",
+  "originHash" : "7283e6042e6e34a83a550d6234fac8be7ad0692c1b3dce511baf59d435e4209c",
   "pins" : [
+    {
+      "identity" : "permissionflow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/twodayslate/PermissionFlow.git",
+      "state" : {
+        "revision" : "362ff1f5d025bc57408717e1a755afd4dd47ff20"
+      }
+    },
     {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",

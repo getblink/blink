@@ -24,6 +24,9 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.6.0"
+  PermissionFlow:
+    url: https://github.com/twodayslate/PermissionFlow.git
+    revision: 362ff1f5d025bc57408717e1a755afd4dd47ff20
 
 targets:
   Blink:
@@ -42,6 +45,9 @@ targets:
       - sdk: Carbon.framework
       - sdk: IOKit.framework
       - package: Sparkle
+      - package: PermissionFlow
+      - package: PermissionFlow
+        product: PermissionFlowExtendedStatus
     info:
       path: Blink/Info.plist
       properties:

@@ -1,67 +1,48 @@
 import AppKit
 import Combine
 
-/// Standalone control window for Blink. Mirrors the menubar surface so the
-/// user can keep the app reachable when the menubar isn't visible
-/// (auto-hide, fullscreen apps). Auto-shown on launch; reachable via Dock
-/// click and the menubar's "Open Blink Window…" item.
+/// Standalone control window. Single-glance action surface: large status
+/// label, hotkey reminder, retention footer; configuration lives in the
+/// Settings scene. Toolbar carries Summarize (primary action), Model and
+/// Reasoning popups, and a Settings shortcut.
 @MainActor
-final class ControlWindowController: NSObject, NSWindowDelegate {
+final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let coordinator: BlinkCoordinator
     private let runtimeStore: RuntimeConfigStore
     private let hotkeyDisplay: String
-    private let onShowPermissions: () -> Void
-    /// `nil` when Sparkle isn't configured — the button is omitted entirely
-    /// rather than shown disabled, matching the menubar item's gating.
-    private let onCheckForUpdates: (() -> Void)?
+    private let onShowSettings: () -> Void
 
     private var window: NSWindow?
     private var statusLabel: NSTextField?
     private var modelPopup: NSPopUpButton?
-    private var thinkingPopup: NSPopUpButton?
-    private var soundsCheckbox: NSButton?
-    private var styleWindowController: StyleWindowController?
+    private var reasoningPopup: NSPopUpButton?
 
     private var statusSubscription: AnyCancellable?
     private var modelSubscription: AnyCancellable?
-    private var thinkingSubscription: AnyCancellable?
-    private var soundsSubscription: AnyCancellable?
+    private var reasoningSubscription: AnyCancellable?
 
-    private static let thinkingTitles: [String] = ["Default", "Low", "Medium", "High"]
-    private static func thinkingTitle(for level: String?) -> String {
-        switch level?.lowercased() {
-        case "low": return "Low"
-        case "medium": return "Medium"
-        case "high": return "High"
-        default: return "Default"
-        }
-    }
-    private static func thinkingValue(for title: String) -> String? {
-        switch title {
-        case "Low": return "low"
-        case "Medium": return "medium"
-        case "High": return "high"
-        default: return nil
-        }
+    private enum ToolbarID {
+        static let summarize = NSToolbarItem.Identifier("BlinkControl.summarize")
+        static let model = NSToolbarItem.Identifier("BlinkControl.model")
+        static let reasoning = NSToolbarItem.Identifier("BlinkControl.reasoning")
+        static let settings = NSToolbarItem.Identifier("BlinkControl.settings")
     }
 
     /// The app that was frontmost just before this window took focus, so the
     /// "Summarize" button targets *that* app rather than Blink itself.
-    /// Captured on `windowDidBecomeKey`; consumed on Summarize click.
+    /// Captured on show; consumed on Summarize click.
     private weak var previousFrontmost: NSRunningApplication?
 
     init(
         coordinator: BlinkCoordinator,
         runtimeStore: RuntimeConfigStore,
         hotkeyDisplay: String,
-        onShowPermissions: @escaping () -> Void,
-        onCheckForUpdates: (() -> Void)?
+        onShowSettings: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.runtimeStore = runtimeStore
         self.hotkeyDisplay = hotkeyDisplay
-        self.onShowPermissions = onShowPermissions
-        self.onCheckForUpdates = onCheckForUpdates
+        self.onShowSettings = onShowSettings
     }
 
     func show() {
@@ -78,16 +59,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         // Re-show paths (menubar item, dock click, second show()) need to
-        // tear down stale subscriptions before re-subscribing — otherwise
-        // we replay current values for no reason and rely on AnyCancellable
-        // reassignment to dealloc the prior sink.
+        // tear down stale subscriptions before re-subscribing.
         stopSubscriptions()
         startSubscriptions()
     }
 
     private func buildWindow() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 220),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -95,92 +74,65 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         win.title = "Blink"
         win.isReleasedWhenClosed = false
         win.delegate = self
-        win.center()
+        win.setFrameAutosaveName("BlinkControl")
+        if #available(macOS 11.0, *) {
+            win.toolbarStyle = .unified
+        }
+        win.titleVisibility = .hidden
+
+        let toolbar = NSToolbar(identifier: "BlinkControlToolbar")
+        toolbar.delegate = self
+        toolbar.allowsUserCustomization = false
+        toolbar.displayMode = .iconAndLabel
+        win.toolbar = toolbar
+
+        win.contentView = buildContent()
+        win.contentMinSize = NSSize(width: 480, height: 200)
+        window = win
+    }
+
+    private func buildContent() -> NSView {
+        let host = NSView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+
+        let backdrop: NSView
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            let view = NSView()
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            backdrop = view
+        } else {
+            let effect = NSVisualEffectView()
+            effect.material = .contentBackground
+            effect.blendingMode = .behindWindow
+            effect.state = .followsWindowActiveState
+            backdrop = effect
+        }
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(backdrop)
 
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24)
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // 1. Status row.
         let status = NSTextField(labelWithString: coordinator.statusSubject.value)
-        status.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        status.textColor = .secondaryLabelColor
+        status.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        status.textColor = .labelColor
         status.lineBreakMode = .byTruncatingTail
+        status.toolTip = "Current Blink status."
         statusLabel = status
-        stack.addArrangedSubview(self.row(label: "Status", control: status))
+        stack.addArrangedSubview(status)
 
-        // 2. Summarize button (large primary).
-        // Note: deliberately no `keyEquivalent = "\r"` — when the control
-        // window is key and the user hits Return, the captured "frontmost
-        // window" would be Blink itself, which is wrong. The user's intent
-        // is "summarize the *previous* app." The hotkey path handles that
-        // correctly; this button covers the click case.
-        let summarize = NSButton(
-            title: "Summarize frontmost window",
-            target: self,
-            action: #selector(summarize)
-        )
-        summarize.bezelStyle = .rounded
-        summarize.controlSize = .large
-        stack.addArrangedSubview(summarize)
+        let hotkeyReminder = NSTextField(labelWithString: "Press \(hotkeyDisplay) anywhere to summarize the focused window.")
+        hotkeyReminder.font = NSFont.systemFont(ofSize: 13)
+        hotkeyReminder.textColor = .secondaryLabelColor
+        hotkeyReminder.maximumNumberOfLines = 2
+        hotkeyReminder.preferredMaxLayoutWidth = 480
+        stack.addArrangedSubview(hotkeyReminder)
 
-        // 3. Hotkey display.
-        stack.addArrangedSubview(self.row(
-            label: "Hotkey",
-            control: NSTextField(labelWithString: hotkeyDisplay)
-        ))
-
-        // 4. Model picker.
-        let popup = NSPopUpButton()
-        popup.target = self
-        popup.action = #selector(modelChanged)
-        rebuildModelPopup(popup, current: runtimeStore.model)
-        modelPopup = popup
-        stack.addArrangedSubview(self.row(label: "Model", control: popup))
-
-        // 5. Reasoning level picker. "Default" sends no override and lets the
-        // server pick per-model; the rest map to lowercase values the server
-        // allowlists.
-        let thinking = NSPopUpButton()
-        thinking.target = self
-        thinking.action = #selector(thinkingChanged)
-        thinking.addItems(withTitles: Self.thinkingTitles)
-        thinking.selectItem(withTitle: Self.thinkingTitle(for: runtimeStore.thinkingLevel))
-        thinkingPopup = thinking
-        stack.addArrangedSubview(self.row(label: "Reasoning", control: thinking))
-
-        // 6. Sounds checkbox.
-        let sounds = NSButton(checkboxWithTitle: "Play sounds", target: self, action: #selector(soundsToggled))
-        sounds.state = runtimeStore.soundsEnabled ? .on : .off
-        soundsCheckbox = sounds
-        stack.addArrangedSubview(sounds)
-
-        // 7. Action buttons.
-        let runsButton = NSButton(title: "Open runs folder", target: self, action: #selector(openRunsFolder))
-        runsButton.bezelStyle = .rounded
-        let runtimeButton = NSButton(title: "Open ~/.blink", target: self, action: #selector(openRuntimeFolder))
-        runtimeButton.bezelStyle = .rounded
-        let permsButton = NSButton(title: "Permissions…", target: self, action: #selector(openPermissions))
-        permsButton.bezelStyle = .rounded
-        let resetPermsButton = NSButton(title: "Reset Permissions…", target: self, action: #selector(resetPermissions))
-        resetPermsButton.bezelStyle = .rounded
-        let styleButton = NSButton(title: "Style…", target: self, action: #selector(openStyle))
-        styleButton.bezelStyle = .rounded
-        var rowViews: [NSView] = [runsButton, runtimeButton, styleButton, permsButton, resetPermsButton]
-        if onCheckForUpdates != nil {
-            let updateButton = NSButton(title: "Check for Updates…", target: self, action: #selector(checkForUpdates))
-            updateButton.bezelStyle = .rounded
-            rowViews.append(updateButton)
-        }
-        let buttonRow = NSStackView(views: rowViews)
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 8
-        stack.addArrangedSubview(buttonRow)
-
-        // 8. Retention footer.
         let footer = NSTextField(wrappingLabelWithString:
             "Summaries and suggestions are stored to improve Blink; "
             + "screenshots are not retained."
@@ -188,40 +140,21 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         footer.font = NSFont.systemFont(ofSize: 11)
         footer.textColor = .tertiaryLabelColor
         footer.maximumNumberOfLines = 0
+        footer.preferredMaxLayoutWidth = 480
         stack.addArrangedSubview(footer)
 
-        let content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        host.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            footer.widthAnchor.constraint(equalToConstant: 480 - 48),
+            backdrop.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: host.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: host.topAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor),
         ])
-        win.contentView = content
-        // Pin a minimum size so the user can't shrink the window enough to
-        // clip the footer / buttons. fittingSize after the constraints
-        // are applied gives us the natural intrinsic height of the stack.
-        content.layoutSubtreeIfNeeded()
-        win.contentMinSize = NSSize(
-            width: 480,
-            height: max(stack.fittingSize.height, 360)
-        )
-        window = win
-    }
-
-    private func row(label: String, control: NSView) -> NSView {
-        let title = NSTextField(labelWithString: label)
-        title.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        title.textColor = .secondaryLabelColor
-        title.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        let row = NSStackView(views: [title, control])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 12
-        return row
+        return host
     }
 
     private func rebuildModelPopup(_ popup: NSPopUpButton, current: String) {
@@ -235,9 +168,6 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     }
 
     private func startSubscriptions() {
-        // All three publishers fire on main: coordinator's status() dispatches
-        // via DispatchQueue.main.async, and RuntimeConfigStore is @MainActor.
-        // No Task hop needed — touching @MainActor state directly here.
         statusSubscription = coordinator.statusSubject
             .receive(on: RunLoop.main)
             .sink { [weak self] text in
@@ -255,22 +185,15 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
                     }
                 }
             }
-        thinkingSubscription = runtimeStore.$thinkingLevel
+        reasoningSubscription = runtimeStore.$thinkingLevel
             .receive(on: RunLoop.main)
             .sink { [weak self] level in
                 MainActor.assumeIsolated {
-                    guard let self, let popup = self.thinkingPopup else { return }
-                    let target = Self.thinkingTitle(for: level)
+                    guard let self, let popup = self.reasoningPopup else { return }
+                    let target = ReasoningLevels.title(for: level)
                     if popup.itemTitle(at: popup.indexOfSelectedItem) != target {
                         popup.selectItem(withTitle: target)
                     }
-                }
-            }
-        soundsSubscription = runtimeStore.$soundsEnabled
-            .receive(on: RunLoop.main)
-            .sink { [weak self] enabled in
-                MainActor.assumeIsolated {
-                    self?.soundsCheckbox?.state = enabled ? .on : .off
                 }
             }
     }
@@ -278,17 +201,17 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     private func stopSubscriptions() {
         statusSubscription = nil
         modelSubscription = nil
-        thinkingSubscription = nil
-        soundsSubscription = nil
+        reasoningSubscription = nil
     }
+
+    // MARK: - Actions
 
     @objc private func summarize() {
         // The control window is currently frontmost (the user just clicked
         // a button in it). Summarizing right now would capture Blink itself.
         // Activate the app the user was in before opening the window, give
         // AppKit a tick to actually shift focus, then trigger the same path
-        // the global hotkey takes. Mirrors the activation-delay pattern used
-        // by Inserter for paste-back.
+        // the global hotkey takes.
         if let prev = previousFrontmost,
            !prev.isTerminated,
            prev.processIdentifier != NSRunningApplication.current.processIdentifier {
@@ -303,108 +226,109 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-
     @objc private func modelChanged(_ sender: NSPopUpButton) {
         guard let title = sender.titleOfSelectedItem else { return }
         runtimeStore.model = title
     }
 
-    @objc private func thinkingChanged(_ sender: NSPopUpButton) {
+    @objc private func reasoningChanged(_ sender: NSPopUpButton) {
         guard let title = sender.titleOfSelectedItem else { return }
-        runtimeStore.thinkingLevel = Self.thinkingValue(for: title)
+        runtimeStore.thinkingLevel = ReasoningLevels.value(for: title)
     }
 
-    @objc private func soundsToggled(_ sender: NSButton) {
-        runtimeStore.soundsEnabled = (sender.state == .on)
-    }
-
-    @objc private func openRunsFolder() {
-        NSWorkspace.shared.open(Paths.runsDir)
-    }
-
-    @objc private func openRuntimeFolder() {
-        NSWorkspace.shared.open(Paths.runtimeDir)
-    }
-
-    @objc private func openPermissions() {
-        onShowPermissions()
-    }
-
-    @objc private func checkForUpdates() {
-        onCheckForUpdates?()
-    }
-
-    @objc private func openStyle() {
-        if styleWindowController == nil {
-            styleWindowController = StyleWindowController(runtimeStore: runtimeStore)
-        }
-        styleWindowController?.show()
-    }
-
-    /// Mirror of `app/scripts/reset_tcc.sh` — clears every TCC service
-    /// the app touches so the next launch re-triggers the system prompts.
-    /// In-process resets don't apply to the currently-running process, so
-    /// we offer to quit on success.
-    @objc private func resetPermissions() {
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.henryz2004.blink"
-
-        let confirm = NSAlert()
-        confirm.messageText = "Reset Blink permissions?"
-        confirm.informativeText = """
-            This clears Accessibility, Screen Recording, Input Monitoring, \
-            and related grants for \(bundleID). You'll be re-prompted on \
-            next launch. Blink should be quit and relaunched for the reset \
-            to take effect.
-            """
-        confirm.alertStyle = .warning
-        confirm.addButton(withTitle: "Reset")
-        confirm.addButton(withTitle: "Cancel")
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
-
-        let services = [
-            "Accessibility",
-            "ListenEvent",
-            "PostEvent",
-            "ScreenCapture",
-            "SystemPolicyAllFiles",
-            "AppleEvents",
-        ]
-        var failures: [String] = []
-        for service in services {
-            let proc = Process()
-            proc.launchPath = "/usr/bin/tccutil"
-            proc.arguments = ["reset", service, bundleID]
-            proc.standardOutput = Pipe()
-            proc.standardError = Pipe()
-            do {
-                try proc.run()
-                proc.waitUntilExit()
-                if proc.terminationStatus != 0 {
-                    failures.append(service)
-                }
-            } catch {
-                failures.append(service)
-            }
-        }
-
-        let result = NSAlert()
-        if failures.isEmpty {
-            result.messageText = "Permissions reset"
-            result.informativeText = "Quit Blink now and relaunch to re-grant permissions."
-            result.alertStyle = .informational
-        } else {
-            result.messageText = "Reset finished with errors"
-            result.informativeText = "tccutil failed for: \(failures.joined(separator: ", "))."
-            result.alertStyle = .warning
-        }
-        result.addButton(withTitle: "Quit Blink")
-        result.addButton(withTitle: "Later")
-        if result.runModal() == .alertFirstButtonReturn {
-            NSApp.terminate(nil)
-        }
+    @objc private func openSettings() {
+        onShowSettings()
     }
 
     func windowWillClose(_ notification: Notification) {
         stopSubscriptions()
+    }
+
+    // MARK: - NSToolbarDelegate
+
+    nonisolated func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        MainActor.assumeIsolated { () -> NSToolbarItem? in
+            switch itemIdentifier {
+            case ToolbarID.summarize:
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = "Summarize"
+                item.paletteLabel = "Summarize"
+                item.toolTip = "Summarize the previously-frontmost window."
+                if #available(macOS 11.0, *) {
+                    item.image = NSImage(
+                        systemSymbolName: "sparkles",
+                        accessibilityDescription: "Summarize"
+                    )
+                }
+                item.target = self
+                item.action = #selector(summarize)
+                item.isBordered = true
+                return item
+
+            case ToolbarID.model:
+                let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+                popup.controlSize = .small
+                popup.target = self
+                popup.action = #selector(modelChanged(_:))
+                popup.toolTip = "Backend model used for summaries and replies."
+                rebuildModelPopup(popup, current: runtimeStore.model)
+                modelPopup = popup
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = "Model"
+                item.paletteLabel = "Model"
+                item.view = popup
+                item.minSize = NSSize(width: 140, height: 24)
+                item.maxSize = NSSize(width: 240, height: 24)
+                return item
+
+            case ToolbarID.reasoning:
+                let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+                popup.controlSize = .small
+                popup.target = self
+                popup.action = #selector(reasoningChanged(_:))
+                popup.toolTip = "How much the model thinks before answering."
+                popup.addItems(withTitles: ReasoningLevels.titles)
+                popup.selectItem(withTitle: ReasoningLevels.title(for: runtimeStore.thinkingLevel))
+                reasoningPopup = popup
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = "Reasoning"
+                item.paletteLabel = "Reasoning"
+                item.view = popup
+                item.minSize = NSSize(width: 100, height: 24)
+                item.maxSize = NSSize(width: 160, height: 24)
+                return item
+
+            case ToolbarID.settings:
+                let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+                item.label = "Settings"
+                item.paletteLabel = "Settings"
+                item.toolTip = "Open Settings (⌘,)"
+                if #available(macOS 11.0, *) {
+                    item.image = NSImage(
+                        systemSymbolName: "gearshape",
+                        accessibilityDescription: "Settings"
+                    )
+                }
+                item.target = self
+                item.action = #selector(openSettings)
+                item.isBordered = true
+                return item
+
+            default:
+                return nil
+            }
+        }
+    }
+
+    nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [ToolbarID.summarize, .flexibleSpace, ToolbarID.model, ToolbarID.reasoning, ToolbarID.settings]
+    }
+
+    nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [ToolbarID.summarize, ToolbarID.model, ToolbarID.reasoning, ToolbarID.settings, .flexibleSpace, .space]
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import PermissionFlowExtendedStatus
 import Sparkle
 
 @main
@@ -21,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyManager!
     private var permissionsWindow: PermissionsWindowController?
     private var controlWindow: ControlWindowController?
+    private var settingsWindow: SettingsWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
@@ -28,10 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
     private var hotkeyDisplay: String = ""
+    private var mainMenuController: MainMenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let launchedAt = DispatchTime.now()
         Self.logLaunchIdentity()
+        // Enables `.inputMonitoring` and `.screenRecording` status detection
+        // for the PermissionFlow controller used by the onboarding window.
+        PermissionFlowExtendedStatus.register()
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         self.hotkeyDisplay = summaryHotkey.displayString
@@ -79,6 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onShowControlWindow: { [weak self] in self?.showControlWindow() }
         )
         menubar.install()
+
+        // HIG rule #1: install a real macOS main menu (App / Edit / Action /
+        // View / Window / Help). Done before any window appears so menu
+        // validation can reach the coordinator from the very first event.
+        installMainMenu(
+            coordinator: coordinator,
+            runtimeStore: runtimeStore,
+            hotkeyDisplay: summaryHotkey.displayString
+        )
         if Self.hasUsableSparkleConfig {
             updaterController = SPUStandardUpdaterController(
                 startingUpdater: true,
@@ -94,6 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak updaterController] in
                 updaterController?.updater.checkForUpdatesInBackground()
             }
+            // Sparkle was configured after the main menu was built; let the
+            // controller surface the Check for Updates… item now.
+            mainMenuController?.setUpdater(updaterController)
         }
 
         let nudges = NudgeCoordinator(
@@ -271,18 +289,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let runtimeStore else { return }
         if controlWindow == nil {
-            let updaterAction: (() -> Void)? = updaterController.map { controller in
-                { [weak controller] in controller?.checkForUpdates(nil) }
-            }
             controlWindow = ControlWindowController(
                 coordinator: coordinator,
                 runtimeStore: runtimeStore,
                 hotkeyDisplay: hotkeyDisplay,
-                onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
-                onCheckForUpdates: updaterAction
+                onShowSettings: { [weak self] in self?.showSettingsWindow() }
             )
         }
         controlWindow?.show()
+    }
+
+    func showSettingsWindow(initialPane: SettingsWindowController.Pane = .general) {
+        guard let runtimeStore else { return }
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController(
+                coordinator: coordinator,
+                runtimeStore: runtimeStore,
+                hotkeyDisplay: hotkeyDisplay,
+                updaterController: updaterController,
+                onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
+                onResetPermissions: { PermissionsActions.resetPermissions() },
+                onOpenRuns: { NSWorkspace.shared.open(Paths.runsDir) },
+                onOpenRuntime: { NSWorkspace.shared.open(Paths.runtimeDir) }
+            )
+        }
+        settingsWindow?.show(initialPane: initialPane)
+    }
+
+    private func installMainMenu(
+        coordinator: BlinkCoordinator,
+        runtimeStore: RuntimeConfigStore,
+        hotkeyDisplay: String
+    ) {
+        let (menu, controller) = MainMenuBuilder.build(
+            coordinator: coordinator,
+            runtimeStore: runtimeStore,
+            hotkeyDisplay: hotkeyDisplay,
+            updaterController: updaterController,
+            onShowSettings: { [weak self] in self?.showSettingsWindow() },
+            onShowPermissions: { [weak self] in self?.showPermissionsWindow() },
+            onResetPermissions: { PermissionsActions.resetPermissions() },
+            onOpenRuns: { NSWorkspace.shared.open(Paths.runsDir) },
+            onOpenRuntime: { NSWorkspace.shared.open(Paths.runtimeDir) },
+            onShowHelp: {
+                if let url = URL(string: "https://github.com/henryz2004/blink") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        )
+        NSApp.mainMenu = menu
+        mainMenuController = controller
     }
 
     private func shouldShowPermissionSetup() -> Bool {

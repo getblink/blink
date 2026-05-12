@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import PermissionFlow
 
 /// First-run wizard for Blink's permission setup. A single checklist screen
 /// lets the user grant the three required permissions in any order; rows
@@ -19,7 +20,6 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         let permission: Permission
         let headline: String
         let explainer: String
-        let settingsURL: String
         let check: () -> Bool
     }
 
@@ -52,6 +52,22 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
     private var hotkeyStartRetryWorkItem: DispatchWorkItem?
     private var shownAt: Date?
     private var inRelaunchFallback: Bool = false
+
+    /// Owns System Settings navigation and the floating drag-to-authorize
+    /// panel that appears next to the privacy pane. The controller's factory
+    /// and methods are `@MainActor`-isolated; every access here is on main
+    /// (button actions, window delegate, refresh timer fired on the main
+    /// run loop), so the `assumeIsolated` wrapper is safe.
+    private lazy var permissionFlowController: PermissionFlowController = {
+        MainActor.assumeIsolated {
+            PermissionFlow.makeController(
+                configuration: .init(
+                    requiredAppURLs: [Bundle.main.bundleURL],
+                    promptForAccessibilityTrust: false
+                )
+            )
+        }
+    }()
 
     init(
         hotkeyDisplay: String,
@@ -114,21 +130,18 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
                 permission: .accessibility,
                 headline: "Accessibility",
                 explainer: "Blink reads the focused field and pastes your selected reply.",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
                 check: { AXIsProcessTrusted() }
             ),
             PermissionCopy(
                 permission: .inputMonitoring,
                 headline: "Input Monitoring",
                 explainer: "Blink listens for \(hotkeyDisplay) and the overlay number keys.",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
                 check: { PermissionsWindowController.inputMonitoringGranted() }
             ),
             PermissionCopy(
                 permission: .screenRecording,
                 headline: "Screen Recording",
                 explainer: "Blink needs to see the active window before it can summarize it.",
-                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
                 check: { Self.screenRecordingGranted(caller: "PermissionsWindow.screenRecordingCheck") }
             ),
         ]
@@ -152,6 +165,7 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         win.title = "Blink Setup"
         win.isReleasedWhenClosed = false
         win.delegate = self
+        win.setFrameAutosaveName("BlinkPermissions")
 
         contentHost.translatesAutoresizingMaskIntoConstraints = false
         win.contentView = contentHost
@@ -179,8 +193,6 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         rowsStack.alignment = .leading
         rowsStack.spacing = 12
 
-        let dragFallback = dragFallbackSection()
-
         let seeSample = NSButton(title: "See a sample", target: self, action: #selector(showSample))
         seeSample.bezelStyle = .rounded
         seeSample.controlSize = .large
@@ -195,7 +207,6 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
             tagline,
             hotkeyRow.container,
             rowsStack,
-            dragFallback,
             buttons,
         ])
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -272,10 +283,8 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         pill.setContentHuggingPriority(.required, for: .horizontal)
 
         let openSettings = NSButton(title: "Open Settings", target: self, action: #selector(openSettings))
-        openSettings.identifier = NSUserInterfaceItemIdentifier(copy.settingsURL)
         // The button's tag carries the row's permission so the action handler
-        // can record when this specific row was opened (for stuck-row drag
-        // disclosure logic).
+        // can route to the correct PermissionFlow pane.
         openSettings.tag = Self.tag(for: copy.permission)
         openSettings.bezelStyle = .rounded
         openSettings.controlSize = .regular
@@ -359,38 +368,6 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func dragFallbackSection() -> NSView {
-        let dragView = BundleDragSourceView(bundleURL: Bundle.main.bundleURL)
-        NSLayoutConstraint.activate([
-            dragView.widthAnchor.constraint(equalToConstant: 96),
-            dragView.heightAnchor.constraint(equalToConstant: 96),
-        ])
-
-        let title = NSTextField(labelWithString: "If Blink isn't in the list")
-        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = .labelColor
-
-        let label = NSTextField(wrappingLabelWithString:
-            "Drag the Blink icon into the System Settings list to add it."
-        )
-        label.font = NSFont.systemFont(ofSize: 12)
-        label.textColor = .secondaryLabelColor
-        label.maximumNumberOfLines = 3
-        label.preferredMaxLayoutWidth = 360
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let textStack = NSStackView(views: [title, label])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 4
-
-        let stack = NSStackView(views: [dragView, textStack])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 16
-        return stack
-    }
-
     @objc private func showSample() {
         guard chatMockController == nil else {
             chatMockController?.show()
@@ -439,13 +416,33 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func openSettings(_ sender: NSButton) {
-        if let perm = Self.permission(forTag: sender.tag) {
-            emit(type: "onboarding_open_settings_clicked", details: [
-                "permission": perm.rawValue
-            ])
+        guard let perm = Self.permission(forTag: sender.tag) else { return }
+        emit(type: "onboarding_open_settings_clicked", details: [
+            "permission": perm.rawValue
+        ])
+        // Anchor the floating-helper launch animation to the button itself
+        // so it appears to fly out of the row the user just clicked. When
+        // the button isn't in a window (shouldn't happen here), fall back
+        // to a frameless authorize call — the helper still appears.
+        let sourceFrame: CGRect? = {
+            guard let window = sender.window else { return nil }
+            return window.convertToScreen(sender.convert(sender.bounds, to: nil))
+        }()
+        MainActor.assumeIsolated {
+            permissionFlowController.authorize(
+                pane: Self.permissionFlowPane(for: perm),
+                suggestedAppURLs: [Bundle.main.bundleURL],
+                sourceFrameInScreen: sourceFrame
+            )
         }
-        guard let id = sender.identifier?.rawValue, let url = URL(string: id) else { return }
-        NSWorkspace.shared.open(url)
+    }
+
+    private static func permissionFlowPane(for permission: Permission) -> PermissionFlowPane {
+        switch permission {
+        case .accessibility: return .accessibility
+        case .inputMonitoring: return .inputMonitoring
+        case .screenRecording: return .screenRecording
+        }
     }
 
     private func markOnboardedOnce() {
@@ -564,6 +561,13 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         autoDismissWorkItem = nil
         refreshTimer?.invalidate()
         refreshTimer = nil
+        // The wizard window stays open here (we swap its content rather than
+        // closing it), so `windowWillClose` won't fire — close the floating
+        // permission helper manually to avoid leaving it next to the
+        // relaunch screen.
+        MainActor.assumeIsolated {
+            permissionFlowController.closePanel()
+        }
 
         contentHost.subviews.forEach { $0.removeFromSuperview() }
         let title = heading("Relaunch Blink")
@@ -592,6 +596,9 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         didFireCompleted = true
         emitCompleted(relaunchRequired: true)
         markOnboardedOnce()
+        MainActor.assumeIsolated {
+            permissionFlowController.closePanel()
+        }
         relaunchSelf()
     }
 
@@ -631,6 +638,9 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         hotkeyStartRetryWorkItem?.cancel()
         hotkeyStartRetryWorkItem = nil
         chatMockController?.close()
+        MainActor.assumeIsolated {
+            permissionFlowController.closePanel()
+        }
         if !didMarkOnboarded {
             // Closing the wizard before all grants leaves the onboarded
             // marker absent so the next launch retries onboarding. Telemetry
@@ -662,148 +672,5 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         let granted = CGPreflightScreenCaptureAccess()
         TCCDiagnostics.log("screen_recording_preflight caller=\(caller) granted=\(granted)")
         return granted
-    }
-}
-
-// MARK: - Drag source
-
-/// Pasteboard writer that advertises a file URL the way Finder does, so System
-/// Settings' permission lists accept the dropped `.app` bundle.
-private final class BundlePasteboardWriter: NSObject, NSPasteboardWriting {
-    private let url: URL
-
-    init(url: URL) {
-        self.url = url
-    }
-
-    func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
-        [
-            .fileURL,
-            .URL,
-            NSPasteboard.PasteboardType("NSFilenamesPboardType"),
-            NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
-            .string,
-        ]
-    }
-
-    func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
-        switch type {
-        case .fileURL,
-             .URL,
-             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"):
-            return url.absoluteString
-        case NSPasteboard.PasteboardType("NSFilenamesPboardType"):
-            return [url.path]
-        case .string:
-            return url.path
-        default:
-            return nil
-        }
-    }
-}
-
-/// `NSImageView`-shaped drag source for Blink.app.
-private final class BundleDragSourceView: NSView, NSDraggingSource {
-    private let bundleURL: URL
-    private let iconView = NSImageView()
-    private var mouseDownPoint: NSPoint?
-
-    init(bundleURL: URL) {
-        self.bundleURL = bundleURL
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-
-        iconView.image = NSWorkspace.shared.icon(forFile: bundleURL.path)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.toolTip = "Drag into System Settings"
-        addSubview(iconView)
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BundleDragSourceView.iconInset),
-            iconView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BundleDragSourceView.iconInset),
-            iconView.topAnchor.constraint(equalTo: topAnchor, constant: BundleDragSourceView.iconInset),
-            iconView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -BundleDragSourceView.iconInset),
-        ])
-    }
-
-    private static let iconInset: CGFloat = 5
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        let path = NSBezierPath(
-            roundedRect: bounds.insetBy(dx: 1, dy: 1),
-            xRadius: 8,
-            yRadius: 8
-        )
-        path.lineWidth = 1.25
-        path.setLineDash([4, 3], count: 2, phase: 0)
-        NSColor.tertiaryLabelColor.setStroke()
-        path.stroke()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        NSCursor.openHand.push()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.pop()
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        mouseDownPoint = convert(event.locationInWindow, from: nil)
-        NSCursor.closedHand.set()
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let down = mouseDownPoint else { return }
-        let current = convert(event.locationInWindow, from: nil)
-        guard hypot(current.x - down.x, current.y - down.y) > 4 else { return }
-        mouseDownPoint = nil
-        beginAppDrag(with: event)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        mouseDownPoint = nil
-    }
-
-    func draggingSession(
-        _ session: NSDraggingSession,
-        sourceOperationMaskFor context: NSDraggingContext
-    ) -> NSDragOperation {
-        .copy
-    }
-
-    func ignoreModifierKeys(for session: NSDraggingSession) -> Bool {
-        true
-    }
-
-    private func beginAppDrag(with event: NSEvent) {
-        let item = NSDraggingItem(pasteboardWriter: BundlePasteboardWriter(url: bundleURL))
-        let icon = NSWorkspace.shared.icon(forFile: bundleURL.path)
-        icon.size = NSSize(width: 56, height: 56)
-        let dragPoint = convert(event.locationInWindow, from: nil)
-        item.setDraggingFrame(
-            NSRect(x: dragPoint.x - 28, y: dragPoint.y - 28, width: 56, height: 56),
-            contents: icon
-        )
-        let session = beginDraggingSession(with: [item], event: event, source: self)
-        session.animatesToStartingPositionsOnCancelOrFail = true
-        session.draggingFormation = .none
     }
 }

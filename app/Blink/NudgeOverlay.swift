@@ -74,25 +74,27 @@ final class NudgeOverlay {
         panel.hasShadow = true
         panel.ignoresMouseEvents = false
         panel.alphaValue = 0
-        panel.appearance = NSAppearance(named: .darkAqua)
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: Layout.width, height: Layout.height))
         content.wantsLayer = true
         content.layer?.cornerRadius = Layout.cornerRadius
         content.layer?.masksToBounds = true
 
-        let backdrop = NSVisualEffectView(frame: content.bounds)
-        backdrop.material = .hudWindow
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
-        backdrop.autoresizingMask = [.width, .height]
-        content.addSubview(backdrop)
-
-        let tint = NSView(frame: content.bounds)
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.18).cgColor
-        tint.autoresizingMask = [.width, .height]
-        content.addSubview(tint)
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        if reduceTransparency {
+            let solid = NSView(frame: content.bounds)
+            solid.wantsLayer = true
+            solid.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            solid.autoresizingMask = [.width, .height]
+            content.addSubview(solid)
+        } else {
+            let backdrop = NSVisualEffectView(frame: content.bounds)
+            backdrop.material = .hudWindow
+            backdrop.blendingMode = .behindWindow
+            backdrop.state = .active
+            backdrop.autoresizingMask = [.width, .height]
+            content.addSubview(backdrop)
+        }
 
         let iconView = NSImageView(frame: NSRect(
             x: Layout.iconLeading,
@@ -107,7 +109,7 @@ final class NudgeOverlay {
 
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
-        label.textColor = .white
+        label.textColor = .labelColor
         label.alignment = .left
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
