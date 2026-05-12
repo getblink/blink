@@ -61,6 +61,20 @@ struct Hotkey: Equatable {
         return parts.joined()
     }
 
+    /// One token per key/modifier, in canonical order — for surfaces that
+    /// want to render each part as its own keycap badge rather than a single
+    /// concatenated string. Example: `["⌃", "⌥", "Space"]`.
+    var displayParts: [String] {
+        var parts: [String] = []
+        if flags.contains(.maskControl) { parts.append("⌃") }
+        if flags.contains(.maskAlternate) { parts.append("⌥") }
+        if flags.contains(.maskShift) { parts.append("⇧") }
+        if flags.contains(.maskCommand) { parts.append("⌘") }
+        if flags.contains(.maskSecondaryFn) { parts.append("fn") }
+        parts.append(Self.displayKey(for: keyCode))
+        return parts
+    }
+
     private static func modifierFlag(for token: String) -> CGEventFlags? {
         switch token {
         case "cmd", "command", "⌘": return .maskCommand

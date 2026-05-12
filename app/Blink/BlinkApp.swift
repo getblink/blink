@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyRetryTimer: Timer?
     private var updaterController: SPUStandardUpdaterController?
     private var hotkeyDisplay: String = ""
+    private var summaryHotkey: Hotkey = .default
     private var mainMenuController: MainMenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let config = Config.load()
         let summaryHotkey = Hotkey.loadFromSettings(at: Paths.settingsPath)
         self.hotkeyDisplay = summaryHotkey.displayString
+        self.summaryHotkey = summaryHotkey
         let runtimeStore = RuntimeConfigStore()
         self.runtimeStore = runtimeStore
         // Note: we no longer backfill the onboarded marker based on the
@@ -313,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controlWindow = ControlWindowController(
                 coordinator: coordinator,
                 runtimeStore: runtimeStore,
-                hotkeyDisplay: hotkeyDisplay,
+                hotkey: summaryHotkey,
                 onShowSettings: { [weak self] in self?.showSettingsWindow() }
             )
         }
