@@ -94,6 +94,36 @@ const desktopDemoUrls = parseUrls(
             couldn't reach the server. try again in a moment.
           </p>
           <p class="status status--rate">too many tries. give it a minute.</p>
+          <div class="share" data-met="false" hidden>
+            <p class="share__goal">
+              <span class="share__check" aria-hidden="true"></span>
+              <span class="share__goal-text"
+                >refer 1 friend to skip the line</span
+              >
+              <span class="share__goal-text--met"
+                >referred 1 friend — you're in line for the next batch.</span
+              >
+            </p>
+            <div class="share__row">
+              <input
+                class="share__url"
+                type="text"
+                readonly
+                aria-label="your referral link"
+              />
+              <button class="share__copy" type="button">
+                <span class="share__copy-label">copy</span>
+              </button>
+              <a
+                class="share__tweet"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>tweet</span>
+                <span class="signup__arrow" aria-hidden="true">→</span>
+              </a>
+            </div>
+          </div>
         </form>
         <a class="signup__secondary" href="/story">
           <span>read the story</span>
@@ -466,6 +496,131 @@ const desktopDemoUrls = parseUrls(
       font-weight: 600;
     }
 
+    .share {
+      display: grid;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .share[hidden] {
+      display: none;
+    }
+
+    .share__goal {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg);
+      line-height: 1.2;
+    }
+
+    .share__check {
+      width: 12px;
+      height: 12px;
+      border: 1px solid var(--fg);
+      box-sizing: border-box;
+      position: relative;
+      flex: 0 0 auto;
+      transition: background 160ms ease, border-color 160ms ease;
+    }
+
+    .share[data-met="true"] .share__check {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .share[data-met="true"] .share__check::after {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: -1px;
+      width: 4px;
+      height: 8px;
+      border: solid var(--bg);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+
+    .share__goal-text--met {
+      display: none;
+      color: var(--fg);
+      font-weight: 500;
+    }
+
+    .share[data-met="true"] .share__goal-text {
+      display: none;
+    }
+
+    .share[data-met="true"] .share__goal-text--met {
+      display: inline;
+    }
+
+    .share__row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .share__url {
+      width: 100%;
+      min-width: 0;
+      height: 40px;
+      padding: 0 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 0;
+      background: var(--surface);
+      color: var(--fg);
+      font: inherit;
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: 0;
+    }
+
+    .share__url:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .share__copy,
+    .share__tweet {
+      height: 40px;
+      padding: 0 14px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+      background: transparent;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      text-decoration: none;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .share__copy:hover,
+    .share__tweet:hover {
+      background: var(--fg);
+      color: var(--bg);
+    }
+
+    .share__copy:focus-visible,
+    .share__tweet:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .share[data-copied="true"] .share__copy-label::after {
+      content: " ✓";
+      color: var(--accent);
+    }
+
     .signup__secondary {
       display: none;
     }
@@ -538,6 +693,16 @@ const desktopDemoUrls = parseUrls(
         justify-content: center;
       }
 
+      .share__row {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .share__copy,
+      .share__tweet {
+        width: 100%;
+        justify-content: center;
+      }
+
       .signup__secondary {
         display: inline-flex;
         align-items: center;
@@ -580,6 +745,121 @@ const desktopDemoUrls = parseUrls(
     const endpoint = form?.dataset.endpoint;
     const openButton = form?.querySelector(".signup__open");
     const emailInput = form?.querySelector('input[type="email"]');
+    const share = form?.querySelector(".share");
+    const shareUrlInput = share?.querySelector(".share__url");
+    const shareCopyButton = share?.querySelector(".share__copy");
+    const shareCopyLabel = share?.querySelector(".share__copy-label");
+    const shareTweetLink = share?.querySelector(".share__tweet");
+    const statsBase = endpoint
+      ? endpoint.replace(/\/+$/, "")
+      : "";
+    const SIGNUP_ID_RE = /^[0-9a-f]{32}$/;
+    const STORAGE_KEY = "blink:signup_id";
+    const readStoredSignupId = () => {
+      try {
+        const value = localStorage.getItem(STORAGE_KEY) || "";
+        return SIGNUP_ID_RE.test(value) ? value : "";
+      } catch {
+        return "";
+      }
+    };
+    const writeStoredSignupId = (signupId) => {
+      try {
+        localStorage.setItem(STORAGE_KEY, signupId);
+      } catch {}
+    };
+    const incomingRef = (() => {
+      try {
+        const value = new URLSearchParams(location.search).get("ref") || "";
+        return SIGNUP_ID_RE.test(value) ? value : "";
+      } catch {
+        return "";
+      }
+    })();
+    if (incomingRef) {
+      window.posthog?.capture("beta_signup_referred_visit", {
+        ref: incomingRef,
+        source: "useblink.dev",
+      });
+    }
+
+    let currentSignupId = "";
+    let goalMetCaptured = false;
+
+    const showShareRow = (signupId) => {
+      if (!share || !shareUrlInput || !shareTweetLink) return;
+      currentSignupId = signupId;
+      const shareUrl = `${location.origin}/?ref=${signupId}`;
+      shareUrlInput.value = shareUrl;
+      const tweetText = "just joined the blink beta — reads your screen, writes the rest.";
+      shareTweetLink.href =
+        "https://twitter.com/intent/tweet?text=" +
+        encodeURIComponent(tweetText) +
+        "&url=" +
+        encodeURIComponent(shareUrl);
+      share.hidden = false;
+      share.dataset.met = "false";
+      share.dataset.copied = "false";
+      goalMetCaptured = false;
+      void refreshStats();
+    };
+
+    const refreshStats = async () => {
+      if (!currentSignupId || !statsBase) return;
+      try {
+        const response = await fetch(
+          `${statsBase}/${currentSignupId}/stats`,
+          { method: "GET" },
+        );
+        if (!response.ok) return;
+        const body = await response.json();
+        const referrals = Number(body?.referrals || 0);
+        if (referrals >= 1) {
+          share.dataset.met = "true";
+          if (!goalMetCaptured) {
+            goalMetCaptured = true;
+            window.posthog?.capture("referral_goal_met", {
+              referrals,
+            });
+          }
+        }
+      } catch {}
+    };
+
+    shareCopyButton?.addEventListener("click", async () => {
+      if (!shareUrlInput) return;
+      const url = shareUrlInput.value;
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        shareUrlInput.select();
+        try {
+          document.execCommand("copy");
+        } catch {}
+      }
+      share.dataset.copied = "true";
+      if (shareCopyLabel) shareCopyLabel.textContent = "copied";
+      window.posthog?.capture("referral_link_copied", {
+        signup_id: currentSignupId,
+      });
+      setTimeout(() => {
+        if (shareCopyLabel) shareCopyLabel.textContent = "copy";
+        share.dataset.copied = "false";
+      }, 1800);
+    });
+
+    shareTweetLink?.addEventListener("click", () => {
+      window.posthog?.capture("referral_link_shared_twitter", {
+        signup_id: currentSignupId,
+      });
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        void refreshStats();
+      }
+    });
+
     openButton?.addEventListener("click", () => {
       if (!form || form.dataset.mode === "expanded") return;
       form.dataset.mode = "expanded";
@@ -596,18 +876,27 @@ const desktopDemoUrls = parseUrls(
       const data = new FormData(form);
       form.dataset.state = "submitting";
       button?.setAttribute("disabled", "true");
+      if (share) {
+        share.hidden = true;
+        share.dataset.met = "false";
+        share.dataset.copied = "false";
+      }
+      currentSignupId = "";
+      goalMetCaptured = false;
       window.posthog?.capture("beta_signup_submitted", {
         source: "useblink.dev",
       });
       try {
+        const body = {
+          email: String(data.get("email") || ""),
+          hp: String(data.get("hp") || ""),
+          source: "useblink.dev",
+        };
+        if (incomingRef) body.ref = incomingRef;
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            email: String(data.get("email") || ""),
-            hp: String(data.get("hp") || ""),
-            source: "useblink.dev",
-          }),
+          body: JSON.stringify(body),
         });
         if (response.status === 429) {
           form.dataset.state = "error-rate-limit";
@@ -629,17 +918,26 @@ const desktopDemoUrls = parseUrls(
           let signupId;
           let alreadySignedUp = false;
           try {
-            const body = await response.json();
-            signupId = typeof body?.signup_id === "string" ? body.signup_id : undefined;
-            alreadySignedUp = body?.already_signed_up === true;
+            const responseBody = await response.json();
+            signupId =
+              typeof responseBody?.signup_id === "string"
+                ? responseBody.signup_id
+                : undefined;
+            alreadySignedUp = responseBody?.already_signed_up === true;
           } catch {}
           if (alreadySignedUp) {
             form.dataset.state = "already";
             window.posthog?.capture("beta_signup_already_on_list");
           } else {
             form.dataset.state = "success";
+            // Only alias the first time we learn this signup_id. Re-aliasing
+            // on `already_signed_up` would clobber the identity graph.
             if (signupId) window.posthog?.alias(signupId);
             window.posthog?.capture("beta_signup_succeeded");
+          }
+          if (signupId && SIGNUP_ID_RE.test(signupId)) {
+            writeStoredSignupId(signupId);
+            showShareRow(signupId);
           }
         } else {
           form.dataset.state = "error-network";
@@ -658,6 +956,16 @@ const desktopDemoUrls = parseUrls(
         button?.removeAttribute("disabled");
       }
     });
+
+    // Returning visitor: restore the share row from localStorage so a
+    // refresh doesn't wipe the "you're on the list" + share UI. We don't
+    // know whether the original submit was a new signup or a duplicate,
+    // so we surface the "already on the list" copy — accurate either way.
+    const storedSignupId = readStoredSignupId();
+    if (storedSignupId && form) {
+      form.dataset.state = "already";
+      showShareRow(storedSignupId);
+    }
 
     document.querySelectorAll(".demo-cell").forEach((demoCell) => {
       const demoUrls = (demoCell.dataset.videoUrls || "")
