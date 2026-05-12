@@ -130,8 +130,11 @@ CREATE TABLE IF NOT EXISTS beta_signups (
     source TEXT,
     user_agent TEXT,
     ip_hash TEXT,
+    referrer_signup_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE beta_signups
+    ADD COLUMN IF NOT EXISTS referrer_signup_id TEXT;
 CREATE INDEX IF NOT EXISTS beta_signups_created_at_idx
     ON beta_signups (created_at DESC);
 """
@@ -422,6 +425,7 @@ class TelemetryStore:
         source: str | None,
         user_agent: str | None,
         ip_hash: str,
+        referrer_signup_id: str | None = None,
     ) -> bool:
         if not self.enabled or self.database_url is None:
             raise RuntimeError("beta signup storage is not configured")
@@ -437,8 +441,9 @@ class TelemetryStore:
                         email_original,
                         source,
                         user_agent,
-                        ip_hash
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                        ip_hash,
+                        referrer_signup_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (email_normalized) DO NOTHING
                     """,
                     (
@@ -448,8 +453,72 @@ class TelemetryStore:
                         source,
                         user_agent,
                         ip_hash,
+                        referrer_signup_id,
                     ),
                 )
                 inserted = cur.rowcount > 0
             conn.commit()
         return inserted
+
+    def get_beta_signup_by_id(self, signup_id: str) -> dict[str, Any] | None:
+        if not self.enabled or self.database_url is None:
+            return None
+        self._ensure_schema()
+        assert psycopg is not None
+        with psycopg.connect(self.database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, email_normalized, email_original, ip_hash
+                    FROM beta_signups
+                    WHERE id = %s
+                    LIMIT 1
+                    """,
+                    (signup_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "email_normalized": row[1],
+            "email_original": row[2],
+            "ip_hash": row[3],
+        }
+
+    def get_beta_signup_id_for_email(self, email_normalized: str) -> str | None:
+        if not self.enabled or self.database_url is None:
+            return None
+        self._ensure_schema()
+        assert psycopg is not None
+        with psycopg.connect(self.database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM beta_signups
+                    WHERE email_normalized = %s
+                    LIMIT 1
+                    """,
+                    (email_normalized,),
+                )
+                row = cur.fetchone()
+        return row[0] if row else None
+
+    def count_beta_referrals(self, signup_id: str) -> int:
+        if not self.enabled or self.database_url is None:
+            return 0
+        self._ensure_schema()
+        assert psycopg is not None
+        with psycopg.connect(self.database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM beta_signups
+                    WHERE referrer_signup_id = %s
+                    """,
+                    (signup_id,),
+                )
+                row = cur.fetchone()
+        return int(row[0]) if row else 0

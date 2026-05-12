@@ -35,6 +35,7 @@ _RATE_LIMIT_REDIS_URL: str | None = None
 _MINT_RATE_LIMIT_BUCKETS: dict[str, _TokenBucket] = {}
 _SIGNUP_RATE_LIMIT_MINUTE_BUCKETS: dict[str, _TokenBucket] = {}
 _SIGNUP_RATE_LIMIT_DAY_BUCKETS: dict[str, _TokenBucket] = {}
+_SIGNUP_STATS_RATE_LIMIT_MINUTE_BUCKETS: dict[str, _TokenBucket] = {}
 _LOGGER = logging.getLogger("blink.tldr.auth")
 _DEPRECATION_WARNED: set[str] = set()
 
@@ -283,6 +284,23 @@ def _check_bucket(
             detail=detail,
         )
     bucket.count += 1
+
+
+def check_signup_stats_rate_limit(ip_hash: str, now: float | None = None) -> None:
+    limit = _int_env("BLINK_SIGNUP_STATS_RATE_LIMIT_PER_MINUTE", 60)
+    if limit <= 0:
+        return
+    current_time = time.monotonic() if now is None else now
+    key = ip_hash or "unknown"
+    with _RATE_LIMIT_LOCK:
+        _check_bucket(
+            _SIGNUP_STATS_RATE_LIMIT_MINUTE_BUCKETS,
+            key=key,
+            limit=limit,
+            window_seconds=60,
+            detail="signup stats rate limit exceeded",
+            now=current_time,
+        )
 
 
 def check_signup_rate_limit(ip_hash: str, now: float | None = None) -> None:
