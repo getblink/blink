@@ -819,7 +819,7 @@ class MainTests(unittest.TestCase):
                         {"text": "Three", "tags": ["Next"]},
                     ],
                 },
-                {"role": "user", "kind": "reroll", "text": "fresh please"},
+                {"role": "user", "kind": "reroll", "text": "stale prompt text from older deploy"},
             ],
         )
 
@@ -827,7 +827,148 @@ class MainTests(unittest.TestCase):
         self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
         self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
         self.assertIn("suggestions", contents[1].parts[0]["text"])
-        self.assertEqual(contents[2].parts, [{"text": "fresh please"}])
+        self.assertEqual(contents[2].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+
+    def test_gemini_conversation_contents_initial_gen_returns_single_user_content(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            None,
+        )
+
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(contents[0].role, "user")
+        self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
+        self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
+
+    def test_gemini_conversation_contents_reroll_default_text_is_reroll_content_text(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "One", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll"},
+            ],
+        )
+
+        self.assertEqual(contents[-1].role, "user")
+        self.assertEqual(contents[-1].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+        self.assertNotEqual(contents[-1].parts, [{"text": gemini.MODEL_CONTENT_TEXT}])
+
+    def test_gemini_conversation_contents_multi_reroll_keeps_reroll_as_final_turn(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "One", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll", "text": "stale prompt text from older deploy"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "Two", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll"},
+            ],
+        )
+
+        self.assertEqual([c.role for c in contents], ["user", "model", "user", "model", "user"])
+        image_bearing = [
+            c for c in contents
+            if c.role == "user" and any(isinstance(p, dict) and "bytes" in p for p in c.parts)
+        ]
+        self.assertEqual(len(image_bearing), 1)
+        self.assertEqual(contents[-1].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+        self.assertEqual(contents[2].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+
+    def test_gemini_prompt_with_context_single_preference_example_no_verb_menu(self) -> None:
+        prompt = gemini.prompt_with_context(
+            "Base.",
+            {
+                "preference_examples": [
+                    {
+                        "screen_takeaway": "Agent offered low-risk plan.",
+                        "rejected_suggestions": ["Sounds good.", "I agree."],
+                        "user_typed": "please run the tests first",
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("please run the tests first", prompt)
+        self.assertNotIn("Preference lesson:", prompt)
+        self.assertNotIn("evidence requests", prompt)
+        self.assertNotIn("premise checks", prompt)
+        self.assertNotIn("clarifying questions", prompt)
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
@@ -1319,14 +1460,16 @@ class MainTests(unittest.TestCase):
         warnings: list[str] = []
         settings = _selected_settings({"preferences": {}}, warnings)
         self.assertNotIn("thinking_level", settings)
+        self.assertEqual(settings["temperature"], 1.0)
         self.assertEqual(warnings, [])
 
         warnings = []
         settings = _selected_settings({}, warnings)
         self.assertNotIn("thinking_level", settings)
+        self.assertEqual(settings["temperature"], 1.0)
         self.assertEqual(warnings, [])
 
-    def test_generate_config_uses_default_low_for_thinking_model_without_override(self) -> None:
+    def test_generate_config_uses_default_high_for_thinking_model_without_override(self) -> None:
         captured_thinking: dict[str, Any] = {}
 
         class FakeThinkingConfig:
@@ -1353,7 +1496,7 @@ class MainTests(unittest.TestCase):
                 "PROMPT",
             )
 
-        self.assertEqual(captured_thinking, {"thinking_level": "low"})
+        self.assertEqual(captured_thinking, {"thinking_level": "high"})
 
     def test_generate_config_uses_client_thinking_level_override(self) -> None:
         captured_thinking: dict[str, Any] = {}

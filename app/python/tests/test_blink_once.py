@@ -652,6 +652,10 @@ class BlinkOnceTests(unittest.TestCase):
             [["Ask"], ["Pushback"], ["Next step"]],
         )
 
+    def test_default_settings_use_gemini_three_sampling_defaults(self) -> None:
+        self.assertEqual(blink_once.DEFAULT_SETTINGS["temperature"], 1.0)
+        self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "high")
+
     def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:
         captured_config: dict[str, Any] = {}
         captured_thinking: dict[str, Any] = {}
@@ -693,7 +697,7 @@ class BlinkOnceTests(unittest.TestCase):
         with mock.patch.object(blink_once, "response_schema", return_value={"schema": "ok"}):
             blink_once.build_generate_config(FakeTypes, "PROMPT", thinking_settings)
         self.assertIn("thinking_config", captured_config)
-        self.assertEqual(captured_thinking, {"thinking_level": "low"})
+        self.assertEqual(captured_thinking, {"thinking_level": "high"})
         self.assertNotIn("thinking_budget", captured_thinking)
         self.assertEqual(captured_config["max_output_tokens"], 2048)
 
@@ -711,9 +715,9 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertIsNone(blink_once.max_output_tokens_for_model(""))
 
     def test_thinking_level_for_model(self) -> None:
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3.1-pro-preview"), "low")
-        self.assertEqual(blink_once.thinking_level_for_model("Gemini-3-Pro"), "low")
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "low")
+        self.assertEqual(blink_once.thinking_level_for_model("gemini-3.1-pro-preview"), "high")
+        self.assertEqual(blink_once.thinking_level_for_model("Gemini-3-Pro"), "high")
+        self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "high")
         self.assertIsNone(blink_once.thinking_level_for_model("gemini-3.1-flash-lite-preview"))
         self.assertIsNone(blink_once.thinking_level_for_model("gemma-4-26b-a4b-it"))
         self.assertIsNone(blink_once.thinking_level_for_model("gemini-2.5-flash"))
@@ -1205,6 +1209,37 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(context["voice_sample_count"], 1)
         self.assertEqual(context["preference_example_count"], 1)
 
+    def test_build_stateful_context_deduplicates_adjacent_identical_tldr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            for dirname, finished_at in [
+                ("20260503-120200-000", "2026-05-03T12:02:05+00:00"),
+                ("20260503-120100-000", "2026-05-03T12:01:05+00:00"),
+                ("20260503-120000-000", "2026-05-03T12:00:05+00:00"),
+            ]:
+                run_dir = runs / dirname
+                run_dir.mkdir(parents=True)
+                (run_dir / "request.json").write_text(
+                    json.dumps({"frontmost_app": {"bundle_id": "com.example.chat"}, "focused_context": {"title": "Sarah"}}),
+                    encoding="utf-8",
+                )
+                (run_dir / "run.json").write_text(
+                    json.dumps({"finished_at": finished_at, "chosen_action": "copied", "response": {"tldr": "Same TL;DR every time."}}),
+                    encoding="utf-8",
+                )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.example.chat"}, "focused_context": {"title": "Sarah"}},
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(len(context["recent_surface_history"]), 1)
+        self.assertEqual(context["recent_surface_history"][0]["tldr"], "Same TL;DR every time.")
+
     def test_prompt_with_stateful_context_renders_preference_examples_without_duplicate_voice_or_outcome(self) -> None:
         prompt = blink_once.prompt_with_stateful_context(
             "Base prompt.",
@@ -1226,10 +1261,9 @@ class BlinkOnceTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("User preference examples from this same surface", prompt)
-        self.assertIn("Model suggestions the user did not use", prompt)
-        self.assertIn("- Sounds good.", prompt)
-        self.assertIn("User typed instead: please inspect the logs first", prompt)
+        self.assertIn('Last time, the user typed "please inspect the logs first" instead of the model\'s suggestions.', prompt)
+        self.assertNotIn("Preference lesson:", prompt)
+        self.assertNotIn("evidence requests", prompt)
         self.assertIn("Prior outcome: user typed a custom reply instead of using the suggestions.", prompt)
         self.assertNotIn("User voice examples:", prompt)
         self.assertIn("Imitate their style closely in the suggestions", prompt)
