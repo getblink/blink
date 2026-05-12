@@ -66,9 +66,11 @@ fi
 
 env_source=""
 prod_env_source=""
+dev_env_source=""
 if [ -n "${CONDUCTOR_ROOT_PATH:-}" ]; then
   env_source="$CONDUCTOR_ROOT_PATH/.env"
   prod_env_source="$CONDUCTOR_ROOT_PATH/.env.production"
+  dev_env_source="$CONDUCTOR_ROOT_PATH/.env.development"
 fi
 
 env_status="missing"
@@ -100,6 +102,23 @@ else
   echo "       See .env.production.example to populate it in central." >&2
 fi
 
+# .env.development is the dev-mode override for the Astro landing page
+# (site/astro.config.mjs sets envDir to the repo root). `npm run dev`
+# loads it; `astro build` does not. Used to point the site at the
+# staging Railway backend without touching the production fallback or
+# the Mac-app .env. Missing-here is a soft warning.
+dev_env_status="missing"
+if [ -f "$dev_env_source" ]; then
+  cp "$dev_env_source" .env.development
+  chmod 600 .env.development
+  dev_env_status="copied"
+  echo "[setup] copied .env.development from $dev_env_source" >&2
+else
+  echo "INFO:  no .env.development at \$CONDUCTOR_ROOT_PATH/.env.development." >&2
+  echo "       Skipped — only used by site/ npm run dev to hit staging." >&2
+  echo "       See .env.development.example to populate it in central." >&2
+fi
+
 fixtures_mode="missing"
 fixtures_target=""
 if [ -L scratchpad/fixtures ]; then
@@ -125,6 +144,8 @@ SETUP_ENV_SOURCE="$env_source" \
 SETUP_ENV_STATUS="$env_status" \
 SETUP_PROD_ENV_SOURCE="$prod_env_source" \
 SETUP_PROD_ENV_STATUS="$prod_env_status" \
+SETUP_DEV_ENV_SOURCE="$dev_env_source" \
+SETUP_DEV_ENV_STATUS="$dev_env_status" \
 python3 - <<'PY'
 import json
 import os
@@ -150,6 +171,8 @@ payload = {
     "env_status": os.environ["SETUP_ENV_STATUS"],
     "prod_env_source": optional_env("SETUP_PROD_ENV_SOURCE"),
     "prod_env_status": os.environ["SETUP_PROD_ENV_STATUS"],
+    "dev_env_source": optional_env("SETUP_DEV_ENV_SOURCE"),
+    "dev_env_status": os.environ["SETUP_DEV_ENV_STATUS"],
 }
 
 path = Path(os.environ["SETUP_RECEIPT_PATH"])

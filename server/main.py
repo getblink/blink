@@ -24,6 +24,7 @@ try:
     from . import gemini
     from .auth import (
         check_signup_rate_limit,
+        check_signup_stats_rate_limit,
         client_ip_for,
         generate_device_token,
         require_bearer_token,
@@ -36,6 +37,7 @@ except ImportError:
     import gemini  # type: ignore[no-redef]
     from auth import (  # type: ignore[no-redef]
         check_signup_rate_limit,
+        check_signup_stats_rate_limit,
         client_ip_for,
         generate_device_token,
         require_bearer_token,
@@ -81,6 +83,7 @@ PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+SIGNUP_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 GEMINI_UPSTREAM = "https://generativelanguage.googleapis.com"
 PROXY_TIMEOUT_SECONDS = 120.0
@@ -130,6 +133,7 @@ class BetaSignupRequest(BaseModel):
     email: str = Field(min_length=1, max_length=320)
     source: Optional[str] = Field(default=None, max_length=120)
     hp: Optional[str] = Field(default=None, max_length=500)
+    ref: Optional[str] = Field(default=None, max_length=64)
 
     @field_validator("email")
     @classmethod
@@ -184,10 +188,24 @@ async def _notify_discord_signup(
     email_original: str,
     source: str | None,
     signup_id: str,
+    referrer_email: str | None = None,
+    referrer_signup_id: str | None = None,
 ) -> None:
     webhook_url = (os.environ.get("BLINK_DISCORD_SIGNUP_WEBHOOK_URL") or "").strip()
     if not webhook_url:
         return
+    fields: list[dict[str, Any]] = [
+        {"name": "source", "value": source or "—", "inline": True},
+        {"name": "signup_id", "value": signup_id, "inline": True},
+    ]
+    if referrer_signup_id:
+        fields.append(
+            {
+                "name": "referrer",
+                "value": f"{referrer_email or '—'} (`{referrer_signup_id}`)",
+                "inline": False,
+            }
+        )
     payload = {
         "username": "blink-signups",
         "content": f"new beta signup: `{email_original}`",
@@ -195,18 +213,7 @@ async def _notify_discord_signup(
             {
                 "title": email_original,
                 "color": 0x58A6FF,
-                "fields": [
-                    {
-                        "name": "source",
-                        "value": source or "—",
-                        "inline": True,
-                    },
-                    {
-                        "name": "signup_id",
-                        "value": signup_id,
-                        "inline": True,
-                    },
-                ],
+                "fields": fields,
             }
         ],
     }
@@ -1586,15 +1593,40 @@ async def beta_signup(
     ip_hash = _ip_hash_for(client_ip_for(request))
     check_signup_rate_limit(ip_hash)
 
+    store = _telemetry_store()
+
+    referrer_signup_id: str | None = None
+    referrer_email: str | None = None
+    ref_candidate = (payload.ref or "").strip().lower()
+    if ref_candidate and SIGNUP_ID_RE.match(ref_candidate):
+        try:
+            referrer = store.get_beta_signup_by_id(ref_candidate)
+        except Exception as exc:
+            logger.warning(
+                "beta_signup_referrer_lookup_failed error=%s",
+                _sanitized_error_message(exc),
+            )
+            referrer = None
+        if referrer is not None:
+            # Self-referral guard: drop ref only when the new signup shares
+            # the referrer's normalized email. We deliberately do not check
+            # ip_hash — shared IPs (households, offices, campus Wi-Fi) are
+            # common enough that gating on IP would false-negative real
+            # referrals more often than it caught self-referral abuse.
+            same_email = referrer.get("email_normalized") == email_normalized
+            if not same_email:
+                referrer_signup_id = ref_candidate
+
     signup_id = uuid4().hex
     try:
-        inserted = _telemetry_store().record_beta_signup(
+        inserted = store.record_beta_signup(
             signup_id=signup_id,
             email_normalized=email_normalized,
             email_original=email_original,
             source=source,
             user_agent=request.headers.get("user-agent"),
             ip_hash=ip_hash,
+            referrer_signup_id=referrer_signup_id,
         )
     except Exception as exc:
         logger.warning(
@@ -1611,22 +1643,110 @@ async def beta_signup(
         _posthog_capture(
             signup_id,
             "beta_signup_recorded",
-            properties={"source": source},
+            properties={"source": source, "referred": bool(referrer_signup_id)},
         )
+        if referrer_signup_id:
+            try:
+                referrer_row = store.get_beta_signup_by_id(referrer_signup_id)
+            except Exception:
+                referrer_row = None
+            # We only surface the referrer's original email in Discord. The
+            # row stored only the normalized form on lookup; fetch original
+            # via a second query if needed. For now we keep the Discord field
+            # to the signup_id alone if we don't have the original email.
+            if referrer_row:
+                referrer_email = (
+                    referrer_row.get("email_original")
+                    or referrer_row.get("email_normalized")
+                )
         background_tasks.add_task(
             _notify_discord_signup,
             email_original=email_original,
             source=source,
             signup_id=signup_id,
+            referrer_email=referrer_email,
+            referrer_signup_id=referrer_signup_id,
         )
-        return {"ok": True, "signup_id": signup_id, "already_signed_up": False}
+        return {
+            "ok": True,
+            "signup_id": signup_id,
+            "already_signed_up": False,
+        }
 
+    # Duplicate path: surface the existing signup_id only when the request
+    # plausibly comes from the original signer — same IP hash. This stops a
+    # third party from harvesting someone else's referral link by guessing
+    # their email. Same-IP browsers (mobile after desktop, an incognito
+    # retry) still get the share row.
+    existing_id: str | None = None
+    try:
+        existing = store.get_beta_signup_by_id(
+            store.get_beta_signup_id_for_email(email_normalized) or ""
+        )
+    except Exception as exc:
+        logger.warning(
+            "beta_signup_duplicate_lookup_failed error=%s",
+            _sanitized_error_message(exc),
+        )
+        existing = None
+    if (
+        existing is not None
+        and existing.get("ip_hash")
+        and existing.get("ip_hash") == ip_hash
+    ):
+        existing_id = existing.get("id")
     _posthog_capture(
         f"hash:{ip_hash[:16]}",
         "beta_signup_duplicate",
         properties={"source": source},
     )
-    return {"ok": True, "already_signed_up": True}
+    response: dict[str, Any] = {"ok": True, "already_signed_up": True}
+    if existing_id:
+        response["signup_id"] = existing_id
+    return response
+
+
+@app.get("/v1/beta-signup/{signup_id}/stats")
+async def beta_signup_stats(
+    signup_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    if not SIGNUP_ID_RE.match(signup_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="signup not found",
+        )
+    ip_hash = _ip_hash_for(client_ip_for(request))
+    check_signup_stats_rate_limit(ip_hash)
+    store = _telemetry_store()
+    try:
+        row = store.get_beta_signup_by_id(signup_id)
+    except Exception as exc:
+        logger.warning(
+            "beta_signup_stats_lookup_failed error=%s",
+            _sanitized_error_message(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="beta signup storage unavailable",
+        ) from exc
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="signup not found",
+        )
+    try:
+        referrals = store.count_beta_referrals(signup_id)
+    except Exception as exc:
+        logger.warning(
+            "beta_signup_stats_count_failed error=%s",
+            _sanitized_error_message(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="beta signup storage unavailable",
+        ) from exc
+    return {"ok": True, "referrals": referrals}
 
 
 async def _proxy_to_gemini(
