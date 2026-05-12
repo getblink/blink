@@ -21,7 +21,7 @@ from image_prep import prepare_request_image
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "model": "gemini-3-flash-preview",
-    "temperature": 0.2,
+    "temperature": 1.0,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",
     "preprocess_request_images": True,
@@ -45,12 +45,10 @@ def _is_thinking_model(model: str) -> bool:
 def thinking_level_for_model(model: str) -> str | None:
     """Return the thinking_level for a model, or None to omit it.
 
-    "low" trades a small latency increase for noticeably better factual
-    grounding (Flash at "minimal" hallucinated its own model name across
-    multiple runs). Pro rejects "minimal" outright. Flash-Lite has no biting
-    default, and Gemma is left untouched.
+    "high" is the Google-documented default for Gemini 3 Flash/Pro. "minimal"
+    is avoided: Flash hallucinates its own model name at that level.
     """
-    return "low" if _is_thinking_model(model) else None
+    return "high" if _is_thinking_model(model) else None
 
 
 def max_output_tokens_for_model(model: str) -> int | None:
@@ -207,7 +205,7 @@ Suggestion rules, in priority order:
 
 2. Don't invent private facts or commitments not supported by the screenshot.
 
-3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the screenshot AND from the user voice examples below. The user's house style is the default; only fall back to neutral phrasing where you have no signal. Do not force shortness when a more complete answer fits the user better.
+3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the screenshot AND from the user voice examples below. Lean toward the user's house style when you have multiple consistent voice samples; otherwise prefer neutral phrasing. Do not force shortness when a more complete answer fits the user better.
    Two guards: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
 
 4. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
@@ -509,10 +507,11 @@ def build_stateful_context(
             }
             history_item = {key: value for key, value in history_item.items() if value not in (None, "", [])}
             if len(history_item) > 3:
-                recent_surface_history.append(history_item)
-                surface_match_debug["matched_run_ids"].append(run_dir.name)
-                if surface_match_debug["match_mode"] == "no_match":
-                    surface_match_debug["match_mode"] = match_mode
+                if not (recent_surface_history and history_item.get("tldr") is not None and history_item.get("tldr") == recent_surface_history[-1].get("tldr")):
+                    recent_surface_history.append(history_item)
+                    surface_match_debug["matched_run_ids"].append(run_dir.name)
+                    if surface_match_debug["match_mode"] == "no_match":
+                        surface_match_debug["match_mode"] = match_mode
 
         raw_suggestions = response.get("suggestions")
         rejected_suggestions = []
@@ -640,17 +639,10 @@ def prompt_with_context(
         for suggestion in previous_suggestion_texts:
             lines.append(f"- {suggestion}")
     if preference_examples:
-        lines.extend(
-            [
-                "User preference examples from this same surface:",
-                "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
-                "Infer the preference lesson. Prefer the user's demonstrated intent over generic agreement.",
-            ]
-        )
-        for index, example in enumerate(preference_examples[:PREFERENCE_EXAMPLE_LIMIT], start=1):
+        valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
+        for example in preference_examples[:PREFERENCE_EXAMPLE_LIMIT]:
             if not isinstance(example, dict):
                 continue
-            screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
             user_typed = _bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)
             rejected = example.get("rejected_suggestions")
             if not user_typed or not isinstance(rejected, list):
@@ -662,17 +654,27 @@ def prompt_with_context(
             ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
             if not rejected_texts:
                 continue
-            lines.append(f"Example {index}:")
-            if screen_takeaway:
-                lines.append(f"Screen takeaway: {screen_takeaway}")
-            lines.append("Model suggestions the user did not use:")
-            for suggestion in rejected_texts:
-                lines.append(f"- {suggestion}")
-            lines.append(f"User typed instead: {user_typed}")
-            lines.append(
-                "Preference lesson: Generate suggestions that match the user's demonstrated move. "
-                "Favor evidence requests, premise checks, concrete agent instructions, or clarifying questions when the user typed those instead of generic agreement."
+            valid_pref_examples.append((example, user_typed, rejected_texts))
+        if len(valid_pref_examples) == 1:
+            _, user_typed, _ = valid_pref_examples[0]
+            lines.append(f'Last time, the user typed "{user_typed}" instead of the model\'s suggestions.')
+        elif valid_pref_examples:
+            lines.extend(
+                [
+                    "User preference examples from this same surface:",
+                    "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
+                    "These are individual data points, not a pattern. Don't extrapolate a stance or verb shape from a single example; at most they tell you the user wanted something more specific than what was offered.",
+                ]
             )
+            for index, (example, user_typed, rejected_texts) in enumerate(valid_pref_examples, start=1):
+                screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
+                lines.append(f"Example {index}:")
+                if screen_takeaway:
+                    lines.append(f"Screen takeaway: {screen_takeaway}")
+                lines.append("Model suggestions the user did not use:")
+                for suggestion in rejected_texts:
+                    lines.append(f"- {suggestion}")
+                lines.append(f"User typed instead: {user_typed}")
     if voice_samples:
         rendered_voice_samples = []
         for sample in voice_samples:

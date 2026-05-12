@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "model": "gemini-3-flash-preview",
-    "temperature": 0.2,
+    "temperature": 1.0,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",
     "timeout_seconds": 120,
@@ -18,9 +18,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
 REROLL_CONTENT_TEXT = (
-    "The user pressed reroll for the same capture. Continue from the prior "
-    "model response and produce a fresh set of three materially different "
-    "suggestions. Keep the same JSON schema."
+    "Produce a fresh set of three suggestions. They must not overlap in stance, "
+    "verb shape, or wording with your previous response above. If two valid moves "
+    "cover the same intent, pick the one you did not already offer. Keep the same JSON schema."
 )
 PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
@@ -88,10 +88,10 @@ def _is_thinking_model(model: str) -> bool:
 def thinking_level_for_model(model: str) -> str | None:
     """Return the thinking_level for a model, or None to omit it.
 
-    "low" works for both Pro and Flash; Pro rejects "minimal", and Flash at
-    "minimal" hallucinates its own model name.
+    "high" is the Google-documented default for Gemini 3 Flash/Pro. "minimal"
+    is avoided: Flash hallucinates its own model name at that level.
     """
-    return "low" if _is_thinking_model(model) else None
+    return "high" if _is_thinking_model(model) else None
 
 
 def max_output_tokens_for_model(model: str) -> int | None:
@@ -178,17 +178,10 @@ def prompt_with_context(
         for suggestion in previous_suggestion_texts:
             lines.append(f"- {suggestion}")
     if preference_examples:
-        lines.extend(
-            [
-                "User preference examples from this same surface:",
-                "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
-                "Infer the preference lesson. Prefer the user's demonstrated intent over generic agreement.",
-            ]
-        )
-        for index, example in enumerate(preference_examples[:PREFERENCE_EXAMPLE_LIMIT], start=1):
+        valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
+        for example in preference_examples[:PREFERENCE_EXAMPLE_LIMIT]:
             if not isinstance(example, dict):
                 continue
-            screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
             user_typed = _bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)
             rejected = example.get("rejected_suggestions")
             if not user_typed or not isinstance(rejected, list):
@@ -200,17 +193,27 @@ def prompt_with_context(
             ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
             if not rejected_texts:
                 continue
-            lines.append(f"Example {index}:")
-            if screen_takeaway:
-                lines.append(f"Screen takeaway: {screen_takeaway}")
-            lines.append("Model suggestions the user did not use:")
-            for suggestion in rejected_texts:
-                lines.append(f"- {suggestion}")
-            lines.append(f"User typed instead: {user_typed}")
-            lines.append(
-                "Preference lesson: Generate suggestions that match the user's demonstrated move. "
-                "Favor evidence requests, premise checks, concrete agent instructions, or clarifying questions when the user typed those instead of generic agreement."
+            valid_pref_examples.append((example, user_typed, rejected_texts))
+        if len(valid_pref_examples) == 1:
+            _, user_typed, _ = valid_pref_examples[0]
+            lines.append(f'Last time, the user typed "{user_typed}" instead of the model\'s suggestions.')
+        elif valid_pref_examples:
+            lines.extend(
+                [
+                    "User preference examples from this same surface:",
+                    "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
+                    "These are individual data points, not a pattern. Don't extrapolate a stance or verb shape from a single example; at most they tell you the user wanted something more specific than what was offered.",
+                ]
             )
+            for index, (example, user_typed, rejected_texts) in enumerate(valid_pref_examples, start=1):
+                screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
+                lines.append(f"Example {index}:")
+                if screen_takeaway:
+                    lines.append(f"Screen takeaway: {screen_takeaway}")
+                lines.append("Model suggestions the user did not use:")
+                for suggestion in rejected_texts:
+                    lines.append(f"- {suggestion}")
+                lines.append(f"User typed instead: {user_typed}")
     if voice_samples:
         rendered_voice_samples = []
         for sample in voice_samples:
@@ -653,7 +656,12 @@ def _conversation_contents(
     if not image_parts:
         return []
     if not conversation_turns:
-        return image_parts + [MODEL_CONTENT_TEXT]
+        return [
+            types.Content(
+                role="user",
+                parts=image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+            )
+        ]
 
     contents: list[Any] = []
     used_capture_images = False
@@ -679,7 +687,10 @@ def _conversation_contents(
                 )
                 used_capture_images = True
                 continue
-            text = str(turn.get("text") or REROLL_CONTENT_TEXT).strip()
+            if kind == "reroll":
+                text = REROLL_CONTENT_TEXT
+            else:
+                text = str(turn.get("text") or REROLL_CONTENT_TEXT).strip()
             append_content("user", [_text_part(types, text)])
         elif role == "model":
             text = _model_turn_text(turn)
@@ -738,7 +749,7 @@ def generate_tldr_and_suggestions(
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
-        contents=contents + [MODEL_CONTENT_TEXT],
+        contents=contents,
         config=config,
     )
     finished = time.perf_counter()
@@ -809,7 +820,7 @@ def generate_tldr_and_suggestions_streaming(
     last_partial_suggestions: list[str] = []
     for chunk in client.models.generate_content_stream(
         model=settings["model"],
-        contents=contents + [MODEL_CONTENT_TEXT],
+        contents=contents,
         config=config,
     ):
         text = getattr(chunk, "text", None) or ""
