@@ -199,6 +199,10 @@ final class SuggestionsOverlay: NSObject {
     }
 
     private var panel: SuggestionsPanel?
+    // Close handle for the active multi-frame submit-prompt pill. Set by
+    // `showSubmitPrompt()`; invoked + cleared by `dismissSubmitPrompt()`
+    // (or replaced if `showSubmitPrompt()` is called again).
+    private var submitPromptClose: (() -> Void)?
     private var contentView: NSView?
     private var basePanelHeight: CGFloat = 0
     private var basePanelTopY: CGFloat = 0
@@ -1562,6 +1566,25 @@ final class SuggestionsOverlay: NSObject {
         }
     }
 
+    /// Drops the "Hit ↩ to send to tl;dr" pill in from the menubar and
+    /// keeps it visible until `dismissSubmitPrompt()` (no auto-fade). Safe
+    /// to call repeatedly — a previous pill is closed first.
+    func showSubmitPrompt() {
+        submitPromptClose?()
+        submitPromptClose = nil
+        let screen = panel?.screen ?? NSScreen.main
+        if let screen {
+            submitPromptClose = SubmitPromptPill.show(on: screen)
+        }
+    }
+
+    /// Closes the submit-prompt pill if it's showing. Safe to call when no
+    /// pill is up.
+    func dismissSubmitPrompt() {
+        submitPromptClose?()
+        submitPromptClose = nil
+    }
+
     private static let useLegacyGlass: Bool = RuntimeEnvironment.forceLegacyGlass()
 
     private func makeGlassPane(frame: NSRect, cornerRadius: CGFloat) -> GlassPane {
@@ -2613,6 +2636,111 @@ private enum PasteFallbackPill {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28 + 3.5) {
             close()
         }
+    }
+}
+
+/// Drop-from-menubar pill prompting the user to hit Return to submit the
+/// multi-frame capture. Visually matches `PasteFallbackPill` (same anchor,
+/// same spring animation) but persists indefinitely — the caller must invoke
+/// the returned close handle on submit / cancel / re-arm. Clicking the pill
+/// dismisses it without affecting the session.
+private enum SubmitPromptPill {
+    static func show(on screen: NSScreen) -> () -> Void {
+        let pillWidth: CGFloat = 320
+        let pillHeight: CGFloat = 48
+
+        let x = screen.frame.midX - pillWidth / 2
+        let startFrame = NSRect(x: x, y: screen.frame.maxY, width: pillWidth, height: pillHeight)
+        let landFrame = NSRect(
+            x: x,
+            y: screen.visibleFrame.maxY - 12 - pillHeight,
+            width: pillWidth,
+            height: pillHeight
+        )
+
+        let panel = ClickDismissPillPanel(
+            contentRect: startFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = false
+        panel.isReleasedWhenClosed = false
+        panel.alphaValue = 0
+
+        let container = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
+
+        let pill = NSView(frame: NSRect(origin: .zero, size: startFrame.size))
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.94).cgColor
+        pill.layer?.cornerRadius = pillHeight / 2
+        pill.layer?.shadowColor = NSColor.black.cgColor
+        pill.layer?.shadowOpacity = 0.25
+        pill.layer?.shadowRadius = 8
+        pill.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        container.addSubview(pill)
+
+        let iconSize: CGFloat = 20
+        let iconY = (pillHeight - iconSize) / 2
+        let icon = NSImageView(frame: NSRect(x: 18, y: iconY, width: iconSize, height: iconSize))
+        icon.image = NSImage(systemSymbolName: "paperplane.fill", accessibilityDescription: nil)
+        icon.contentTintColor = .white
+        pill.addSubview(icon)
+
+        let labelX: CGFloat = 18 + iconSize + 10
+        let labelH: CGFloat = 22
+        let labelField = NSTextField(labelWithString: "Hit ↩ to send to Blink")
+        labelField.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        labelField.textColor = .white
+        labelField.frame = NSRect(
+            x: labelX,
+            y: (pillHeight - labelH) / 2,
+            width: pillWidth - labelX - 18,
+            height: labelH
+        )
+        labelField.lineBreakMode = .byTruncatingTail
+        labelField.maximumNumberOfLines = 1
+        labelField.isEditable = false
+        labelField.isSelectable = false
+        labelField.isBordered = false
+        labelField.drawsBackground = false
+        pill.addSubview(labelField)
+
+        var didClose = false
+        let close: () -> Void = { [weak panel] in
+            guard !didClose else { return }
+            didClose = true
+            guard let panel else { return }
+            let exitFrame = NSRect(x: x, y: screen.frame.maxY, width: pillWidth, height: pillHeight)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                panel.animator().setFrame(exitFrame, display: true)
+                panel.animator().alphaValue = 0
+            } completionHandler: {
+                panel.close()
+            }
+        }
+        panel.onClick = close
+
+        panel.orderFrontRegardless()
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.28
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1.0)
+            panel.animator().setFrame(landFrame, display: true)
+            panel.animator().alphaValue = 1
+        }
+
+        return close
     }
 }
 

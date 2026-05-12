@@ -9,13 +9,17 @@ import Combine
 final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let coordinator: BlinkCoordinator
     private let runtimeStore: RuntimeConfigStore
-    private let hotkeyDisplay: String
+    private let hotkey: Hotkey
     private let onShowSettings: () -> Void
 
     private var window: NSWindow?
     private var statusLabel: NSTextField?
     private var modelPopup: NSPopUpButton?
     private var reasoningPopup: NSPopUpButton?
+    // Tracked so we can light up the right cap when its modifier/key fires.
+    private var keycaps: [(part: String, view: KeycapView)] = []
+    private var globalKeyMonitor: Any?
+    private var localKeyMonitor: Any?
 
     private var statusSubscription: AnyCancellable?
     private var modelSubscription: AnyCancellable?
@@ -36,12 +40,12 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     init(
         coordinator: BlinkCoordinator,
         runtimeStore: RuntimeConfigStore,
-        hotkeyDisplay: String,
+        hotkey: Hotkey,
         onShowSettings: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.runtimeStore = runtimeStore
-        self.hotkeyDisplay = hotkeyDisplay
+        self.hotkey = hotkey
         self.onShowSettings = onShowSettings
     }
 
@@ -62,11 +66,12 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         // tear down stale subscriptions before re-subscribing.
         stopSubscriptions()
         startSubscriptions()
+        startKeyMonitor()
     }
 
     private func buildWindow() {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 160),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -74,7 +79,12 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         win.title = "Blink"
         win.isReleasedWhenClosed = false
         win.delegate = self
-        win.setFrameAutosaveName("BlinkControl")
+        // Bumped to `.v2` to invalidate the stale taller frames users had
+        // saved before the content-driven sizing landed. `setFrameAutosaveName`
+        // returns `false` on first launch (nothing to restore), in which case
+        // we center the window instead of leaving it parked at the screen's
+        // bottom-left corner where the contentRect origin (0, 0) lands.
+        let restoredFrame = win.setFrameAutosaveName("BlinkControl.v2")
         if #available(macOS 11.0, *) {
             win.toolbarStyle = .unified
         }
@@ -86,8 +96,16 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         toolbar.displayMode = .iconAndLabel
         win.toolbar = toolbar
 
-        win.contentView = buildContent()
-        win.contentMinSize = NSSize(width: 480, height: 200)
+        let content = buildContent()
+        win.contentView = content
+        // Size the window to the natural fitting height of the content so
+        // there's no dead vertical space under the footer copy.
+        let target = content.fittingSize
+        win.setContentSize(NSSize(width: max(target.width, 520), height: target.height))
+        win.contentMinSize = NSSize(width: 480, height: target.height)
+        if !restoredFrame {
+            win.center()
+        }
         window = win
     }
 
@@ -126,12 +144,35 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         statusLabel = status
         stack.addArrangedSubview(status)
 
-        let hotkeyReminder = NSTextField(labelWithString: "Press \(hotkeyDisplay) anywhere to summarize the focused window.")
-        hotkeyReminder.font = NSFont.systemFont(ofSize: 13)
-        hotkeyReminder.textColor = .secondaryLabelColor
-        hotkeyReminder.maximumNumberOfLines = 2
-        hotkeyReminder.preferredMaxLayoutWidth = 480
-        stack.addArrangedSubview(hotkeyReminder)
+        // Hotkey row: each modifier/key rendered as a keycap badge so the
+        // shortcut is the visual focal point. Sits above a smaller hint line
+        // that explains what the shortcut does.
+        let keycapRow = NSStackView()
+        keycapRow.orientation = .horizontal
+        keycapRow.alignment = .centerY
+        keycapRow.spacing = 6
+        // Required hugging keeps the row tight around its caps — without
+        // this, the parent vertical stack stretches the row to its leading
+        // width and `distribution = .fill` blows up the first cap.
+        keycapRow.setHuggingPriority(.required, for: .horizontal)
+        keycaps.removeAll()
+        for part in hotkey.displayParts {
+            let cap = KeycapView(label: part)
+            keycapRow.addArrangedSubview(cap)
+            keycaps.append((part: part, view: cap))
+        }
+
+        let hotkeyHint = NSTextField(labelWithString: "Press anywhere to summarize the focused window.")
+        hotkeyHint.font = NSFont.systemFont(ofSize: 13)
+        hotkeyHint.textColor = .secondaryLabelColor
+        hotkeyHint.maximumNumberOfLines = 2
+        hotkeyHint.preferredMaxLayoutWidth = 480
+
+        let hotkeyBlock = NSStackView(views: [keycapRow, hotkeyHint])
+        hotkeyBlock.orientation = .vertical
+        hotkeyBlock.alignment = .leading
+        hotkeyBlock.spacing = 8
+        stack.addArrangedSubview(hotkeyBlock)
 
         let footer = NSTextField(wrappingLabelWithString:
             "Summaries and suggestions are stored to improve Blink; "
@@ -152,9 +193,153 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
             stack.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             stack.topAnchor.constraint(equalTo: host.topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor),
+            // Equality pins the host's height to the stack's natural height
+            // so the window content view shrinks to fit, no dead space below.
+            stack.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
         return host
+    }
+
+    /// A small rounded "keycap" badge that renders a single modifier or key
+    /// glyph and animates between a resting and a pressed appearance. Stacked
+    /// horizontally to display a hotkey (e.g. ⌃ ⌥ Space) as a row of visual
+    /// keys rather than inline text.
+    fileprivate final class KeycapView: NSView {
+        private let field: NSTextField
+        private var pressed: Bool = false
+
+        init(label: String) {
+            self.field = NSTextField(labelWithString: label)
+            super.init(frame: .zero)
+
+            field.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+            field.alignment = .center
+            field.isBordered = false
+            field.drawsBackground = false
+            field.isEditable = false
+            field.isSelectable = false
+            field.translatesAutoresizingMaskIntoConstraints = false
+
+            wantsLayer = true
+            translatesAutoresizingMaskIntoConstraints = false
+            layer?.cornerRadius = 6
+            layer?.borderWidth = 0.5
+            addSubview(field)
+
+            NSLayoutConstraint.activate([
+                heightAnchor.constraint(equalToConstant: 28),
+                // Pin the cap's width to the glyph's intrinsic width plus 10pt
+                // of horizontal padding on each side. Without this hard
+                // equality the parent stack stretches the cap to fill the
+                // leftover space — which is what made `⌃` span the window.
+                widthAnchor.constraint(equalTo: field.widthAnchor, constant: 20),
+                // Floor: keep narrow caps from collapsing below the cap's
+                // height (so single-char glyphs still read as a square badge).
+                widthAnchor.constraint(greaterThanOrEqualTo: heightAnchor),
+                field.centerYAnchor.constraint(equalTo: centerYAnchor),
+                field.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ])
+
+            applyAppearance(animated: false)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("KeycapView not coder-compatible") }
+
+        func setPressed(_ value: Bool) {
+            guard pressed != value else { return }
+            pressed = value
+            applyAppearance(animated: true)
+        }
+
+        private func applyAppearance(animated: Bool) {
+            let bg = pressed
+                ? NSColor.systemBlue.withAlphaComponent(0.92).cgColor
+                : NSColor.controlBackgroundColor.withAlphaComponent(0.7).cgColor
+            let border = pressed
+                ? NSColor.systemBlue.cgColor
+                : NSColor.separatorColor.cgColor
+            let textColor: NSColor = pressed ? .white : .labelColor
+
+            let apply: () -> Void = { [weak self] in
+                guard let self else { return }
+                self.layer?.backgroundColor = bg
+                self.layer?.borderColor = border
+                self.field.textColor = textColor
+            }
+            if animated {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.12
+                    ctx.allowsImplicitAnimation = true
+                    apply()
+                }
+            } else {
+                apply()
+            }
+        }
+    }
+
+    // MARK: - Live key-press feedback
+
+    private func startKeyMonitor() {
+        stopKeyMonitor()
+        let mask: NSEvent.EventTypeMask = [.flagsChanged, .keyDown, .keyUp]
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            // Global monitor fires when Blink is NOT frontmost — exactly the
+            // case the user cares about, since the hotkey is global.
+            MainActor.assumeIsolated { self?.handleKeyEvent(event) }
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            MainActor.assumeIsolated { self?.handleKeyEvent(event) }
+            return event
+        }
+    }
+
+    private func stopKeyMonitor() {
+        if let token = globalKeyMonitor {
+            NSEvent.removeMonitor(token)
+            globalKeyMonitor = nil
+        }
+        if let token = localKeyMonitor {
+            NSEvent.removeMonitor(token)
+            localKeyMonitor = nil
+        }
+        // Reset everything to unpressed when monitoring stops so the next
+        // show() doesn't briefly flash stale state from the prior session.
+        for (_, cap) in keycaps { cap.setPressed(false) }
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let hotkeyKeyCode = UInt16(hotkey.keyCode)
+        for (part, cap) in keycaps {
+            if let modifier = Self.modifierFlag(forPart: part) {
+                cap.setPressed(flags.contains(modifier))
+            } else {
+                // Non-modifier (the actual key) — track its keyDown/keyUp.
+                // flagsChanged events don't carry a meaningful keyCode for
+                // non-modifier caps, so we ignore them here.
+                switch event.type {
+                case .keyDown where event.keyCode == hotkeyKeyCode:
+                    cap.setPressed(true)
+                case .keyUp where event.keyCode == hotkeyKeyCode:
+                    cap.setPressed(false)
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    private static func modifierFlag(forPart part: String) -> NSEvent.ModifierFlags? {
+        switch part {
+        case "⌃": return .control
+        case "⌥": return .option
+        case "⇧": return .shift
+        case "⌘": return .command
+        case "fn": return .function
+        default: return nil
+        }
     }
 
     private func rebuildModelPopup(_ popup: NSPopUpButton, current: String) {
@@ -242,6 +427,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
 
     func windowWillClose(_ notification: Notification) {
         stopSubscriptions()
+        stopKeyMonitor()
     }
 
     // MARK: - NSToolbarDelegate

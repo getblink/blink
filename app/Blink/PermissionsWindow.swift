@@ -214,14 +214,16 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         explainer.font = NSFont.systemFont(ofSize: 12)
         explainer.textColor = .secondaryLabelColor
         explainer.maximumNumberOfLines = 2
-        // Force wrap below actual column width so the longer copy lines
-        // ("…before it can summarize it.", "…paste your selected reply.")
-        // break to a second line instead of getting clipped at the right
-        // edge of the text column.
-        explainer.preferredMaxLayoutWidth = 360
+        // `preferredMaxLayoutWidth` alone isn't enough — the parent stack has
+        // low hugging priority and stretches the label wider, at which point
+        // AppKit happily renders a single line right up to the frame edge and
+        // clips. A hard max-width constraint forces the longer strings
+        // ("…paste your selected reply.") onto a second line every time.
+        explainer.preferredMaxLayoutWidth = 320
         explainer.lineBreakMode = .byWordWrapping
         explainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         explainer.setContentCompressionResistancePriority(.required, for: .vertical)
+        explainer.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
 
         let textStack = NSStackView(views: [title, explainer])
         textStack.orientation = .vertical
@@ -246,7 +248,10 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         row.alignment = .centerY
         row.spacing = 16
         row.distribution = .fill
-        row.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        // Top/bottom are bumped past the "frame" target to compensate for the
+        // NSTextField leading/descender space — 28pt of frame inset ≈ 22pt of
+        // visible whitespace between the rounded border and the glyphs.
+        row.edgeInsets = NSEdgeInsets(top: 28, left: 20, bottom: 28, right: 20)
         row.translatesAutoresizingMaskIntoConstraints = false
         row.setHuggingPriority(.defaultLow, for: .horizontal)
         row.wantsLayer = true
@@ -271,7 +276,10 @@ final class PermissionsWindowController: NSObject, NSWindowDelegate {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 22
-        stack.edgeInsets = NSEdgeInsets(top: 32, left: 32, bottom: 32, right: 32)
+        // Top inset is small because the titlebar already provides visual
+        // separation from the chrome above; horizontal stays generous for
+        // breathing room on either side of the cards.
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 40, bottom: 28, right: 40)
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }

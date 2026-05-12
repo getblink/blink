@@ -383,6 +383,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         status(statusText)
         DispatchQueue.main.async {
             self.overlay.close()
+            self.overlay.dismissSubmitPrompt()
         }
     }
 
@@ -708,6 +709,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         active.collectingTimer?.cancel()
         session = nil
         setCollectingActive(false)
+        DispatchQueue.main.async { [weak self] in self?.overlay.dismissSubmitPrompt() }
         dispatchSubmit(active)
     }
 
@@ -787,14 +789,48 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard var active = session, active.requestID == requestID else { return }
         active.collectingTimer?.cancel()
         setCollectingActive(true)
+        // A prior timeout may have already surfaced the submit-prompt pill.
+        // Adding another frame restarts the collecting window, so dismiss it
+        // — the standard "Collecting" overlay panel will resume.
+        DispatchQueue.main.async { [weak self] in self?.overlay.dismissSubmitPrompt() }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .seconds(collectingTimeoutSeconds))
         timer.setEventHandler { [weak self] in
-            self?.submitSession()
+            self?.promptSubmitOnTimeout(requestID: requestID)
         }
         active.collectingTimer = timer
         session = active
         timer.resume()
+    }
+
+    /// Fired by the collecting timer instead of auto-submitting. Keeps the
+    /// session alive and drops the "Hit ↩ to send to tl;dr" pill so the
+    /// user can press Return (submit), Esc (cancel), or the hotkey again
+    /// (add another frame).
+    private func promptSubmitOnTimeout(requestID: String) {
+        // Timer source runs on `queue` — same queue all session state is
+        // touched from. Re-check requestID in case the session was already
+        // replaced or cancelled before the timer fired.
+        guard var active = session, active.requestID == requestID else { return }
+        active.collectingTimer?.cancel()
+        active.collectingTimer = nil
+        session = active
+        status("waiting on Return")
+        let thumbnails = active.frames.compactMap(\.thumbnail)
+        let frameCount = active.frames.count
+        let maxFrames = self.maxCapturedFrames
+        let hotkeyDisplay = self.summaryHotkey.displayString
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.overlay.showCollecting(
+                frameCount: frameCount,
+                maxFrames: maxFrames,
+                hotkeyDisplay: hotkeyDisplay,
+                thumbnails: thumbnails,
+                message: "Ready — press Return"
+            )
+            self.overlay.showSubmitPrompt()
+        }
     }
 
     private func frameInfo(_ frame: CapturedFrame) -> CaptureModeDeriver.FrameInfo {
