@@ -258,7 +258,10 @@ class BetaSignupTests(unittest.TestCase):
         self.assertEqual(len(self.store.rows), 1)
         self.assertIsNone(self.store.rows[0]["referrer_signup_id"])
 
-    def test_self_referral_by_ip_hash_is_dropped(self) -> None:
+    def test_same_ip_referral_is_allowed(self) -> None:
+        # Shared IPs (households, offices, campus Wi-Fi) are common, so we
+        # do not treat a matching ip_hash as self-referral. Only the email
+        # guard fires.
         first = self.client.post(
             "/v1/beta-signup",
             json={"email": "first@example.com"},
@@ -272,7 +275,7 @@ class BetaSignupTests(unittest.TestCase):
         )
         self.assertEqual(second.status_code, 200)
         self.assertEqual(self.store.rows[1]["email_normalized"], "second@example.com")
-        self.assertIsNone(self.store.rows[1]["referrer_signup_id"])
+        self.assertEqual(self.store.rows[1]["referrer_signup_id"], referrer_id)
 
     def test_discord_webhook_includes_referrer_when_ref_valid(self) -> None:
         with mock.patch.dict(
