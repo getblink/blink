@@ -4,6 +4,7 @@ __pycache__/
 .env*
 !.env.example
 !.env.production.example
+!.env.development.example
 !server/.env.example
 !site/.env.example
 .context/

@@ -14,6 +14,9 @@
 #   .env.production  — production proxy URL/token embedded by release.sh.
 #                      Optional; backfilled into workspaces that don't
 #                      have it yet, since this file was added later.
+#   .env.development — Astro dev-mode override that points the landing
+#                      page at the staging Railway backend during
+#                      `npm run dev`. Optional; backfilled.
 #
 # Usage:
 #   .conductor/sync_env.sh            # actually sync
@@ -80,6 +83,7 @@ sync_one() {
 
 shopt -s nullglob
 for ws in "$WORKSPACES_DIR"/*/; do
-  sync_one "$CENTRAL_DIR/.env"            "$ws" ".env"            1
-  sync_one "$CENTRAL_DIR/.env.production" "$ws" ".env.production" 0
+  sync_one "$CENTRAL_DIR/.env"             "$ws" ".env"             1
+  sync_one "$CENTRAL_DIR/.env.production"  "$ws" ".env.production"  0
+  sync_one "$CENTRAL_DIR/.env.development" "$ws" ".env.development" 0
 done
