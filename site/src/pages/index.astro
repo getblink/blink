@@ -9,6 +9,10 @@ const description =
 const betaSignupUrl =
   import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
   "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
+// Canonical share-link origin — sourced from astro.config.mjs `site` so
+// the dev server doesn't bake localhost into copied/tweeted referral
+// links. Falls back to location.origin client-side if unset.
+const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
 const parseUrls = (raw: string) =>
   raw
     .split(",")
@@ -52,6 +56,7 @@ const desktopDemoUrls = parseUrls(
           data-state="idle"
           data-mode="collapsed"
           data-endpoint={betaSignupUrl}
+          data-share-origin={shareOrigin}
         >
           <button
             class="signup__open"
@@ -96,13 +101,30 @@ const desktopDemoUrls = parseUrls(
           <p class="status status--rate">too many tries. give it a minute.</p>
           <div class="share" data-met="false" hidden>
             <p class="share__goal">
-              <span class="share__check" aria-hidden="true"></span>
+              <span class="share__check" aria-hidden="true">
+                <svg
+                  class="share__check-mark"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path>
+                </svg>
+              </span>
               <span class="share__goal-text"
                 >refer 1 friend to skip the line</span
               >
               <span class="share__goal-text--met"
-                >referred 1 friend — you're in line for the next batch.</span
+                >referred 1 friend. you're in line for the next batch.</span
               >
+            </p>
+            <p class="share__email" hidden>
+              signed up as <span class="share__email-value"></span>
             </p>
             <div class="share__row">
               <input
@@ -517,13 +539,24 @@ const desktopDemoUrls = parseUrls(
     }
 
     .share__check {
-      width: 12px;
-      height: 12px;
+      width: 14px;
+      height: 14px;
       border: 1px solid var(--fg);
       box-sizing: border-box;
-      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       flex: 0 0 auto;
+      align-self: center;
       transition: background 160ms ease, border-color 160ms ease;
+    }
+
+    .share__check-mark {
+      width: 100%;
+      height: 100%;
+      color: var(--bg);
+      opacity: 0;
+      transition: opacity 160ms ease;
     }
 
     .share[data-met="true"] .share__check {
@@ -531,16 +564,24 @@ const desktopDemoUrls = parseUrls(
       border-color: var(--accent);
     }
 
-    .share[data-met="true"] .share__check::after {
-      content: "";
-      position: absolute;
-      left: 2px;
-      top: -1px;
-      width: 4px;
-      height: 8px;
-      border: solid var(--bg);
-      border-width: 0 2px 2px 0;
-      transform: rotate(45deg);
+    .share[data-met="true"] .share__check-mark {
+      opacity: 1;
+    }
+
+    .share__email {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--fg-muted);
+      margin: 0;
+    }
+
+    .share__email[hidden] {
+      display: none;
+    }
+
+    .share__email-value {
+      color: var(--fg);
+      font-weight: 600;
     }
 
     .share__goal-text--met {
@@ -743,6 +784,11 @@ const desktopDemoUrls = parseUrls(
   <script type="module">
     const form = document.querySelector(".signup");
     const endpoint = form?.dataset.endpoint;
+    // Canonical share-link origin baked in at build time from Astro.site.
+    // Falls back to location.origin so dev/preview keeps working.
+    const shareOrigin =
+      (form?.dataset.shareOrigin || "").replace(/\/$/, "") ||
+      location.origin;
     const openButton = form?.querySelector(".signup__open");
     const emailInput = form?.querySelector('input[type="email"]');
     const share = form?.querySelector(".share");
@@ -750,11 +796,14 @@ const desktopDemoUrls = parseUrls(
     const shareCopyButton = share?.querySelector(".share__copy");
     const shareCopyLabel = share?.querySelector(".share__copy-label");
     const shareTweetLink = share?.querySelector(".share__tweet");
+    const shareEmailRow = share?.querySelector(".share__email");
+    const shareEmailValue = share?.querySelector(".share__email-value");
     const statsBase = endpoint
       ? endpoint.replace(/\/+$/, "")
       : "";
     const SIGNUP_ID_RE = /^[0-9a-f]{32}$/;
     const STORAGE_KEY = "blink:signup_id";
+    const STORAGE_EMAIL_KEY = "blink:signup_email";
     const readStoredSignupId = () => {
       try {
         const value = localStorage.getItem(STORAGE_KEY) || "";
@@ -766,6 +815,18 @@ const desktopDemoUrls = parseUrls(
     const writeStoredSignupId = (signupId) => {
       try {
         localStorage.setItem(STORAGE_KEY, signupId);
+      } catch {}
+    };
+    const readStoredEmail = () => {
+      try {
+        return localStorage.getItem(STORAGE_EMAIL_KEY) || "";
+      } catch {
+        return "";
+      }
+    };
+    const writeStoredEmail = (email) => {
+      try {
+        localStorage.setItem(STORAGE_EMAIL_KEY, email);
       } catch {}
     };
     const incomingRef = (() => {
@@ -786,17 +847,25 @@ const desktopDemoUrls = parseUrls(
     let currentSignupId = "";
     let goalMetCaptured = false;
 
-    const showShareRow = (signupId) => {
+    const showShareRow = (signupId, email) => {
       if (!share || !shareUrlInput || !shareTweetLink) return;
       currentSignupId = signupId;
-      const shareUrl = `${location.origin}/?ref=${signupId}`;
+      const shareUrl = `${shareOrigin}/?ref=${signupId}`;
       shareUrlInput.value = shareUrl;
-      const tweetText = "just joined the blink beta — reads your screen, writes the rest.";
+      const tweetText =
+        "just joined the blink beta. reads your screen, writes the rest.";
       shareTweetLink.href =
         "https://twitter.com/intent/tweet?text=" +
         encodeURIComponent(tweetText) +
         "&url=" +
         encodeURIComponent(shareUrl);
+      const resolvedEmail = (email || readStoredEmail()).trim();
+      if (resolvedEmail && shareEmailRow && shareEmailValue) {
+        shareEmailValue.textContent = resolvedEmail;
+        shareEmailRow.hidden = false;
+      } else if (shareEmailRow) {
+        shareEmailRow.hidden = true;
+      }
       share.hidden = false;
       share.dataset.met = "false";
       share.dataset.copied = "false";
@@ -886,9 +955,10 @@ const desktopDemoUrls = parseUrls(
       window.posthog?.capture("beta_signup_submitted", {
         source: "useblink.dev",
       });
+      const submittedEmail = String(data.get("email") || "").trim();
       try {
         const body = {
-          email: String(data.get("email") || ""),
+          email: submittedEmail,
           hp: String(data.get("hp") || ""),
           source: "useblink.dev",
         };
@@ -937,7 +1007,8 @@ const desktopDemoUrls = parseUrls(
           }
           if (signupId && SIGNUP_ID_RE.test(signupId)) {
             writeStoredSignupId(signupId);
-            showShareRow(signupId);
+            if (submittedEmail) writeStoredEmail(submittedEmail);
+            showShareRow(signupId, submittedEmail);
           }
         } else {
           form.dataset.state = "error-network";
