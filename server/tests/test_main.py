@@ -107,8 +107,8 @@ class MainTests(unittest.TestCase):
 
         def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
             self.assertEqual(kwargs["settings"]["model"], "gemini-3.1-flash-lite-preview")
-            self.assertEqual(kwargs["settings"]["temperature"], 0.3)
-            self.assertEqual(kwargs["settings"]["max_output_tokens"], 640)
+            self.assertEqual(kwargs["settings"]["temperature"], gemini.DEFAULT_SETTINGS["temperature"])
+            self.assertEqual(kwargs["settings"]["max_output_tokens"], gemini.DEFAULT_SETTINGS["max_output_tokens"])
             return {
                 "status": "ok",
                 "tldr": "You're in Messages.",
@@ -819,7 +819,7 @@ class MainTests(unittest.TestCase):
                         {"text": "Three", "tags": ["Next"]},
                     ],
                 },
-                {"role": "user", "kind": "reroll", "text": "fresh please"},
+                {"role": "user", "kind": "reroll", "text": "stale prompt text from older deploy"},
             ],
         )
 
@@ -827,7 +827,148 @@ class MainTests(unittest.TestCase):
         self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
         self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
         self.assertIn("suggestions", contents[1].parts[0]["text"])
-        self.assertEqual(contents[2].parts, [{"text": "fresh please"}])
+        self.assertEqual(contents[2].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+
+    def test_gemini_conversation_contents_initial_gen_returns_single_user_content(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            None,
+        )
+
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(contents[0].role, "user")
+        self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
+        self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
+
+    def test_gemini_conversation_contents_reroll_default_text_is_reroll_content_text(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "One", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll"},
+            ],
+        )
+
+        self.assertEqual(contents[-1].role, "user")
+        self.assertEqual(contents[-1].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+        self.assertNotEqual(contents[-1].parts, [{"text": gemini.MODEL_CONTENT_TEXT}])
+
+    def test_gemini_conversation_contents_multi_reroll_keeps_reroll_as_final_turn(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "One", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll", "text": "stale prompt text from older deploy"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "Two", "tags": ["Reply"]}],
+                },
+                {"role": "user", "kind": "reroll"},
+            ],
+        )
+
+        self.assertEqual([c.role for c in contents], ["user", "model", "user", "model", "user"])
+        image_bearing = [
+            c for c in contents
+            if c.role == "user" and any(isinstance(p, dict) and "bytes" in p for p in c.parts)
+        ]
+        self.assertEqual(len(image_bearing), 1)
+        self.assertEqual(contents[-1].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+        self.assertEqual(contents[2].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
+
+    def test_gemini_prompt_with_context_single_preference_example_no_verb_menu(self) -> None:
+        prompt = gemini.prompt_with_context(
+            "Base.",
+            {
+                "preference_examples": [
+                    {
+                        "screen_takeaway": "Agent offered low-risk plan.",
+                        "rejected_suggestions": ["Sounds good.", "I agree."],
+                        "user_typed": "please run the tests first",
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("please run the tests first", prompt)
+        self.assertNotIn("Preference lesson:", prompt)
+        self.assertNotIn("evidence requests", prompt)
+        self.assertNotIn("premise checks", prompt)
+        self.assertNotIn("clarifying questions", prompt)
 
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
@@ -1200,129 +1341,32 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("requested_model_disallowed", response.json()["warnings"])
 
-    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
-    @mock.patch("server.main.gemini.create_client")
-    def test_v1_tldr_propagates_thinking_level_preference(
-        self,
-        create_client: mock.Mock,
-        generate: mock.Mock,
-    ) -> None:
-        create_client.return_value = object()
-
-        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
-            self.assertEqual(kwargs["settings"].get("thinking_level"), "high")
-            return {
-                "status": "ok",
-                "tldr": "ok",
-                "suggestions": ["a", "b", "c"],
-                "duration_ms": 1,
-                "usage": None,
-                "model": "gemini-3.1-flash-lite-preview",
-            }
-
-        generate.side_effect = fake_generate
-
-        response = self.client.post(
-            "/v1/tldr",
-            headers={"Authorization": "Bearer dev-token"},
-            data={
-                "request": json.dumps(
-                    {
-                        "request_id": "req-thinking",
-                        "input_mode": "screenshot",
-                        "preferences": {"thinking_level": "HIGH"},
-                    }
-                )
-            },
-            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["warnings"], [])
-
-    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
-    @mock.patch("server.main.gemini.create_client")
-    def test_v1_tldr_warns_on_disallowed_thinking_level(
-        self,
-        create_client: mock.Mock,
-        generate: mock.Mock,
-    ) -> None:
-        create_client.return_value = object()
-
-        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
-            self.assertNotIn("thinking_level", kwargs["settings"])
-            return {
-                "status": "ok",
-                "tldr": "ok",
-                "suggestions": ["a", "b", "c"],
-                "duration_ms": 1,
-                "usage": None,
-                "model": "gemini-3.1-flash-lite-preview",
-            }
-
-        generate.side_effect = fake_generate
-
-        response = self.client.post(
-            "/v1/tldr",
-            headers={"Authorization": "Bearer dev-token"},
-            data={
-                "request": json.dumps(
-                    {
-                        "request_id": "req-thinking-bad",
-                        "input_mode": "screenshot",
-                        "preferences": {"thinking_level": "ludicrous"},
-                    }
-                )
-            },
-            files={"screenshot": ("screen.png", b"png-bytes", "image/png")},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("requested_thinking_level_disallowed", response.json()["warnings"])
-
-    def test_selected_settings_accepts_each_thinking_level(self) -> None:
-        for raw, expected in [
-            ("low", "low"),
-            ("medium", "medium"),
-            ("high", "high"),
-            ("HIGH", "high"),
-            ("  Medium  ", "medium"),
-        ]:
-            warnings: list[str] = []
-            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
-            self.assertEqual(settings.get("thinking_level"), expected, raw)
-            self.assertEqual(warnings, [], raw)
-
-    def test_selected_settings_silently_ignores_empty_thinking_level(self) -> None:
-        for raw in ["", "   "]:
-            warnings: list[str] = []
-            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
-            self.assertNotIn("thinking_level", settings)
-            self.assertEqual(warnings, [], repr(raw))
-
-    def test_selected_settings_silently_ignores_non_string_thinking_level(self) -> None:
-        for raw in [1, True, None, ["high"], {"value": "high"}]:
-            warnings: list[str] = []
-            settings = _selected_settings({"preferences": {"thinking_level": raw}}, warnings)
-            self.assertNotIn("thinking_level", settings)
-            self.assertEqual(warnings, [], repr(raw))
-
-    def test_selected_settings_warns_on_unknown_thinking_level(self) -> None:
+    def test_selected_settings_ignores_client_sampling_overrides(self) -> None:
         warnings: list[str] = []
         settings = _selected_settings(
-            {"preferences": {"thinking_level": "ludicrous"}}, warnings
+            {
+                "preferences": {
+                    "temperature": 0.3,
+                    "max_output_tokens": 640,
+                    "thinking_level": "high",
+                }
+            },
+            warnings,
         )
-        self.assertNotIn("thinking_level", settings)
-        self.assertEqual(warnings, ["requested_thinking_level_disallowed"])
-
-    def test_selected_settings_omits_thinking_level_when_absent(self) -> None:
-        warnings: list[str] = []
-        settings = _selected_settings({"preferences": {}}, warnings)
+        self.assertEqual(settings["temperature"], gemini.DEFAULT_SETTINGS["temperature"])
+        self.assertEqual(
+            settings["max_output_tokens"], gemini.DEFAULT_SETTINGS["max_output_tokens"]
+        )
         self.assertNotIn("thinking_level", settings)
         self.assertEqual(warnings, [])
 
-        warnings = []
+    def test_selected_settings_defaults_when_preferences_absent(self) -> None:
+        warnings: list[str] = []
         settings = _selected_settings({}, warnings)
+        self.assertEqual(settings["temperature"], gemini.DEFAULT_SETTINGS["temperature"])
+        self.assertEqual(
+            settings["max_output_tokens"], gemini.DEFAULT_SETTINGS["max_output_tokens"]
+        )
         self.assertNotIn("thinking_level", settings)
         self.assertEqual(warnings, [])
 
