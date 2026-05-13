@@ -32,6 +32,12 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Do not add background daemons, hotkeys, or polished UI until manual value is proven.
 - Favor additive iteration with clear experiment boundaries; do not delete prior learning artifacts unless explicitly requested.
 - Keep deployed protocol surfaces stable: `/v1/tldr`, `tldr_*` tables/caches, and `tldr_dt_*` token prefixes are deliberately frozen v1 names.
+- Land changes via short-lived branches → PR to `main`. Don't commit directly to `staging`; it's a Railway deploy mirror that gets fast-set from `main` (`git push origin +origin/main:staging`). See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy).
+- Rebuilds and deploys are independent: `install_local_app.sh` only rebuilds the app; pushing `staging` only redeploys the server. Changes touching both need both.
+- Runtime config has *two-copy* footguns. The loaded file beats the in-code default:
+  - Prompts: edit `server/prompt.txt` and `app/Resources/prompt.txt` together (parity test enforces).
+  - Sampling: server-owned. Tune `server/gemini.py:DEFAULT_SETTINGS` and redeploy; client `preferences.temperature`/`max_output_tokens`/`thinking_level` are ignored by `_selected_settings`.
+  - Gemini 3 `thinking_level` + `max_output_tokens` share one budget; `high` thinking truncates short-response JSON. We're on `"low"` with 4096 tokens.
 - When debugging Conductor hooks, check `.context/conductor/setup-receipt.json` and `~/conductor/archive/blink/_archive_runs.jsonl` before assuming setup or archive failed.
 - When rotating credentials or adding env vars, edit `~/conductor/repos/blink/.env` (the canonical source) and then run `~/conductor/repos/blink/.conductor/sync_env.sh` to propagate to existing workspaces. New workspaces inherit it automatically via `setup.sh`.
 - When validating `app/` locally, use `bash app/scripts/install_local_app.sh` and launch only `~/Applications/Blink.app`. Do not run Blink from `DerivedData` or `app/build`.

@@ -114,6 +114,40 @@ The script backs up each workspace's existing `.env` to `.env.bak.<timestamp>` b
 
 `.env` and `.env.bak.*` files are gitignored under the root `.gitignore` `.env*` rule and are intentionally **not** preserved by `.conductor/archive.sh` when a workspace is torn down. They get rebuilt from central on the next workspace creation.
 
+## Branch strategy
+
+`main` is the source of truth. `staging` exists only as a deploy mirror for Railway — it should track `main` exactly except during deliberate server-only previews.
+
+Workflow:
+
+1. Branch off `main` for any change: `git checkout -B my-change origin/main`.
+2. Open a PR to `main`. Don't commit directly to `staging`.
+3. After merge, fast-set `staging` to the new `main` tip when you want the server to redeploy:
+
+   ```bash
+   git push origin +origin/main:staging
+   ```
+
+   (You can also use the GitHub UI: delete the `staging` branch and recreate from `main`.)
+
+If you need to ship a server-only change ahead of a full main release, that's the one valid exception: push the change to a branch, then fast-set `staging` to that branch's tip. Cherry-pick or merge back to `main` as soon as the preview is validated, then re-mirror `staging`.
+
+Anti-pattern this replaces: pushing WIP directly to `staging` and periodically squash-merging chunks into `main`. That accumulates phantom commit history on `staging` and produces a strict subset of `main`'s product surface — staging dogfooders end up testing a degraded build (e.g., missing UI refactors that only landed on `main` via numbered PRs). If you find `staging` has drifted, archive its tip with a tag (`git tag staging-archive-YYYY-MM-DD origin/staging && git push origin staging-archive-YYYY-MM-DD`) before forcing it back to `main`.
+
+## What lives where (so you don't edit the fallback)
+
+A few config and prompt surfaces have *two copies* — the loaded value at runtime is not the in-code default. Edit both or your change won't take effect:
+
+- **Prompt:** `server/prompt.txt` and `app/Resources/prompt.txt` must stay byte-identical (enforced by `app/python/tests/test_prompt_parity.py`). `DEFAULT_PROMPT` in `app/python/blink_once.py` is only a fallback if the file is missing.
+- **Settings:** `app/Resources/settings.json` is bundled into the macOS app. `DEFAULT_SETTINGS` in both `app/python/blink_once.py` and `server/gemini.py` is only a fallback. The runtime override at `~/.blink/settings.json` (if present) shadows the bundle.
+- **Sampling parameters are server-owned.** `server/main.py:_selected_settings` ignores client-supplied `temperature`, `max_output_tokens`, and `thinking_level`. Tuning these means editing `server/gemini.py:DEFAULT_SETTINGS` (or the `_for_model` overrides) and redeploying — not bumping `app/Resources/settings.json`. The client-side `settings.json` only matters for the local-Gemini fallback path where the proxy is disabled.
+
+## Server vs client deploy: they're independent
+
+- `bash app/scripts/install_local_app.sh` only rebuilds the macOS app bundle. It does NOT redeploy the server.
+- Pushing to the `staging` branch triggers a Railway server deploy. It does NOT update the bundled macOS app.
+- When a change touches both sides (`server/*` and `app/Resources/*` or `app/python/*`), you need both: push to `staging` (or merge to `main` and re-mirror) AND rebuild the local app. Otherwise dogfood will show a half-deployed mix.
+
 ## Repository Map
 
 - `docs/` contains product, artifact, dogfood, manual-playbook, and experiment records.
