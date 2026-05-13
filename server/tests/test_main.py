@@ -1370,7 +1370,7 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("thinking_level", settings)
         self.assertEqual(warnings, [])
 
-    def test_generate_config_uses_default_medium_for_thinking_model_without_override(self) -> None:
+    def test_generate_config_uses_default_low_for_thinking_model_without_override(self) -> None:
         captured_thinking: dict[str, Any] = {}
 
         class FakeThinkingConfig:
@@ -1397,7 +1397,7 @@ class MainTests(unittest.TestCase):
                 "PROMPT",
             )
 
-        self.assertEqual(captured_thinking, {"thinking_level": "medium"})
+        self.assertEqual(captured_thinking, {"thinking_level": "low"})
 
     def test_generate_config_uses_client_thinking_level_override(self) -> None:
         captured_thinking: dict[str, Any] = {}
