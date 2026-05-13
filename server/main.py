@@ -522,22 +522,6 @@ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[st
             settings["model"] = requested_model
         else:
             warnings.append("requested_model_disallowed")
-
-    temperature = preferences.get("temperature")
-    if isinstance(temperature, (int, float)):
-        settings["temperature"] = float(temperature)
-
-    max_output_tokens = preferences.get("max_output_tokens")
-    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
-        settings["max_output_tokens"] = max_output_tokens
-
-    thinking_level = preferences.get("thinking_level")
-    if isinstance(thinking_level, str):
-        candidate = thinking_level.strip().lower()
-        if candidate in {"low", "medium", "high"}:
-            settings["thinking_level"] = candidate
-        elif candidate:
-            warnings.append("requested_thinking_level_disallowed")
     return settings
 
 

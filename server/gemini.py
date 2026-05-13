@@ -88,15 +88,17 @@ def _is_thinking_model(model: str) -> bool:
 def thinking_level_for_model(model: str) -> str | None:
     """Return the thinking_level for a model, or None to omit it.
 
-    "high" is the Google-documented default for Gemini 3 Flash/Pro. "minimal"
-    is avoided: Flash hallucinates its own model name at that level.
+    "medium" gives bounded reasoning headroom. "high" greedily expands to fill
+    max_output_tokens on Gemini 3 (documented behavior), which truncates the
+    JSON output for short-response tasks. "minimal" is avoided: Flash
+    hallucinates its own model name at that level.
     """
-    return "high" if _is_thinking_model(model) else None
+    return "medium" if _is_thinking_model(model) else None
 
 
 def max_output_tokens_for_model(model: str) -> int | None:
     """Per-model override for max_output_tokens, or None to honor settings."""
-    return 2048 if _is_thinking_model(model) else None
+    return 4096 if _is_thinking_model(model) else None
 
 
 def media_resolution_for_model(model: str, base: str) -> str:
