@@ -88,12 +88,14 @@ def _is_thinking_model(model: str) -> bool:
 def thinking_level_for_model(model: str) -> str | None:
     """Return the thinking_level for a model, or None to omit it.
 
-    "medium" gives bounded reasoning headroom. "high" greedily expands to fill
-    max_output_tokens on Gemini 3 (documented behavior), which truncates the
-    JSON output for short-response tasks. "minimal" is avoided: Flash
-    hallucinates its own model name at that level.
+    "low" matches the task (a quick screen summary + 3 reply suggestions is
+    closer to "simple instruction following" than complex reasoning). Diversity
+    comes from temperature=1.0 and the reroll-instruction rewrite, not thinking
+    depth. "high" greedily fills max_output_tokens on Gemini 3 and "medium"
+    still burned ~2400 tokens on this task in dogfood. "minimal" is avoided:
+    Flash has historically hallucinated its own model name at that level.
     """
-    return "medium" if _is_thinking_model(model) else None
+    return "low" if _is_thinking_model(model) else None
 
 
 def max_output_tokens_for_model(model: str) -> int | None:
