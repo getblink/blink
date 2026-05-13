@@ -229,6 +229,20 @@ curl -X POST \
 
 ## Railway deploy
 
+Railway's staging environment deploys from the `staging` branch. `staging`
+should track `main` exactly except during deliberate server-only previews —
+see [`docs/CONTRIBUTING_INTERNAL.md`](../docs/CONTRIBUTING_INTERNAL.md#branch-strategy)
+for the branch workflow. To trigger a server redeploy from the current `main`:
+
+```bash
+git fetch origin main
+git push origin +origin/main:staging
+```
+
+If you need a server-only preview ahead of merging to `main` (rare), push the
+preview branch's tip to `staging` instead, dogfood, then either merge to `main`
+and re-mirror or revert `staging` to `main`'s tip.
+
 Most build/deploy settings live in [`railway.json`](railway.json). For a new
 or existing Railway service, the remaining one-time dashboard wiring is:
 

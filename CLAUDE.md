@@ -30,3 +30,22 @@ cd site && npm run build
 ```
 
 For public Sparkle releases, use `app/scripts/release.sh` and verify the log contains both `[blink] stamping SUFeedURL=...` and `[blink] stamping SUPublicEDKey ...`.
+
+## Branches & deploys
+
+`main` is the source of truth. Land changes via short-lived branches → PR to `main`. `staging` exists only as a Railway deploy mirror — fast-set it from `main` after merge (`git push origin +origin/main:staging`). Don't commit directly to `staging`; see [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy) for the full anti-pattern this avoids.
+
+Rebuilds and deploys are **independent**:
+
+- `bash app/scripts/install_local_app.sh` rebuilds the macOS app only — does NOT redeploy the server.
+- Pushing `staging` redeploys the server only — does NOT update the bundled app.
+
+When a change touches both sides, you need both.
+
+## Common edit-the-fallback gotchas
+
+A few values exist in two places. The runtime-loaded copy beats the in-code default:
+
+- **Prompt:** edit `server/prompt.txt` and `app/Resources/prompt.txt` together (byte-parity enforced). `DEFAULT_PROMPT` in `blink_once.py` is only a missing-file fallback.
+- **Sampling params (`temperature`, `max_output_tokens`, `thinking_level`):** server-owned. Tune in `server/gemini.py:DEFAULT_SETTINGS` (or the `_for_model` overrides) and redeploy. The bundled `app/Resources/settings.json` only matters for the local-Gemini fallback path; `server/main.py:_selected_settings` ignores client-supplied sampling.
+- **Gemini 3 `thinking_level` + `max_output_tokens`:** the two share one budget on Gemini 3 models. `high` thinking greedily fills the budget and truncates JSON output for short-response tasks. We're on `"low"` with `max_output_tokens=4096` for this reason.
