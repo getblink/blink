@@ -1749,8 +1749,6 @@ def main(argv: list[str] | None = None) -> int:
     if proxy_settings is not None and request_payload.get("request_id"):
         request_payload["preferences"] = {
             "model": settings["model"],
-            "temperature": settings["temperature"],
-            "max_output_tokens": settings["max_output_tokens"],
         }
     generation_path = (
         "skip_gemini"
