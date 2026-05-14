@@ -330,17 +330,12 @@ def create_client(api_key: str | None, settings: dict[str, Any]) -> Any:
 def response_schema_contract() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["schema_version", "scratch", "tldr", "suggestions"],
-        "property_ordering": ["schema_version", "scratch", "tldr", "suggestions"],
+        "required": ["schema_version", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "tldr", "suggestions"],
         "properties": {
             "schema_version": {
                 "type": "integer",
                 "description": "Response schema version. Always 2.",
-            },
-            "scratch": {
-                "type": "string",
-                "max_length": 800,
-                "description": "Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             },
             "tldr": {
                 "type": "string",
@@ -381,17 +376,12 @@ def _schema() -> types.Schema:
 
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["schema_version", "scratch", "tldr", "suggestions"],
-        propertyOrdering=["schema_version", "scratch", "tldr", "suggestions"],
+        required=["schema_version", "tldr", "suggestions"],
+        propertyOrdering=["schema_version", "tldr", "suggestions"],
         properties={
             "schema_version": types.Schema(
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
-            ),
-            "scratch": types.Schema(
-                type=types.Type.STRING,
-                maxLength=800,
-                description="Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,

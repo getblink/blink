@@ -732,14 +732,14 @@ class MainTests(unittest.TestCase):
         schema = gemini.response_schema_contract()
 
         self.assertEqual(
-            schema["required"], ["schema_version", "scratch", "tldr", "suggestions"]
+            schema["required"], ["schema_version", "tldr", "suggestions"]
         )
         self.assertEqual(
             schema["property_ordering"],
-            ["schema_version", "scratch", "tldr", "suggestions"],
+            ["schema_version", "tldr", "suggestions"],
         )
         self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
-        self.assertEqual(schema["properties"]["scratch"]["type"], "string")
+        self.assertNotIn("scratch", schema["properties"])
         self.assertNotIn("max_length", schema["properties"]["tldr"])
         suggestions = schema["properties"]["suggestions"]
         self.assertEqual(suggestions["min_items"], 3)

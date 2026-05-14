@@ -172,11 +172,10 @@ Global constraints (apply to TL;DR and every suggestion):
   - Good: "$1,247 invoice due Mar 15. Card on file expired last week."
 - Don't mention that you saw a screenshot.
 
-Produce three things, in this order:
+Produce two things, in this order:
 
-1. A `scratch` field with one short answer: what's on screen that the user would not already know and that would change what they do next? Name the specific facts, deadlines, blockers, or decisions. Apply the novelty test before listing anything: if you just watched the user, or an agent acting on their behalf, produce or witness this fact in the visible session, it is not novel. If every fact would fail the novelty test, write "no new signal" and the TL;DR becomes one short status sentence acknowledging that. This field is not shown to the user.
-2. A TL;DR that surfaces only what scratch identified.
-3. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
+1. A TL;DR addressed to the user.
+2. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
 
 TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
@@ -191,7 +190,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
 2. Quote concrete, load-bearing details. Names, numbers, dates, deadlines, doc titles, dollar amounts, error messages. Specificity beats summary.
 
-3. Surface only signal: what scratch identified. Signal is what the user does not already know that changes their next move (a blocker, decision, ask, risk, deadline, name, error, or new fact). Recent timestamps and approaching deadlines weight highest. Skip Blink diagnostics, app state, or anything the user obviously already saw.
+3. Surface only signal. Signal is what the user does not already know that changes their next move (a blocker, decision, ask, risk, deadline, name, error, or new fact). Apply the novelty test before including anything: if you just watched the user, or an agent acting on their behalf, produce or witness this fact in the visible session, it is not novel and should not appear in the TL;DR. Recent timestamps and approaching deadlines weight highest. Skip Blink diagnostics, app state, or anything the user obviously already saw. If nothing on screen passes the novelty test, the TL;DR is one short status sentence acknowledging there's nothing new.
 
 4. The user has already seen the screen. Don't recap. App name, current channel, who they're chatting with, what they just typed, what they themselves just did in this session: all already known.
 
@@ -207,7 +206,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
 7. Voice and reference. Friend voice, not press release. Everyday words; contractions are fine. Avoid corporate filler like "action items", "circle back", "looping in", "just wanted to", "kindly", "as per", "FYI". When referring to the user, use direct second person ("you", "your"); never "the user", "I see that", "this screen shows", "I can see". (Rule 1's "don't lead with You" still holds.)
 
-8. Length scales with signal density, not capture density. One tight headline sentence (≤200 chars) for the single most behavior-changing fact. Add supporting beats only when scratch identified multiple distinct load-bearing items worth surfacing. The headline must work as the entire TL;DR on its own. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
+8. Length scales with signal density, not capture density. One tight headline sentence (≤200 chars) for the single most behavior-changing fact. Add supporting beats only when the capture has multiple distinct load-bearing items that pass the novelty test. The headline must work as the entire TL;DR on its own. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
 
 Suggestion rules, in priority order:
 
@@ -232,11 +231,11 @@ For each suggestion, include 1-2 short tags that describe the move at a glance, 
 
 Worked example: protagonist surface. The user watched an agent finish work in real time. Scratch flags there is no real novelty; the TL;DR collapses to one sentence; the suggestions steer the agent forward rather than narrate user actions:
 
-{"schema_version": 2, "scratch": "Coding-agent surface. User watched the whole 102-tool, 57-message session. Agent says adaptive TL;DR plan is shipped, Swift build green, ready for verification. No new signal in the recap itself; the only forward fact is 'it's ready, go verify in the local overlay.'", "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.", "suggestions": [{"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]}, {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]}, {"text": "kick off a sweep on the dogfood fixture set and report any captures where scratch came back empty", "tags": ["Next step"]}]}
+{"schema_version": 2, "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.", "suggestions": [{"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]}, {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]}, {"text": "kick off a sweep on the dogfood fixture set and report any captures where the TL;DR came back as a bare status", "tags": ["Next step"]}]}
 
 Output JSON only:
 
-{"schema_version": 2, "scratch": "...", "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
+{"schema_version": 2, "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
 """
 
 
@@ -727,17 +726,12 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
 def response_schema_contract() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["schema_version", "scratch", "tldr", "suggestions"],
-        "property_ordering": ["schema_version", "scratch", "tldr", "suggestions"],
+        "required": ["schema_version", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "tldr", "suggestions"],
         "properties": {
             "schema_version": {
                 "type": "integer",
                 "description": "Response schema version. Always 2.",
-            },
-            "scratch": {
-                "type": "string",
-                "max_length": 800,
-                "description": "Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             },
             "tldr": {
                 "type": "string",
@@ -785,11 +779,6 @@ def response_schema():
             "schema_version": types.Schema(
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
-            ),
-            "scratch": types.Schema(
-                type=types.Type.STRING,
-                maxLength=800,
-                description="Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,
