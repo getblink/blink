@@ -109,6 +109,13 @@ SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
 STYLE_ABOUT_ME_MAX_CHARS = 2000
+
+# See server/gemini.py for the full rationale. Recent same-surface history
+# is suppressed in the rendered prompt while we iterate on the surface
+# history architecture (feedback loop, stale-context bias, novelty-test
+# breakdown). build_stateful_context still records the data so debug
+# telemetry is preserved; only the prompt rendering ignores it.
+SURFACE_HISTORY_ENABLED = False
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
@@ -586,6 +593,8 @@ def prompt_with_context(
     if not isinstance(preference_examples, list):
         preference_examples = []
     if not isinstance(surface_history, list):
+        surface_history = []
+    if not SURFACE_HISTORY_ENABLED:
         surface_history = []
     if not isinstance(reroll_context, dict):
         reroll_context = {}
