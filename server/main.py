@@ -513,6 +513,9 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
     }
 
 
+_ALLOWED_THINKING_LEVELS = {"low", "medium", "high"}
+
+
 def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     settings = gemini.DEFAULT_SETTINGS.copy()
     preferences = envelope.get("preferences") or {}
@@ -522,6 +525,16 @@ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[st
             settings["model"] = requested_model
         else:
             warnings.append("requested_model_disallowed")
+    # thinking_level is the one sampling knob the client controls: the macOS
+    # "Reasoning" picker maps directly to Gemini's thinking budget. temperature
+    # and max_output_tokens stay server-owned so an arbitrary client can't
+    # destabilize output shape or blow the budget.
+    requested_thinking = str(preferences.get("thinking_level") or "").strip().lower()
+    if requested_thinking:
+        if requested_thinking in _ALLOWED_THINKING_LEVELS:
+            settings["thinking_level"] = requested_thinking
+        else:
+            warnings.append("requested_thinking_level_disallowed")
     return settings
 
 

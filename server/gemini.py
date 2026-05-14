@@ -31,7 +31,7 @@ RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
-STYLE_ABOUT_ME_MAX_CHARS = 280
+STYLE_ABOUT_ME_MAX_CHARS = 2000
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",

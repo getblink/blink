@@ -1341,14 +1341,13 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("requested_model_disallowed", response.json()["warnings"])
 
-    def test_selected_settings_ignores_client_sampling_overrides(self) -> None:
+    def test_selected_settings_ignores_temperature_and_max_tokens(self) -> None:
         warnings: list[str] = []
         settings = _selected_settings(
             {
                 "preferences": {
                     "temperature": 0.3,
                     "max_output_tokens": 640,
-                    "thinking_level": "high",
                 }
             },
             warnings,
@@ -1359,6 +1358,24 @@ class MainTests(unittest.TestCase):
         )
         self.assertNotIn("thinking_level", settings)
         self.assertEqual(warnings, [])
+
+    def test_selected_settings_honors_client_thinking_level(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "high"}},
+            warnings,
+        )
+        self.assertEqual(settings["thinking_level"], "high")
+        self.assertEqual(warnings, [])
+
+    def test_selected_settings_rejects_bogus_thinking_level(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "ultra"}},
+            warnings,
+        )
+        self.assertNotIn("thinking_level", settings)
+        self.assertIn("requested_thinking_level_disallowed", warnings)
 
     def test_selected_settings_defaults_when_preferences_absent(self) -> None:
         warnings: list[str] = []

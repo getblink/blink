@@ -108,7 +108,7 @@ RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
-STYLE_ABOUT_ME_MAX_CHARS = 280
+STYLE_ABOUT_ME_MAX_CHARS = 2000
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
@@ -1747,9 +1747,15 @@ def main(argv: list[str] | None = None) -> int:
     if stateful_context is not None:
         request_payload["stateful_context"] = stateful_context
     if proxy_settings is not None and request_payload.get("request_id"):
-        request_payload["preferences"] = {
-            "model": settings["model"],
-        }
+        # Preserve the Swift app's preferences (notably thinking_level) instead
+        # of stomping them. The server treats `model` and `thinking_level` as
+        # client-driven and ignores the rest.
+        incoming_prefs = request_payload.get("preferences")
+        forwarded_prefs: dict[str, Any] = (
+            dict(incoming_prefs) if isinstance(incoming_prefs, dict) else {}
+        )
+        forwarded_prefs["model"] = settings["model"]
+        request_payload["preferences"] = forwarded_prefs
     generation_path = (
         "skip_gemini"
         if args.skip_gemini

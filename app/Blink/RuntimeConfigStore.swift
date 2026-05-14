@@ -23,7 +23,7 @@ struct StylePrefs: Codable, Equatable {
     var voiceMirror: String
     var aboutMe: String
 
-    static let aboutMeMaxChars = 280
+    static let aboutMeMaxChars = 2000
 
     enum CodingKeys: String, CodingKey {
         case initiative

@@ -36,8 +36,9 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Rebuilds and deploys are independent: `install_local_app.sh` only rebuilds the app; pushing `staging` only redeploys the server. Changes touching both need both.
 - Runtime config has *two-copy* footguns. The loaded file beats the in-code default:
   - Prompts: edit `server/prompt.txt` and `app/Resources/prompt.txt` together (parity test enforces).
-  - Sampling: server-owned. Tune `server/gemini.py:DEFAULT_SETTINGS` and redeploy; client `preferences.temperature`/`max_output_tokens`/`thinking_level` are ignored by `_selected_settings`.
-  - Gemini 3 `thinking_level` + `max_output_tokens` share one budget; `high` thinking truncates short-response JSON. We're on `"low"` with 4096 tokens.
+  - Sampling: `temperature` and `max_output_tokens` are server-owned. Tune `server/gemini.py:DEFAULT_SETTINGS` and redeploy; client values for these are ignored by `_selected_settings`.
+  - `thinking_level` is the one client-overridable knob. The macOS "Reasoning" picker sends `low`/`medium`/`high` in `preferences.thinking_level`; the server validates and forwards. Don't strip `preferences` in `blink_once.py`'s proxy path or the picker silently does nothing.
+  - Gemini 3 `thinking_level` + `max_output_tokens` share one budget; `high` thinking truncates short-response JSON. Default is `"low"` with 4096 tokens; a user opting into `medium`/`high` accepts that tradeoff.
 - When debugging Conductor hooks, check `.context/conductor/setup-receipt.json` and `~/conductor/archive/blink/_archive_runs.jsonl` before assuming setup or archive failed.
 - When rotating credentials or adding env vars, edit `~/conductor/repos/blink/.env` (the canonical source) and then run `~/conductor/repos/blink/.conductor/sync_env.sh` to propagate to existing workspaces. New workspaces inherit it automatically via `setup.sh`.
 - When validating `app/` locally, use `bash app/scripts/install_local_app.sh` and launch only `~/Applications/Blink.app`. Do not run Blink from `DerivedData` or `app/build`.
