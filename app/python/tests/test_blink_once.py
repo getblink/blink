@@ -84,8 +84,16 @@ class BlinkOnceTests(unittest.TestCase):
     def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
         schema = blink_once.response_schema_contract()
 
-        self.assertEqual(schema["required"], ["schema_version", "tldr", "suggestions"])
+        self.assertEqual(
+            schema["required"], ["schema_version", "scratch", "tldr", "suggestions"]
+        )
+        self.assertEqual(
+            schema["property_ordering"],
+            ["schema_version", "scratch", "tldr", "suggestions"],
+        )
         self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
+        self.assertEqual(schema["properties"]["scratch"]["type"], "string")
+        self.assertNotIn("max_length", schema["properties"]["tldr"])
         suggestions = schema["properties"]["suggestions"]
         self.assertEqual(suggestions["min_items"], 3)
         self.assertEqual(suggestions["max_items"], 3)

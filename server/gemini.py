@@ -302,17 +302,21 @@ def create_client(api_key: str | None, settings: dict[str, Any]) -> Any:
 def response_schema_contract() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["schema_version", "tldr", "suggestions"],
-        "property_ordering": ["schema_version", "tldr", "suggestions"],
+        "required": ["schema_version", "scratch", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "scratch", "tldr", "suggestions"],
         "properties": {
             "schema_version": {
                 "type": "integer",
                 "description": "Response schema version. Always 2.",
             },
+            "scratch": {
+                "type": "string",
+                "max_length": 800,
+                "description": "Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+            },
             "tldr": {
                 "type": "string",
-                "max_length": 360,
-                "description": "Short takeaway summary of the screenshot.",
+                "description": "Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             },
             "suggestions": {
                 "type": "array",
@@ -349,17 +353,21 @@ def _schema() -> types.Schema:
 
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["schema_version", "tldr", "suggestions"],
-        propertyOrdering=["schema_version", "tldr", "suggestions"],
+        required=["schema_version", "scratch", "tldr", "suggestions"],
+        propertyOrdering=["schema_version", "scratch", "tldr", "suggestions"],
         properties={
             "schema_version": types.Schema(
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
             ),
+            "scratch": types.Schema(
+                type=types.Type.STRING,
+                maxLength=800,
+                description="Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+            ),
             "tldr": types.Schema(
                 type=types.Type.STRING,
-                maxLength=360,
-                description="Short takeaway summary of the screenshot.",
+                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
@@ -471,6 +479,16 @@ def usage_token_count(usage: Any) -> int | None:
     if not isinstance(usage, dict):
         return None
     for key in ("total_token_count", "total_tokens", "totalTokenCount"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def usage_thoughts_token_count(usage: Any) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    for key in ("thoughts_token_count", "thoughtsTokenCount", "thinking_tokens"):
         value = usage.get(key)
         if isinstance(value, int):
             return value
@@ -764,6 +782,7 @@ def generate_tldr_and_suggestions(
     payload: dict[str, Any] = {
         "raw": raw_text,
         "usage": usage,
+        "thoughts_token_count": usage_thoughts_token_count(usage),
         "duration_ms": int(round((finished - started) * 1000)),
         "parse_error": parse_error,
         "model": settings["model"],
@@ -848,9 +867,11 @@ def generate_tldr_and_suggestions_streaming(
     duration_ms = int(round((time.perf_counter() - started) * 1000))
     raw_final = raw_text.strip()
     parsed, parse_error = _parse_json_response(raw_final)
+    usage_dict = plain_data(usage)
     final: dict[str, Any] = {
         "raw": raw_final,
-        "usage": plain_data(usage),
+        "usage": usage_dict,
+        "thoughts_token_count": usage_thoughts_token_count(usage_dict),
         "duration_ms": duration_ms,
         "parse_error": parse_error,
         "model": settings["model"],

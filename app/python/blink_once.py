@@ -155,10 +155,11 @@ DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's act
 
 If multiple screenshots are provided, they show the same window scrolled top to bottom in capture order. Treat them as one continuous page. Adjacent frames will overlap; deduplicate visually rather than summarizing each frame separately.
 
-Produce two things:
+Produce three things, in this order:
 
-1. A short TL;DR addressed to the user.
-2. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
+1. A `scratch` field with brief pre-output analysis: the most recent message or focus, the load-bearing detail (number, deadline, name, error), the participants, and what the user most plausibly wants to do next. Keep it under ~400 chars. This field is not shown to the user; it exists so you reason explicitly in writeable output tokens before producing the visible fields below. Always fill it.
+2. A TL;DR addressed to the user.
+3. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
 
 TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
@@ -197,7 +198,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
 9. When referring to the user, use direct second person ("you", "your"). Never "the user", "I see that", "this screen shows", "I can see". (See rule 2 for the one constraint: don't *lead* with "You".)
 
-10. Length and shape. 360 characters or fewer total. 3 sentences or fewer per paragraph. Line breaks are good for separating the takeaway from a "Heads up, ..." clause. No bullets, no numbered lists in the output itself.
+10. Length scales with capture density. Lead with one tight headline sentence (≤200 chars) that captures the takeaway. Add supporting beats only when the capture earns them: a single tweet, notification, or empty desktop gets one paragraph; a multi-frame thread, dense doc, or 8-screen scroll can run 3-5 beats. The headline must work as the entire TL;DR on its own — readers may see only that. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
 
 Suggestion rules, in priority order:
 
@@ -232,7 +233,7 @@ For each suggestion, include 1-2 short tags that describe the move at a glance, 
 
 Output JSON only:
 
-{"schema_version": 2, "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
+{"schema_version": 2, "scratch": "...", "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
 """
 
 
@@ -721,16 +722,21 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
 def response_schema_contract() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["schema_version", "tldr", "suggestions"],
-        "property_ordering": ["schema_version", "tldr", "suggestions"],
+        "required": ["schema_version", "scratch", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "scratch", "tldr", "suggestions"],
         "properties": {
             "schema_version": {
                 "type": "integer",
                 "description": "Response schema version. Always 2.",
             },
+            "scratch": {
+                "type": "string",
+                "max_length": 800,
+                "description": "Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+            },
             "tldr": {
                 "type": "string",
-                "max_length": 360,
+                "description": "Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             },
             "suggestions": {
                 "type": "array",
@@ -775,7 +781,15 @@ def response_schema():
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
             ),
-            "tldr": types.Schema(type=types.Type.STRING, maxLength=360),
+            "scratch": types.Schema(
+                type=types.Type.STRING,
+                maxLength=800,
+                description="Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+            ),
+            "tldr": types.Schema(
+                type=types.Type.STRING,
+                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
+            ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
                 minItems=3,
@@ -889,9 +903,18 @@ def build_response_payload(
     image_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     parsed, parse_error = parse_json_response(raw_text)
+    usage_dict = plain_data(usage)
+    thoughts_token_count: int | None = None
+    if isinstance(usage_dict, dict):
+        for key in ("thoughts_token_count", "thoughtsTokenCount", "thinking_tokens"):
+            value = usage_dict.get(key)
+            if isinstance(value, int):
+                thoughts_token_count = value
+                break
     payload: dict[str, Any] = {
         "raw": raw_text,
-        "usage": plain_data(usage),
+        "usage": usage_dict,
+        "thoughts_token_count": thoughts_token_count,
         "duration_ms": duration_ms,
         "parse_error": parse_error,
         "warnings": [],
