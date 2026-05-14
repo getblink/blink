@@ -731,8 +731,16 @@ class MainTests(unittest.TestCase):
     def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
         schema = gemini.response_schema_contract()
 
-        self.assertEqual(schema["required"], ["schema_version", "tldr", "suggestions"])
+        self.assertEqual(
+            schema["required"], ["schema_version", "tldr", "suggestions"]
+        )
+        self.assertEqual(
+            schema["property_ordering"],
+            ["schema_version", "tldr", "suggestions"],
+        )
         self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
+        self.assertNotIn("scratch", schema["properties"])
+        self.assertNotIn("max_length", schema["properties"]["tldr"])
         suggestions = schema["properties"]["suggestions"]
         self.assertEqual(suggestions["min_items"], 3)
         self.assertEqual(suggestions["max_items"], 3)
@@ -1205,7 +1213,10 @@ class MainTests(unittest.TestCase):
         def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
             prompt_text = kwargs["prompt_text"]
             self.assertIn("sounds good, i'll take a look", prompt_text)
-            self.assertIn("Sarah asked for a review", prompt_text)
+            # recent_surface_history is intentionally suppressed in the rendered
+            # prompt while the surface-history architecture is iterated on; see
+            # server/gemini.py:SURFACE_HISTORY_ENABLED. Storage still records it.
+            self.assertNotIn("Sarah asked for a review", prompt_text)
             return {
                 "status": "ok",
                 "tldr": "Sarah needs a reply.",
@@ -1341,14 +1352,13 @@ class MainTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("requested_model_disallowed", response.json()["warnings"])
 
-    def test_selected_settings_ignores_client_sampling_overrides(self) -> None:
+    def test_selected_settings_ignores_temperature_and_max_tokens(self) -> None:
         warnings: list[str] = []
         settings = _selected_settings(
             {
                 "preferences": {
                     "temperature": 0.3,
                     "max_output_tokens": 640,
-                    "thinking_level": "high",
                 }
             },
             warnings,
@@ -1359,6 +1369,24 @@ class MainTests(unittest.TestCase):
         )
         self.assertNotIn("thinking_level", settings)
         self.assertEqual(warnings, [])
+
+    def test_selected_settings_honors_client_thinking_level(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "high"}},
+            warnings,
+        )
+        self.assertEqual(settings["thinking_level"], "high")
+        self.assertEqual(warnings, [])
+
+    def test_selected_settings_rejects_bogus_thinking_level(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "ultra"}},
+            warnings,
+        )
+        self.assertNotIn("thinking_level", settings)
+        self.assertIn("requested_thinking_level_disallowed", warnings)
 
     def test_selected_settings_defaults_when_preferences_absent(self) -> None:
         warnings: list[str] = []

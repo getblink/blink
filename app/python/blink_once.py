@@ -108,7 +108,14 @@ RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
-STYLE_ABOUT_ME_MAX_CHARS = 280
+STYLE_ABOUT_ME_MAX_CHARS = 2000
+
+# See server/gemini.py for the full rationale. Recent same-surface history
+# is suppressed in the rendered prompt while we iterate on the surface
+# history architecture (feedback loop, stale-context bias, novelty-test
+# breakdown). build_stateful_context still records the data so debug
+# telemetry is preserved; only the prompt rendering ignores it.
+SURFACE_HISTORY_ENABLED = False
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
@@ -155,37 +162,41 @@ DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's act
 
 If multiple screenshots are provided, they show the same window scrolled top to bottom in capture order. Treat them as one continuous page. Adjacent frames will overlap; deduplicate visually rather than summarizing each frame separately.
 
-Produce two things:
+Global constraints (apply to TL;DR and every suggestion):
 
-1. A short TL;DR addressed to the user.
+- Don't invent. Only assert what is visible on screen. When the screen is dense or ambiguous, hedge: "Looks like...", "Probably...", "Sounds like...". Never overclaim.
+- Never use em dashes ("—") or en dashes ("–"). Use a period, comma, semicolon, or a new line instead.
+  - Bad: "Sarah's waiting on your estimate — she needs it before 4pm."
+  - Bad: "$1,247 invoice due Mar 15 – card on file expired."
+  - Good: "Sarah's waiting on your estimate. She needs it before 4pm."
+  - Good: "$1,247 invoice due Mar 15. Card on file expired last week."
+- Don't mention that you saw a screenshot.
+
+Produce two things, in this order:
+
+1. A TL;DR addressed to the user.
 2. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
 
 TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
-1. Don't invent. Only assert what is visible on screen. When the screen is dense or ambiguous, hedge: "Looks like...", "Probably...", "Sounds like...". Never overclaim.
-
-2. Lead with the subject of action. Never start the TL;DR with "You", "You're", "You've", or "Your". Open with the person, system, document, number, or event driving the takeaway. The user can still be addressed as "you" later in the line.
+1. Lead with the subject of action. Never start the TL;DR with "You", "You're", "You've", or "Your". Open with the person, system, document, number, or event driving the takeaway. The user can still be addressed as "you" later in the line.
    - Bad: "You're looking at a Slack thread with Sarah."
    - Bad: "You have an invoice due Friday."
    - Bad: "Your migration estimate is due."
-     Good: "Joe's asking if you want dinner tonight; he's flexible on time."
-     Good: "The agent just finished the UI refactor. 3 tests are still red."
-     Good: "Sarah needs your migration estimate before her 4pm sync."
-     Good: "$1,247 Stripe invoice due Mar 15."
+   - Good: "Joe's asking if you want dinner tonight; he's flexible on time."
+   - Good: "The agent just finished the UI refactor. 3 tests are still red."
+   - Good: "Sarah needs your migration estimate before her 4pm sync."
+   - Good: "$1,247 Stripe invoice due Mar 15."
 
-3. Quote concrete, load-bearing details. Names, numbers, dates, deadlines, doc titles, dollar amounts, error messages. Specificity beats summary.
+2. Quote concrete, load-bearing details. Names, numbers, dates, deadlines, doc titles, dollar amounts, error messages. Specificity beats summary.
 
-4. Never use em dashes ("—") or en dashes ("–"). Use a period, comma, semicolon, or a new line instead.
-   - Bad: "Sarah's waiting on your estimate — she needs it before 4pm."
-   - Bad: "$1,247 invoice due Mar 15 – card on file expired."
-     Good: "Sarah's waiting on your estimate. She needs it before 4pm."
-     Good: "$1,247 invoice due Mar 15. Card on file expired last week."
+3. Surface only signal. Signal is what the user does not already know that changes their next move (a blocker, decision, ask, risk, deadline, name, error, or new fact). Apply the novelty test before including anything: if you just watched the user, or an agent acting on their behalf, produce or witness this fact in the visible session, it is not novel and should not appear in the TL;DR. Recent timestamps and approaching deadlines weight highest. Skip Blink diagnostics, app state, or anything the user obviously already saw. If nothing on screen passes the novelty test, the TL;DR is one short status sentence acknowledging there's nothing new.
 
-5. Surface the concrete takeaway: blocker, decision, ask, risk, next useful fact, deadline, owner, or CTA. When timestamps are visible, weight recent messages and approaching deadlines as the most likely takeaway. Avoid summarizing internal Blink diagnostics or app state unless that is the visible topic.
+4. The user has already seen the screen. Don't recap. App name, current channel, who they're chatting with, what they just typed, what they themselves just did in this session: all already known.
 
-6. Skip facts the user already knows from being on the screen: app name, current channel, who they're chatting with. Only surface what changes their next decision. If there is no actionable thing on screen, lead with the most concrete detail visible (a number, a deadline, a name, an unread count).
+5. Protagonist captures. When the user is the protagonist of the capture (their own coding session, own draft, own outgoing messages dominate), most of what's on screen is already known and the TL;DR shrinks accordingly. Identifiers produced in the visible session (commit hashes, PR numbers, build numbers, file paths, branch names) are noise even though they look like the rule-2 kind of specifics. The user, or an agent acting on their direction, just produced them and was watching. Reference what changed by content, not by hash.
 
-7. If something on screen is clearly inconsistent or worth a sanity check, add a brief "Heads up, ..." clause on its own line, after a blank line. Only when the evidence is visible. Never invent one. Cases that warrant one:
+6. If something on screen is clearly inconsistent or worth a sanity check, add a brief "Heads up, ..." clause on its own line, after a blank line. Only when the evidence is visible. Never invent one. Cases that warrant one:
    - A date in a draft contradicts a date earlier in the thread.
    - A name in a draft doesn't match the recipient.
    - Two numbers that should match (subtotal vs line items, two prices, two timestamps) don't.
@@ -193,42 +204,34 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
    - A deadline conflicts with a commitment elsewhere on screen.
    - A typo or wrong recipient in a draft about to be sent.
 
-8. Friend voice, not press release. Everyday words. Contractions are fine. Avoid corporate filler like "action items", "circle back", "looping in", "just wanted to", "kindly", "as per", "FYI".
+7. Voice and reference. Friend voice, not press release. Everyday words; contractions are fine. Avoid corporate filler like "action items", "circle back", "looping in", "just wanted to", "kindly", "as per", "FYI". When referring to the user, use direct second person ("you", "your"); never "the user", "I see that", "this screen shows", "I can see". (Rule 1's "don't lead with You" still holds.)
 
-9. When referring to the user, use direct second person ("you", "your"). Never "the user", "I see that", "this screen shows", "I can see". (See rule 2 for the one constraint: don't *lead* with "You".)
-
-10. Length and shape. 360 characters or fewer total. 3 sentences or fewer per paragraph. Line breaks are good for separating the takeaway from a "Heads up, ..." clause. No bullets, no numbered lists in the output itself.
+8. Length scales with signal density, not capture density. One tight headline sentence (≤200 chars) for the single most behavior-changing fact. Add supporting beats only when the capture has multiple distinct load-bearing items that pass the novelty test. The headline must work as the entire TL;DR on its own. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
 
 Suggestion rules, in priority order:
 
 1. Produce exactly three suggestions. Each must be ready to paste or send as-is.
 
-2. Don't invent private facts or commitments not supported by the screenshot.
+2. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the screenshot AND from the user voice examples below. Lean toward the user's house style when you have multiple consistent voice samples; otherwise prefer neutral phrasing. Do not force shortness when a more complete answer fits the user better.
+   Two guards that apply to every suggestion rule below: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
 
-3. Sound like the user. The three suggestions should read like the user wrote them. Match their casing, punctuation, contractions, sentence shape, vocabulary, hedging, and emoji/no-emoji style. Draw from any of the user's own prior messages visible in the screenshot AND from the user voice examples below. Lean toward the user's house style when you have multiple consistent voice samples; otherwise prefer neutral phrasing. Do not force shortness when a more complete answer fits the user better.
-   Two guards: (a) do not carry names, commitments, numbers, dates, or other facts from voice samples into the reply unless the current screen supports them; voice samples are for style, not content; (b) the current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).
+3. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Don't force variety the screen doesn't need; if only one direction is earned, use it across multiple suggestions rather than inventing opposing stances. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
 
-4. Make each suggestion specific to the visible names, question, plan, bug, document, or request. Avoid generic filler like "Got it, thanks" unless the screenshot truly calls only for a brief acknowledgement.
-
-5. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
+4. Continue drafts; don't rewrite them. Look for any visible compose box, draft text, selected text, or caret context.
    - If the user has already started typing, suggestions are paste-at-caret continuations or completions, not rewrites that duplicate the existing draft.
    - Do not repeat the existing draft prefix. Continue after the caret.
    - If the draft ends mid-sentence, continue it naturally.
    - If the draft is already a full sentence, suggest text that could follow it.
 
-6. Make the three suggestions meaningfully useful for this context. Cover important bases when they fit: a direct reply, a useful question, caution or pushback, a next step, or a completion of the user's draft. Do not force variety that the current screen does not need.
+5. If the screen has no message to reply to, treat suggestions as next actions or paste-ready phrasings appropriate to the surface: a code-review comment, a meeting-decline reason, a draft email, a search query, a commit message.
 
-7. Never use em dashes ("—") or en dashes ("–") in any suggestion. Substitute a period, comma, semicolon, or new line.
-   - Bad: "Sounds good — I'll send the doc by EOD."
-     Good: "Sounds good. I'll send the doc by EOD."
-
-8. If the screen has no message to reply to, treat suggestions as next actions or paste-ready phrasings appropriate to the surface: a code-review comment, a meeting-decline reason, a draft email, a search query, a commit message.
-
-9. On AI-agent or coding-agent surfaces, suggestions should steer the agent, ask for evidence, request implementation, or push back. Phrase these as requests or directions to the agent ("Can you...", "Please...", "Show me..."), not as the user's own future work. Avoid "I agree...", "I'll test...", or self-referential agent-progress phrasing unless the visible context truly calls for that as the user's message.
-
-10. Don't mention that you saw a screenshot.
+6. On AI-agent or coding-agent surfaces, suggestions should steer the agent, ask for evidence, request implementation, or push back. Phrase these as requests or directions to the agent ("Can you...", "Please...", "Show me..."), not as the user's own future work. Avoid "I agree...", "I'll test...", or self-referential agent-progress phrasing unless the visible context truly calls for that as the user's message.
 
 For each suggestion, include 1-2 short tags that describe the move at a glance, such as Reply, Ask, Pushback, Next step, Clarify, Evidence, Commit, Defer, or Draft. Tags are labels only; the suggestion text must still be paste-ready by itself.
+
+Worked example: protagonist surface. The user watched an agent finish work in real time. Scratch flags there is no real novelty; the TL;DR collapses to one sentence; the suggestions steer the agent forward rather than narrate user actions:
+
+{"schema_version": 2, "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.", "suggestions": [{"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]}, {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]}, {"text": "kick off a sweep on the dogfood fixture set and report any captures where the TL;DR came back as a bare status", "tags": ["Next step"]}]}
 
 Output JSON only:
 
@@ -590,6 +593,8 @@ def prompt_with_context(
         preference_examples = []
     if not isinstance(surface_history, list):
         surface_history = []
+    if not SURFACE_HISTORY_ENABLED:
+        surface_history = []
     if not isinstance(reroll_context, dict):
         reroll_context = {}
     previous_suggestions = reroll_context.get("previous_suggestions")
@@ -730,7 +735,7 @@ def response_schema_contract() -> dict[str, Any]:
             },
             "tldr": {
                 "type": "string",
-                "max_length": 360,
+                "description": "Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             },
             "suggestions": {
                 "type": "array",
@@ -775,7 +780,10 @@ def response_schema():
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
             ),
-            "tldr": types.Schema(type=types.Type.STRING, maxLength=360),
+            "tldr": types.Schema(
+                type=types.Type.STRING,
+                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
+            ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
                 minItems=3,
@@ -889,9 +897,18 @@ def build_response_payload(
     image_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     parsed, parse_error = parse_json_response(raw_text)
+    usage_dict = plain_data(usage)
+    thoughts_token_count: int | None = None
+    if isinstance(usage_dict, dict):
+        for key in ("thoughts_token_count", "thoughtsTokenCount", "thinking_tokens"):
+            value = usage_dict.get(key)
+            if isinstance(value, int):
+                thoughts_token_count = value
+                break
     payload: dict[str, Any] = {
         "raw": raw_text,
-        "usage": plain_data(usage),
+        "usage": usage_dict,
+        "thoughts_token_count": thoughts_token_count,
         "duration_ms": duration_ms,
         "parse_error": parse_error,
         "warnings": [],
@@ -1747,9 +1764,15 @@ def main(argv: list[str] | None = None) -> int:
     if stateful_context is not None:
         request_payload["stateful_context"] = stateful_context
     if proxy_settings is not None and request_payload.get("request_id"):
-        request_payload["preferences"] = {
-            "model": settings["model"],
-        }
+        # Preserve the Swift app's preferences (notably thinking_level) instead
+        # of stomping them. The server treats `model` and `thinking_level` as
+        # client-driven and ignores the rest.
+        incoming_prefs = request_payload.get("preferences")
+        forwarded_prefs: dict[str, Any] = (
+            dict(incoming_prefs) if isinstance(incoming_prefs, dict) else {}
+        )
+        forwarded_prefs["model"] = settings["model"]
+        request_payload["preferences"] = forwarded_prefs
     generation_path = (
         "skip_gemini"
         if args.skip_gemini

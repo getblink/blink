@@ -31,7 +31,33 @@ RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
-STYLE_ABOUT_ME_MAX_CHARS = 280
+STYLE_ABOUT_ME_MAX_CHARS = 2000
+
+# Recent same-surface history is currently disabled in the rendered prompt
+# while the architecture is iterated on. Known issues observed in dogfood:
+#
+# 1. Feedback loop: prior TL;DR is lifted verbatim into the next request's
+#    surface history, so any identifier (commit hash, PID, build number)
+#    that leaked into a TL;DR keeps reappearing across subsequent captures
+#    and reinforces itself.
+# 2. Stale-context bias: the model treats prior summaries as ambient
+#    "what's happening on this surface" instead of "snapshot from N seconds
+#    ago about a different concrete moment," so it surfaces those specifics
+#    as if they were on the current screen.
+# 3. Novelty test breakdown: rule 5's "session-produced identifiers are
+#    noise" relies on the model knowing what was session-produced.  When the
+#    hash arrives via surface_history, the model reads it as ambient context
+#    rather than something it just helped produce, and the rule misfires.
+# 4. Voice-sample contamination (separate but related): conversational
+#    fragments the user typed to a coding agent are captured as voice
+#    samples and bleed into suggestions on unrelated surfaces.  Leaving
+#    voice samples on for now; this is tracked as a follow-up.
+#
+# When re-enabling, options to consider: sanitize prior TL;DRs before
+# injecting them; truncate prior summaries to a topic-level cue rather than
+# the full text; or differentiate "what was on the surface" from "what the
+# model said about it."
+SURFACE_HISTORY_ENABLED = False
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
@@ -132,6 +158,8 @@ def prompt_with_context(
     if not isinstance(preference_examples, list):
         preference_examples = []
     if not isinstance(surface_history, list):
+        surface_history = []
+    if not SURFACE_HISTORY_ENABLED:
         surface_history = []
     if not isinstance(reroll_context, dict):
         reroll_context = {}
@@ -311,8 +339,7 @@ def response_schema_contract() -> dict[str, Any]:
             },
             "tldr": {
                 "type": "string",
-                "max_length": 360,
-                "description": "Short takeaway summary of the screenshot.",
+                "description": "Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             },
             "suggestions": {
                 "type": "array",
@@ -358,8 +385,7 @@ def _schema() -> types.Schema:
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,
-                maxLength=360,
-                description="Short takeaway summary of the screenshot.",
+                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
@@ -471,6 +497,16 @@ def usage_token_count(usage: Any) -> int | None:
     if not isinstance(usage, dict):
         return None
     for key in ("total_token_count", "total_tokens", "totalTokenCount"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def usage_thoughts_token_count(usage: Any) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    for key in ("thoughts_token_count", "thoughtsTokenCount", "thinking_tokens"):
         value = usage.get(key)
         if isinstance(value, int):
             return value
@@ -764,6 +800,7 @@ def generate_tldr_and_suggestions(
     payload: dict[str, Any] = {
         "raw": raw_text,
         "usage": usage,
+        "thoughts_token_count": usage_thoughts_token_count(usage),
         "duration_ms": int(round((finished - started) * 1000)),
         "parse_error": parse_error,
         "model": settings["model"],
@@ -848,9 +885,11 @@ def generate_tldr_and_suggestions_streaming(
     duration_ms = int(round((time.perf_counter() - started) * 1000))
     raw_final = raw_text.strip()
     parsed, parse_error = _parse_json_response(raw_final)
+    usage_dict = plain_data(usage)
     final: dict[str, Any] = {
         "raw": raw_final,
-        "usage": plain_data(usage),
+        "usage": usage_dict,
+        "thoughts_token_count": usage_thoughts_token_count(usage_dict),
         "duration_ms": duration_ms,
         "parse_error": parse_error,
         "model": settings["model"],
