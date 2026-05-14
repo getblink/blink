@@ -312,7 +312,7 @@ def response_schema_contract() -> dict[str, Any]:
             "scratch": {
                 "type": "string",
                 "max_length": 800,
-                "description": "Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+                "description": "Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             },
             "tldr": {
                 "type": "string",
@@ -363,7 +363,7 @@ def _schema() -> types.Schema:
             "scratch": types.Schema(
                 type=types.Type.STRING,
                 maxLength=800,
-                description="Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+                description="Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,

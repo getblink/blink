@@ -157,8 +157,8 @@ If multiple screenshots are provided, they show the same window scrolled top to 
 
 Produce three things, in this order:
 
-1. A `scratch` field with brief pre-output analysis: the most recent message or focus, the load-bearing detail (number, deadline, name, error), the participants, and what the user most plausibly wants to do next. Keep it under ~400 chars. This field is not shown to the user; it exists so you reason explicitly in writeable output tokens before producing the visible fields below. Always fill it.
-2. A TL;DR addressed to the user.
+1. A `scratch` field with one short answer: what's on screen that the user would not already know and that would change what they do next? Name the specific facts, deadlines, blockers, or decisions. If nothing qualifies, write "no new signal." This field is not shown to the user.
+2. A TL;DR that surfaces only what scratch identified. If scratch reported no new signal, the TL;DR is one short status sentence — no recap, no decoration.
 3. Three concrete suggestions: candidate replies, paste-ready phrasings, or next actions the user might send, paste, or do.
 
 TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
@@ -182,9 +182,9 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
      Good: "Sarah's waiting on your estimate. She needs it before 4pm."
      Good: "$1,247 invoice due Mar 15. Card on file expired last week."
 
-5. Surface the concrete takeaway: blocker, decision, ask, risk, next useful fact, deadline, owner, or CTA. When timestamps are visible, weight recent messages and approaching deadlines as the most likely takeaway. Avoid summarizing internal Blink diagnostics or app state unless that is the visible topic.
+5. Surface only signal — what scratch identified. Signal is what the user does not already know that changes their next move: a blocker, decision, ask, risk, deadline, name, error, or new fact. Recent timestamps and approaching deadlines weight highest. Skip Blink diagnostics, app state, or anything the user obviously already saw.
 
-6. Skip facts the user already knows from being on the screen: app name, current channel, who they're chatting with. Only surface what changes their next decision. If there is no actionable thing on screen, lead with the most concrete detail visible (a number, a deadline, a name, an unread count).
+6. The user has already seen the screen. Don't recap. App name, current channel, who they're chatting with, what they just typed, what they themselves just did in this session — all already known. When the user is the protagonist of the capture (their own coding session, own draft, own outgoing messages dominate), most of what's on screen is already known and the TL;DR shrinks accordingly. If scratch reports no new signal, output one short status sentence acknowledging that. Don't pad.
 
 7. If something on screen is clearly inconsistent or worth a sanity check, add a brief "Heads up, ..." clause on its own line, after a blank line. Only when the evidence is visible. Never invent one. Cases that warrant one:
    - A date in a draft contradicts a date earlier in the thread.
@@ -198,7 +198,7 @@ TL;DR rules, in priority order (rule 1 beats rule 2 beats rule 3, etc.):
 
 9. When referring to the user, use direct second person ("you", "your"). Never "the user", "I see that", "this screen shows", "I can see". (See rule 2 for the one constraint: don't *lead* with "You".)
 
-10. Length scales with capture density. Lead with one tight headline sentence (≤200 chars) that captures the takeaway. Add supporting beats only when the capture earns them: a single tweet, notification, or empty desktop gets one paragraph; a multi-frame thread, dense doc, or 8-screen scroll can run 3-5 beats. The headline must work as the entire TL;DR on its own — readers may see only that. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
+10. Length scales with signal density, not capture density. One tight headline sentence (≤200 chars) for the single most behavior-changing fact. Add supporting beats only when scratch identified multiple distinct load-bearing items worth surfacing. Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence — that's correct, not a failure. The headline must work as the entire TL;DR on its own. 3 sentences or fewer per paragraph. No bullets, no numbered lists in the output itself.
 
 Suggestion rules, in priority order:
 
@@ -732,7 +732,7 @@ def response_schema_contract() -> dict[str, Any]:
             "scratch": {
                 "type": "string",
                 "max_length": 800,
-                "description": "Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+                "description": "Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             },
             "tldr": {
                 "type": "string",
@@ -784,7 +784,7 @@ def response_schema():
             "scratch": types.Schema(
                 type=types.Type.STRING,
                 maxLength=800,
-                description="Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
+                description="Signal answer: what's on screen the user wouldn't already know and that would change their next move? Name specific facts/deadlines/blockers. If nothing qualifies, write 'no new signal'. Not shown to the user.",
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,
