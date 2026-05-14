@@ -73,12 +73,15 @@ class BlinkOnceTests(unittest.TestCase):
         self._device_token_dir.cleanup()
 
     def test_default_prompt_includes_no_prefix_and_agent_steering_rules(self) -> None:
-        self.assertIn("Do not repeat the existing draft prefix", blink_once.DEFAULT_PROMPT)
+        # Continue-drafts rule (don't rewrite the draft prefix).
+        self.assertIn("do not repeat the existing prefix", blink_once.DEFAULT_PROMPT)
+        # Agent-steering rule must still steer the agent rather than narrate user actions.
         self.assertIn("On AI-agent or coding-agent surfaces", blink_once.DEFAULT_PROMPT)
-        self.assertIn("steer the agent", blink_once.DEFAULT_PROMPT)
-        self.assertIn("requests or directions to the agent", blink_once.DEFAULT_PROMPT)
-        self.assertIn("Avoid \"I agree...\"", blink_once.DEFAULT_PROMPT)
-        self.assertIn("multiple screenshots", blink_once.DEFAULT_PROMPT)
+        self.assertIn("directions to the agent", blink_once.DEFAULT_PROMPT)
+        self.assertIn("Phrase as requests", blink_once.DEFAULT_PROMPT)
+        self.assertIn('Reserve "I agree..."', blink_once.DEFAULT_PROMPT)
+        # Multi-screenshot handling and schema sentinel are both load-bearing.
+        self.assertIn("screenshots", blink_once.DEFAULT_PROMPT)
         self.assertIn('"schema_version": 2', blink_once.DEFAULT_PROMPT)
 
     def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
