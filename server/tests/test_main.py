@@ -732,14 +732,14 @@ class MainTests(unittest.TestCase):
         schema = gemini.response_schema_contract()
 
         self.assertEqual(
-            schema["required"], ["schema_version", "scratch", "tldr", "suggestions"]
+            schema["required"], ["schema_version", "tldr", "suggestions"]
         )
         self.assertEqual(
             schema["property_ordering"],
-            ["schema_version", "scratch", "tldr", "suggestions"],
+            ["schema_version", "tldr", "suggestions"],
         )
         self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
-        self.assertEqual(schema["properties"]["scratch"]["type"], "string")
+        self.assertNotIn("scratch", schema["properties"])
         self.assertNotIn("max_length", schema["properties"]["tldr"])
         suggestions = schema["properties"]["suggestions"]
         self.assertEqual(suggestions["min_items"], 3)
@@ -1213,7 +1213,10 @@ class MainTests(unittest.TestCase):
         def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
             prompt_text = kwargs["prompt_text"]
             self.assertIn("sounds good, i'll take a look", prompt_text)
-            self.assertIn("Sarah asked for a review", prompt_text)
+            # recent_surface_history is intentionally suppressed in the rendered
+            # prompt while the surface-history architecture is iterated on; see
+            # server/gemini.py:SURFACE_HISTORY_ENABLED. Storage still records it.
+            self.assertNotIn("Sarah asked for a review", prompt_text)
             return {
                 "status": "ok",
                 "tldr": "Sarah needs a reply.",

@@ -32,6 +32,32 @@ SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
 
 STYLE_ABOUT_ME_MAX_CHARS = 2000
+
+# Recent same-surface history is currently disabled in the rendered prompt
+# while the architecture is iterated on. Known issues observed in dogfood:
+#
+# 1. Feedback loop: prior TL;DR is lifted verbatim into the next request's
+#    surface history, so any identifier (commit hash, PID, build number)
+#    that leaked into a TL;DR keeps reappearing across subsequent captures
+#    and reinforces itself.
+# 2. Stale-context bias: the model treats prior summaries as ambient
+#    "what's happening on this surface" instead of "snapshot from N seconds
+#    ago about a different concrete moment," so it surfaces those specifics
+#    as if they were on the current screen.
+# 3. Novelty test breakdown: rule 5's "session-produced identifiers are
+#    noise" relies on the model knowing what was session-produced.  When the
+#    hash arrives via surface_history, the model reads it as ambient context
+#    rather than something it just helped produce, and the rule misfires.
+# 4. Voice-sample contamination (separate but related): conversational
+#    fragments the user typed to a coding agent are captured as voice
+#    samples and bleed into suggestions on unrelated surfaces.  Leaving
+#    voice samples on for now; this is tracked as a follow-up.
+#
+# When re-enabling, options to consider: sanitize prior TL;DRs before
+# injecting them; truncate prior summaries to a topic-level cue rather than
+# the full text; or differentiate "what was on the surface" from "what the
+# model said about it."
+SURFACE_HISTORY_ENABLED = False
 STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     "initiative": {
         "incremental": "Initiative: stay incremental. Suggest small continuations or short nudges, not full drafts.",
@@ -132,6 +158,8 @@ def prompt_with_context(
     if not isinstance(preference_examples, list):
         preference_examples = []
     if not isinstance(surface_history, list):
+        surface_history = []
+    if not SURFACE_HISTORY_ENABLED:
         surface_history = []
     if not isinstance(reroll_context, dict):
         reroll_context = {}
@@ -302,17 +330,12 @@ def create_client(api_key: str | None, settings: dict[str, Any]) -> Any:
 def response_schema_contract() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["schema_version", "scratch", "tldr", "suggestions"],
-        "property_ordering": ["schema_version", "scratch", "tldr", "suggestions"],
+        "required": ["schema_version", "tldr", "suggestions"],
+        "property_ordering": ["schema_version", "tldr", "suggestions"],
         "properties": {
             "schema_version": {
                 "type": "integer",
                 "description": "Response schema version. Always 2.",
-            },
-            "scratch": {
-                "type": "string",
-                "max_length": 800,
-                "description": "Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
             },
             "tldr": {
                 "type": "string",
@@ -353,17 +376,12 @@ def _schema() -> types.Schema:
 
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["schema_version", "scratch", "tldr", "suggestions"],
-        propertyOrdering=["schema_version", "scratch", "tldr", "suggestions"],
+        required=["schema_version", "tldr", "suggestions"],
+        propertyOrdering=["schema_version", "tldr", "suggestions"],
         properties={
             "schema_version": types.Schema(
                 type=types.Type.INTEGER,
                 description="Response schema version. Always 2.",
-            ),
-            "scratch": types.Schema(
-                type=types.Type.STRING,
-                maxLength=800,
-                description="Pre-output analysis: identify the latest message, the load-bearing detail, and the participants before writing tldr/suggestions. Not shown to the user.",
             ),
             "tldr": types.Schema(
                 type=types.Type.STRING,

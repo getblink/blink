@@ -85,14 +85,14 @@ class BlinkOnceTests(unittest.TestCase):
         schema = blink_once.response_schema_contract()
 
         self.assertEqual(
-            schema["required"], ["schema_version", "scratch", "tldr", "suggestions"]
+            schema["required"], ["schema_version", "tldr", "suggestions"]
         )
         self.assertEqual(
             schema["property_ordering"],
-            ["schema_version", "scratch", "tldr", "suggestions"],
+            ["schema_version", "tldr", "suggestions"],
         )
         self.assertEqual(schema["properties"]["schema_version"]["type"], "integer")
-        self.assertEqual(schema["properties"]["scratch"]["type"], "string")
+        self.assertNotIn("scratch", schema["properties"])
         self.assertNotIn("max_length", schema["properties"]["tldr"])
         suggestions = schema["properties"]["suggestions"]
         self.assertEqual(suggestions["min_items"], 3)
@@ -1272,11 +1272,14 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertIn('Last time, the user typed "please inspect the logs first" instead of the model\'s suggestions.', prompt)
         self.assertNotIn("Preference lesson:", prompt)
         self.assertNotIn("evidence requests", prompt)
-        self.assertIn("Prior outcome: user typed a custom reply instead of using the suggestions.", prompt)
+        # recent_surface_history rendering is suppressed while the architecture
+        # is iterated on (see SURFACE_HISTORY_ENABLED). The build still records
+        # the data; only the prompt rendering ignores it.
+        self.assertNotIn("Prior outcome:", prompt)
         self.assertNotIn("User voice examples:", prompt)
         self.assertIn("Imitate their style closely in the suggestions", prompt)
 
-    def test_prompt_with_stateful_context_does_not_render_model_authored_chosen_text(self) -> None:
+    def test_prompt_with_stateful_context_does_not_render_surface_history(self) -> None:
         prompt = blink_once.prompt_with_stateful_context(
             "Base prompt.",
             {
@@ -1291,9 +1294,9 @@ class BlinkOnceTests(unittest.TestCase):
             },
         )
 
-        self.assertIn("Prior outcome: user inserted model suggestion #2", prompt)
-        self.assertIn("do not copy that prior model-authored wording", prompt)
-        self.assertNotIn("This looks good. Let's test this new prompt structure.", prompt)
+        # SURFACE_HISTORY_ENABLED is False: no prior summary or outcome should
+        # appear in the rendered prompt, only the base prompt.
+        self.assertEqual(prompt.strip(), "Base prompt.")
 
     def test_build_stateful_context_keeps_voice_past_window_but_drops_surface_buckets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
