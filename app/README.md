@@ -66,6 +66,14 @@ doing a non-dogfood script check and do not want to re-grant permissions.
 `BLINK_BUILD_NUMBER=` when cutting a release from a dirty or otherwise
 non-linear tree.
 
+`install_local_app.sh` overrides this with `BLINK_BUILD_NUMBER=0` so dogfood
+builds always look older than any released DMG. Sparkle compares the integer
+build number, so without this a local rebuild whose auto-computed number
+happens to match a future release's number would silently mask the upgrade
+("you're up to date" on an older marketing version). Expect Sparkle to offer
+an upgrade to the appcast version after every local install — that's the
+intended state.
+
 `scripts/fetch_python.sh` pins the python-build-standalone tarball by SHA256.
 When bumping `PYTHON_VERSION`, `PBS_RELEASE`, `ARCH`, or `BUILD`, update the
 case table in that script with the matching upstream `.sha256` release asset.
