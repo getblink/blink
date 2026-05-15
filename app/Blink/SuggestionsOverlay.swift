@@ -122,7 +122,7 @@ private final class SuggestionCardClickTarget: NSObject {
     }
 }
 
-final class SuggestionsOverlay: NSObject {
+final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
     private enum CustomInputMode: Equatable {
         case followUp
         case write
@@ -1415,6 +1415,13 @@ final class SuggestionsOverlay: NSObject {
         customInputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    private var customInputEditorText: String {
+        if let editor = customInputField?.currentEditor() as? NSTextView {
+            return editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return customInputText
+    }
+
     @MainActor
     func customInputCaretScreenPoint() -> CGPoint? {
         guard panel != nil, let field = customInputField, field.isEditing else { return nil }
@@ -2444,6 +2451,7 @@ final class SuggestionsOverlay: NSObject {
         field.focusRingType = .none
         field.lineBreakMode = .byTruncatingTail
         field.usesSingleLineMode = true
+        field.delegate = self
         field.target = self
         field.action = #selector(customInputReturnPressed(_:))
         field.onFocusChanged = { [weak self] active in
@@ -2519,7 +2527,7 @@ final class SuggestionsOverlay: NSObject {
         let activeColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
         let inactiveColor = NSColor.clear.cgColor
         let buttonFont = NSFont.systemFont(ofSize: 11, weight: .medium)
-        let hasTypedText = customInputText.isEmpty == false
+        let hasTypedText = customInputEditorText.isEmpty == false
         for (button, mode) in [(customFollowUpButton, CustomInputMode.followUp), (customWriteButton, CustomInputMode.write)] {
             guard let button else { continue }
             let isActive = customInputMode == mode
@@ -2546,9 +2554,9 @@ final class SuggestionsOverlay: NSObject {
         )
         setLabelText(
             hint,
-            text: customInputMode == .followUp ? "\u{23CE} Refresh" : "\u{23CE} Insert",
+            text: "",
             font: NSFont.systemFont(ofSize: Layout.hintFontSize),
-            color: .secondaryLabelColor,
+            color: .clear,
             lineSpacing: 0,
             singleLine: true
         )
@@ -2563,11 +2571,9 @@ final class SuggestionsOverlay: NSObject {
         guard let hint = customInputHintLabel,
               let field = customInputField,
               let tint = customInputTint else { return }
-        // Field stays full-width regardless of focus state. The hint sits at
-        // the bottom edge (y ∈ [4, 22]) while the field text sits near
-        // vertical center (~y ∈ [22, 40]) within the 62pt card, so they
-        // occupy different vertical bands — text can extend horizontally
-        // past the hint glyph without visually colliding.
+        // Field stays full-width regardless of focus state. The old inline
+        // Return hint competed with the right-side mode switcher, so only the
+        // focused tint animates now.
         let cardWidth = customInputBaseFrame.width
         let fieldX = Layout.suggestionTextX
         let modeX = cardWidth - Layout.cardPaddingX - Layout.customModeWidth
@@ -2575,13 +2581,13 @@ final class SuggestionsOverlay: NSObject {
         var fieldFrame = field.frame
         fieldFrame.origin.x = fieldX
         fieldFrame.size.width = fullFieldWidth
-        let targetAlpha: CGFloat = focused ? 1 : 0
+        let tintAlpha: CGFloat = focused ? 1 : 0
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Layout.animationDuration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                hint.animator().alphaValue = targetAlpha
-                tint.animator().alphaValue = targetAlpha
+                hint.animator().alphaValue = 0
+                tint.animator().alphaValue = tintAlpha
                 field.animator().frame = fieldFrame
             }
         } else {
@@ -2590,8 +2596,8 @@ final class SuggestionsOverlay: NSObject {
             hint.layer?.removeAllAnimations()
             tint.layer?.removeAllAnimations()
             field.layer?.removeAllAnimations()
-            hint.alphaValue = targetAlpha
-            tint.alphaValue = targetAlpha
+            hint.alphaValue = 0
+            tint.alphaValue = tintAlpha
             field.frame = fieldFrame
         }
     }
@@ -2652,6 +2658,22 @@ final class SuggestionsOverlay: NSObject {
         } else {
             onCustomInsert?(text)
         }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === customInputField else { return false }
+        if commandSelector == #selector(NSResponder.insertTab(_:))
+            || commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+            toggleCustomInputMode()
+            return true
+        }
+        return false
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? CustomReplyField,
+              field === customInputField else { return }
+        applyCustomInputModeVisuals()
     }
 
     private func handleLocalKeyDown(_ event: NSEvent) -> Bool {
