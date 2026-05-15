@@ -166,11 +166,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onCustomInsert: { [weak coordinator] in
                 if Thread.isMainThread {
-                    _ = coordinator?.insertCustomReplyFromInput()
+                    _ = coordinator?.submitCustomInputFromInput()
                     return true
                 }
                 DispatchQueue.main.sync {
-                    _ = coordinator?.insertCustomReplyFromInput()
+                    _ = coordinator?.submitCustomInputFromInput()
                 }
                 return true
             },

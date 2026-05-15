@@ -27,6 +27,7 @@ PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
+FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
@@ -142,6 +143,18 @@ def _bounded_text(value: Any, limit: int) -> str | None:
     return text[:limit]
 
 
+def reroll_content_text(follow_up_instruction: Any = None) -> str:
+    instruction = _bounded_text(follow_up_instruction, FOLLOW_UP_INSTRUCTION_MAX_CHARS)
+    if not instruction:
+        return REROLL_CONTENT_TEXT
+    return (
+        f"{REROLL_CONTENT_TEXT}\n\n"
+        "User follow-up instruction:\n"
+        f"{instruction}\n"
+        "Apply this instruction while still using only visible evidence."
+    )
+
+
 def prompt_with_context(
     prompt_text: str,
     stateful_context: dict[str, Any] | None,
@@ -171,6 +184,10 @@ def prompt_with_context(
         for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in previous_suggestions)
         if text
     ][:3]
+    follow_up_instruction = _bounded_text(
+        reroll_context.get("follow_up_instruction"),
+        FOLLOW_UP_INSTRUCTION_MAX_CHARS,
+    )
     style_text = style_block(style)
     if (
         not voice_samples
@@ -178,6 +195,7 @@ def prompt_with_context(
         and not surface_history
         and not previous_suggestion_texts
         and not style_text
+        and not follow_up_instruction
     ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
@@ -204,11 +222,30 @@ def prompt_with_context(
         lines.extend(
             [
                 "Reroll instructions:",
-                "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:",
             ]
+        )
+        if follow_up_instruction:
+            lines.extend(
+                [
+                    "User follow-up instruction:",
+                    follow_up_instruction,
+                    "Apply this instruction to the new suggestions while still using only visible evidence.",
+                ]
+            )
+        lines.append(
+            "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:"
         )
         for suggestion in previous_suggestion_texts:
             lines.append(f"- {suggestion}")
+    elif follow_up_instruction:
+        lines.extend(
+            [
+                "Reroll instructions:",
+                "User follow-up instruction:",
+                follow_up_instruction,
+                "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
+            ]
+        )
     if preference_examples:
         valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
         for example in preference_examples[:PREFERENCE_EXAMPLE_LIMIT]:
@@ -728,7 +765,7 @@ def _conversation_contents(
                 used_capture_images = True
                 continue
             if kind == "reroll":
-                text = REROLL_CONTENT_TEXT
+                text = reroll_content_text(turn.get("follow_up_instruction"))
             else:
                 text = str(turn.get("text") or REROLL_CONTENT_TEXT).strip()
             append_content("user", [_text_part(types, text)])

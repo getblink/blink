@@ -946,6 +946,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.resetChoiceState(suggestionCount: 0, allowsCustomInput: false)
                 self.overlay.onCustomInputFocusChanged = nil
                 self.overlay.onCustomInsert = nil
+                self.overlay.onCustomFollowUp = nil
                 self.overlay.onCustomInsertKey = nil
                 self.overlay.onLeaveCustomInputKey = nil
                 self.overlay.onTextEditingKey = nil
@@ -1066,6 +1067,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onCustomInsert = { [weak self] text in
                     self?.insertCustomReply(text: text)
                 }
+                self.overlay.onCustomFollowUp = { [weak self] text in
+                    self?.rerollCurrentSuggestions(followUpInstruction: text)
+                }
                 self.overlay.onChoiceKey = { [weak self] index in
                     self?.chooseSuggestion(index: index)
                 }
@@ -1073,7 +1077,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self?.insertExpandedSuggestion() ?? false
                 }
                 self.overlay.onCustomInsertKey = { [weak self] in
-                    _ = self?.insertCustomReplyFromInput()
+                    _ = self?.submitCustomInputFromInput()
                     return true
                 }
                 self.overlay.onLeaveCustomInputKey = { [weak self] in
@@ -1149,7 +1153,7 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     @MainActor
-    func rerollCurrentSuggestions() {
+    func rerollCurrentSuggestions(followUpInstruction rawInstruction: String? = nil) {
         guard overlay.isVisible,
               let sourceBundleDir = currentBundleDir,
               let sourceRequestID = currentRequestID,
@@ -1168,9 +1172,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         }
         let requestID = UUID().uuidString.lowercased()
         let clientMetadata = self.clientMetadata()
-        let runtime = runtimeStore.snapshot
+        var runtime = runtimeStore.snapshot
         let allowEventLogging = runtime.allowEventLogging
         let startedAt = Date()
+        let followUpInstruction = rawInstruction?.trimmingCharacters(in: .whitespacesAndNewlines)
         let pendingPayload: [String: Any] = [
             "request_id": requestID,
             "started_at": JSONFiles.isoString(startedAt),
@@ -1182,6 +1187,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             "source_request_id": sourceRequestID,
             "source_bundle_dir": sourceBundleDir.path,
             "frames": screenshotURLs.map(\.lastPathComponent),
+            "has_follow_up_instruction": followUpInstruction?.isEmpty == false,
         ]
         do {
             try PendingRunStore.create(requestID: requestID, payload: pendingPayload)
@@ -1199,12 +1205,15 @@ final class BlinkCoordinator: @unchecked Sendable {
         do {
             tempDir = try makeStagingDir()
             runtimeURL = tempDir.appendingPathComponent("runtime.json")
-            try writeJSON(runtime, to: runtimeURL)
             var requestEnvelope = JSONFiles.readObject(at: sourceBundleDir.appendingPathComponent("request.json")) ?? [:]
+            if let preferences = requestEnvelope["preferences"] as? [String: Any] {
+                runtime.thinkingLevel = preferences["thinking_level"] as? String
+            }
+            try writeJSON(runtime, to: runtimeURL)
             requestEnvelope["request_id"] = requestID
             requestEnvelope.removeValue(forKey: "stateful_context")
             // Keep full prior suggestions in the local request.json so the direct local runner can reroll without a server store. The Python proxy path trims this to schema_version + source_request_id before upload.
-            requestEnvelope["reroll_context"] = [
+            var rerollContext: [String: Any] = [
                 "schema_version": 1,
                 "source_request_id": sourceRequestID,
                 "previous_suggestions": currentSuggestions,
@@ -1215,6 +1224,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                     ]
                 },
             ]
+            if let followUpInstruction, !followUpInstruction.isEmpty {
+                rerollContext["follow_up_instruction"] = followUpInstruction
+            }
+            requestEnvelope["reroll_context"] = rerollContext
             try JSONFiles.writeObject(
                 requestEnvelope,
                 to: tempDir.appendingPathComponent("request.json")
@@ -1252,6 +1265,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onInsertKey = { true }
         overlay.onCustomInputFocusChanged = nil
         overlay.onCustomInsert = nil
+        overlay.onCustomFollowUp = nil
         overlay.onCustomInsertKey = nil
         overlay.onLeaveCustomInputKey = nil
         overlay.onTextEditingKey = nil
@@ -1269,6 +1283,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             details: [
                 "source_request_id": sourceRequestID,
                 "previous_suggestion_count": priorSuggestions.count,
+                "has_follow_up_instruction": followUpInstruction?.isEmpty == false,
             ]
         )
 
@@ -1372,6 +1387,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self.overlay.onCustomInsert = { [weak self] text in
                         self?.insertCustomReply(text: text)
                     }
+                    self.overlay.onCustomFollowUp = { [weak self] text in
+                        self?.rerollCurrentSuggestions(followUpInstruction: text)
+                    }
                     self.overlay.onChoiceKey = { [weak self] index in
                         self?.chooseSuggestion(index: index)
                     }
@@ -1379,7 +1397,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                         self?.insertExpandedSuggestion() ?? false
                     }
                     self.overlay.onCustomInsertKey = { [weak self] in
-                        _ = self?.insertCustomReplyFromInput()
+                        _ = self?.submitCustomInputFromInput()
                         return true
                     }
                     self.overlay.onLeaveCustomInputKey = { [weak self] in
@@ -1605,6 +1623,19 @@ final class BlinkCoordinator: @unchecked Sendable {
             insertSuggestion(index: index)
             return true
         }
+    }
+
+    @MainActor
+    func submitCustomInputFromInput() -> Bool {
+        guard currentBundleDir != nil else { return true }
+        let text = overlay.customInputText
+        guard !text.isEmpty else { return false }
+        if overlay.customInputSubmitsFollowUp {
+            rerollCurrentSuggestions(followUpInstruction: text)
+        } else {
+            insertCustomReply(text: text)
+        }
+        return true
     }
 
     @MainActor
@@ -1942,6 +1973,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         resetChoiceState(suggestionCount: 0)
         overlay.onCustomInputFocusChanged = nil
         overlay.onCustomInsert = nil
+        overlay.onCustomFollowUp = nil
         overlay.onCustomInsertKey = nil
         overlay.onLeaveCustomInputKey = nil
         overlay.onTextEditingKey = nil
