@@ -153,37 +153,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
             onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
+            onChoicePreflight: { [weak coordinator] index in coordinator?.preflightOverlayChoiceKey(index: index) },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
+            shouldConsumeInsert: { [weak coordinator] in
+                coordinator?.shouldConsumeOverlayInsertKey ?? false
+            },
             onInsert: { [weak coordinator] in
-                if Thread.isMainThread {
-                    return coordinator?.insertExpandedSuggestion() ?? false
-                }
-                var consumed = false
-                DispatchQueue.main.sync {
-                    consumed = coordinator?.insertExpandedSuggestion() ?? false
-                }
-                return consumed
+                _ = coordinator?.insertExpandedSuggestion()
             },
             onCustomInsert: { [weak coordinator] in
-                if Thread.isMainThread {
-                    _ = coordinator?.submitCustomInputFromInput()
-                    return true
-                }
-                DispatchQueue.main.sync {
-                    _ = coordinator?.submitCustomInputFromInput()
-                }
-                return true
+                _ = coordinator?.submitCustomInputFromInput()
             },
             onLeaveCustomInput: { [weak coordinator] in coordinator?.leaveCustomInput() },
             onTextEditing: { [weak coordinator] shortcut in
-                if Thread.isMainThread {
-                    return coordinator?.performCustomInputShortcut(shortcut) ?? false
-                }
-                var consumed = false
-                DispatchQueue.main.sync {
-                    consumed = coordinator?.performCustomInputShortcut(shortcut) ?? false
-                }
-                return consumed
+                _ = coordinator?.performCustomInputShortcut(shortcut)
             },
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
