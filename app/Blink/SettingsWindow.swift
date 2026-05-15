@@ -224,7 +224,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
             }
             item.target = self
             item.action = #selector(selectPane(_:))
-            item.isBordered = true
+            // Leave `isBordered = false` (the default). In `.preference` toolbar
+            // style, a bordered item shrinks the hit area to the image bounds
+            // and pushes the label outside the clickable region; the unbordered
+            // style lets the toolbar render the standard tab where the entire
+            // icon-plus-label column is one hit target.
             return item
         }
     }

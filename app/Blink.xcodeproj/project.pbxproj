@@ -10,6 +10,7 @@
 		057DEA137FBCB5D08BFC72E5 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */; };
 		06D5F20E2A2C8DE388596F7B /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */; };
 		0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 733316E4538EF5998654016C /* Carbon.framework */; };
+		126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */; };
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
 		2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */; };
 		25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DBB159CA5CB427CCCADEF /* BlinkApp.swift */; };
@@ -126,6 +127,7 @@
 		A2EF34A50A57C1CF8722B81A /* Hotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hotkey.swift; sourceTree = "<group>"; };
 		A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
 		AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceStateTests.swift; sourceTree = "<group>"; };
+		B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentedKnob.swift; sourceTree = "<group>"; };
 		B2FDBB8FC33DE2F5D3D76871 /* CaptureModeDeriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriver.swift; sourceTree = "<group>"; };
 		B6CFA143AF216667464AF0DE /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
@@ -165,6 +167,7 @@
 				379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */,
 				3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */,
 				79FD4897B5E37052B916E3C6 /* PermissionsSettingsView.swift */,
+				B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */,
 				F198B215CB11B569047AA51E /* StyleSettingsView.swift */,
 			);
 			path = Settings;
@@ -415,6 +418,7 @@
 				50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */,
 				8D89F453B4B447F3C165D8C2 /* RuntimeEnvironment.swift in Sources */,
 				E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */,
+				126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */,
 				C555231889A49F9834BC5D16 /* SettingsWindow.swift in Sources */,
 				379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */,
 				5DB3E531F79B3772D84B7949 /* StyleSettingsView.swift in Sources */,

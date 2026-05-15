@@ -105,13 +105,16 @@ struct StyleSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            Picker(spec.label, selection: knobBinding(spec)) {
-                Text(spec.leftTitle).tag(spec.leftValue)
-                Text("Balanced").tag("balanced")
-                Text(spec.rightTitle).tag(spec.rightValue)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+            SegmentedKnob(
+                selection: knobBinding(spec),
+                segments: [
+                    .init(title: spec.leftTitle,  value: spec.leftValue),
+                    .init(title: "Balanced",      value: "balanced"),
+                    .init(title: spec.rightTitle, value: spec.rightValue),
+                ]
+            )
+            .frame(width: 360)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .help(spec.hint)
     }
@@ -121,7 +124,7 @@ struct StyleSettingsView: View {
     @ViewBuilder
     private var aboutMeSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Anything Blink should always know: pronouns, role, recurring context.")
+            Text("Anything Blink should always know: name, role, recurring context.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             AboutMeTextEditor(text: aboutMeBinding, maxChars: StylePrefs.aboutMeMaxChars)
