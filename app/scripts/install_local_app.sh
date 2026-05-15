@@ -66,13 +66,12 @@ if [[ -x "$APP_DIR/python-dist/bin/python3" ]]; then
 fi
 
 echo "[blink] building self-contained Release app"
-# Stamp dogfood builds with CFBundleVersion=0 so Sparkle always treats the
-# released DMG as newer. Without this, a local rebuild's auto-computed build
-# number (rev-count + offset) can collide with a future release's number at
-# the same commit, and Sparkle would tell the user "you're up to date" even
-# when the marketing version on disk is older than the appcast.
+# Stamp dogfood builds with CFBundleVersion=0, but disable Sparkle for the
+# local install so the app doesn't immediately replace unreleased workspace
+# code with the public appcast build after launch.
 CONFIG=Release \
     BLINK_SKIP_TCC_RESET=1 \
+    BLINK_DISABLE_SPARKLE_UPDATES="${BLINK_DISABLE_SPARKLE_UPDATES:-1}" \
     BLINK_BUILD_NUMBER="${BLINK_BUILD_NUMBER:-0}" \
     bash "$SCRIPT_DIR/build.sh"
 

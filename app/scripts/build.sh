@@ -50,6 +50,14 @@ fi
 source "$SCRIPT_DIR/env_compat.sh"
 blink_apply_legacy_env_aliases
 
+if [[ "${BLINK_DISABLE_SPARKLE_UPDATES:-}" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    # Local dogfood installs should stay on the just-built bundle. Point the
+    # feed at a non-HTTPS localhost URL so BlinkApp.hasUsableSparkleConfig
+    # leaves Sparkle disabled even if config.env provided production updater
+    # credentials.
+    BLINK_SPARKLE_FEED_URL="http://127.0.0.1:9/appcast.xml"
+fi
+
 export BLINK_DEVELOPMENT_TEAM="${BLINK_DEVELOPMENT_TEAM:-${BLINK_TEAM_ID:-}}"
 
 # Use a real Developer ID identity for local builds when one is available, so
