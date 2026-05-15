@@ -18,6 +18,7 @@ SHARED_LIMIT_CONSTANTS = (
     "VOICE_SAMPLE_MAX_CHARS",
     "SURFACE_TEXT_MAX_CHARS",
     "PREFERENCE_TEXT_MAX_CHARS",
+    "FOLLOW_UP_INSTRUCTION_MAX_CHARS",
     "RESPONSE_SCHEMA_VERSION",
     "SUGGESTION_TAG_LIMIT",
     "SUGGESTION_TAG_MAX_CHARS",
@@ -106,6 +107,41 @@ class PromptParityTests(unittest.TestCase):
         self.assertEqual(
             gemini.prompt_with_context("BASE PROMPT", None, None, default_style),
             "BASE PROMPT",
+        )
+
+    def test_follow_up_instruction_matches_and_extends_reroll_prompt(self) -> None:
+        reroll_context = {
+            "schema_version": 1,
+            "previous_suggestions": ["Sounds good.", "I'll take a look."],
+            "follow_up_instruction": "make this warmer and ask for friday",
+        }
+        rendered = blink_once.prompt_with_context(
+            "BASE PROMPT",
+            None,
+            reroll_context,
+        )
+        self.assertEqual(
+            rendered,
+            gemini.prompt_with_context(
+                "BASE PROMPT",
+                None,
+                reroll_context,
+            ),
+        )
+        self.assertIn("User follow-up instruction:", rendered)
+        self.assertIn("make this warmer and ask for friday", rendered)
+        self.assertIn("avoid repeating these previous suggestions", rendered)
+        self.assertNotIn("Stateful Blink context:", rendered)
+
+    def test_follow_up_instruction_is_truncated(self) -> None:
+        long_text = "x" * (blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS + 50)
+        reroll_context = {"schema_version": 1, "follow_up_instruction": long_text}
+        rendered = blink_once.prompt_with_context("BASE PROMPT", None, reroll_context)
+        self.assertIn("x" * blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS, rendered)
+        self.assertNotIn("x" * (blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS + 1), rendered)
+        self.assertEqual(
+            rendered,
+            gemini.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
 
     def test_style_block_matches_for_populated_style(self) -> None:

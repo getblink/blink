@@ -267,6 +267,8 @@ class MainTests(unittest.TestCase):
             self.assertEqual([turn["role"] for turn in turns], ["user", "model", "user"])
             self.assertEqual(turns[1]["suggestions"], ["Please send the doc.", "I'll take a look."])
             self.assertIn("fresh set", turns[2]["text"])
+            self.assertIn("make this warmer", turns[2]["text"])
+            self.assertEqual(turns[2]["follow_up_instruction"], "make this warmer")
             self.assertNotIn("Stateful Blink context:", prompt_text)
             return {
                 "status": "ok",
@@ -311,6 +313,7 @@ class MainTests(unittest.TestCase):
                             "reroll_context": {
                                 "schema_version": 1,
                                 "source_request_id": source_id,
+                                "follow_up_instruction": "make this warmer",
                             },
                             "consent": {
                                 "allow_event_logging": True,
@@ -333,7 +336,15 @@ class MainTests(unittest.TestCase):
         recorded = telemetry_store.record_request.call_args.args[0]
         self.assertEqual(
             recorded["reroll_context"],
-            {"schema_version": 1, "source_request_id": source_id},
+            {
+                "schema_version": 1,
+                "source_request_id": source_id,
+                "follow_up_instruction": {
+                    "redacted": True,
+                    "char_count": 16,
+                    "sha256_prefix": recorded["reroll_context"]["follow_up_instruction"]["sha256_prefix"],
+                },
+            },
         )
         self.assertEqual(
             recorded["suggestions"],
@@ -908,6 +919,52 @@ class MainTests(unittest.TestCase):
         self.assertEqual(contents[-1].parts, [{"text": gemini.REROLL_CONTENT_TEXT}])
         self.assertNotEqual(contents[-1].parts, [{"text": gemini.MODEL_CONTENT_TEXT}])
 
+    def test_gemini_conversation_contents_reroll_uses_follow_up_instruction(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {
+                    "role": "model",
+                    "tldr": "Sarah needs a reply.",
+                    "suggestion_details": [{"text": "One", "tags": ["Reply"]}],
+                },
+                {
+                    "role": "user",
+                    "kind": "reroll",
+                    "text": "stale prompt text from older deploy",
+                    "follow_up_instruction": "make these more direct",
+                },
+            ],
+        )
+
+        self.assertEqual(
+            contents[-1].parts,
+            [{"text": gemini.reroll_content_text("make these more direct")}],
+        )
+        self.assertNotIn("stale prompt text", contents[-1].parts[0]["text"])
+
     def test_gemini_conversation_contents_multi_reroll_keeps_reroll_as_final_turn(self) -> None:
         class FakePart:
             @staticmethod
@@ -1176,6 +1233,7 @@ class MainTests(unittest.TestCase):
                             "request_id": "req-private",
                             "client": {"install_id": "install-private"},
                             "input_mode": "screenshot",
+                            "preferences": {"model": "gemini-3.1-flash-lite-preview"},
                             "focused_context": {
                                 "value": "secret draft",
                                 "selected_text": "draft",

@@ -103,6 +103,7 @@ VOICE_SAMPLE_MAX_CHARS = 500
 VOICE_SAMPLE_MIN_CHARS = 15
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
+FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 SURFACE_CONTEXT_WINDOW_SECONDS = 15 * 60
 RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
@@ -157,6 +158,7 @@ def style_block(style: dict[str, Any] | None) -> str:
     if not lines:
         return ""
     return "Style preferences:\n" + "\n".join(lines)
+
 
 DEFAULT_PROMPT = """You are looking at one or more screenshots of the user's active app. Talk to the user like a friend leaning over their shoulder. Warm, terse, direct.
 
@@ -605,6 +607,10 @@ def prompt_with_context(
         for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in previous_suggestions)
         if text
     ][:3]
+    follow_up_instruction = _bounded_text(
+        reroll_context.get("follow_up_instruction"),
+        FOLLOW_UP_INSTRUCTION_MAX_CHARS,
+    )
     style_text = style_block(style)
     if (
         not voice_samples
@@ -612,6 +618,7 @@ def prompt_with_context(
         and not surface_history
         and not previous_suggestion_texts
         and not style_text
+        and not follow_up_instruction
     ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
@@ -638,11 +645,30 @@ def prompt_with_context(
         lines.extend(
             [
                 "Reroll instructions:",
-                "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:",
             ]
+        )
+        if follow_up_instruction:
+            lines.extend(
+                [
+                    "User follow-up instruction:",
+                    follow_up_instruction,
+                    "Apply this instruction to the new suggestions while still using only visible evidence.",
+                ]
+            )
+        lines.append(
+            "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:"
         )
         for suggestion in previous_suggestion_texts:
             lines.append(f"- {suggestion}")
+    elif follow_up_instruction:
+        lines.extend(
+            [
+                "Reroll instructions:",
+                "User follow-up instruction:",
+                follow_up_instruction,
+                "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
+            ]
+        )
     if preference_examples:
         valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
         for example in preference_examples[:PREFERENCE_EXAMPLE_LIMIT]:
@@ -1622,10 +1648,17 @@ def request_payload_for_proxy(request_payload: dict[str, Any]) -> dict[str, Any]
     if isinstance(reroll_context, dict):
         source_request_id = str(reroll_context.get("source_request_id") or "").strip()
         if source_request_id:
-            payload["reroll_context"] = {
+            trimmed_reroll_context = {
                 "schema_version": int(reroll_context.get("schema_version") or 1),
                 "source_request_id": source_request_id,
             }
+            follow_up_instruction = _bounded_text(
+                reroll_context.get("follow_up_instruction"),
+                FOLLOW_UP_INSTRUCTION_MAX_CHARS,
+            )
+            if follow_up_instruction:
+                trimmed_reroll_context["follow_up_instruction"] = follow_up_instruction
+            payload["reroll_context"] = trimmed_reroll_context
         else:
             payload.pop("reroll_context", None)
     return payload

@@ -125,6 +125,7 @@ REDACTED_CONTENT_KEYS = {
     "tldr",
     "previous_suggestions",
     "about_me",
+    "follow_up_instruction",
 }
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -336,10 +337,14 @@ def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="reroll_context.schema_version must be an integer",
         ) from exc
-    return {
+    normalized: dict[str, Any] = {
         "schema_version": schema_version,
         "source_request_id": source_request_id,
     }
+    follow_up_instruction = str(value.get("follow_up_instruction") or "").strip()
+    if follow_up_instruction:
+        normalized["follow_up_instruction"] = follow_up_instruction[: gemini.FOLLOW_UP_INSTRUCTION_MAX_CHARS]
+    return normalized
 
 
 def _redacted_text_summary(value: str) -> dict[str, Any]:
@@ -396,6 +401,10 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     )
     sanitized["focused_context"] = _sanitize_content_payload(
         envelope.get("focused_context"),
+        allow_content_retention=allow_content_retention,
+    )
+    sanitized["preferences"] = _sanitize_content_payload(
+        envelope.get("preferences"),
         allow_content_retention=allow_content_retention,
     )
     sanitized["stateful_context"] = _sanitize_content_payload(
@@ -644,13 +653,17 @@ def _model_thread_turn(request_id: str, payload: dict[str, Any]) -> dict[str, An
     }
 
 
-def _reroll_thread_turn(request_id: str) -> dict[str, Any]:
-    return {
+def _reroll_thread_turn(request_id: str, follow_up_instruction: Any = None) -> dict[str, Any]:
+    instruction = str(follow_up_instruction or "").strip()[: gemini.FOLLOW_UP_INSTRUCTION_MAX_CHARS]
+    turn = {
         "role": "user",
         "kind": "reroll",
         "request_id": request_id,
-        "text": gemini.REROLL_CONTENT_TEXT,
+        "text": gemini.reroll_content_text(instruction),
     }
+    if instruction:
+        turn["follow_up_instruction"] = instruction
+    return turn
 
 
 def _new_thread(
@@ -811,13 +824,14 @@ def _thread_context_for_request(
 def _conversation_turns_for_request(
     thread_context: dict[str, Any] | None,
     request_id: str,
+    follow_up_instruction: Any = None,
 ) -> list[dict[str, Any]] | None:
     if thread_context is None:
         return None
     turns = _valid_thread_turns(thread_context.get("thread"))
     if not turns:
         return None
-    return turns + [_reroll_thread_turn(request_id)]
+    return turns + [_reroll_thread_turn(request_id, follow_up_instruction)]
 
 
 def _store_thread_success(
@@ -856,7 +870,12 @@ def _store_thread_success(
             "created_at": str(original.get("created_at") or _now_iso()),
             "updated_at": _now_iso(),
             "turns": turns + [
-                _reroll_thread_turn(request_id),
+                _reroll_thread_turn(
+                    request_id,
+                    (envelope.get("reroll_context") or {}).get("follow_up_instruction")
+                    if isinstance(envelope.get("reroll_context"), dict)
+                    else None,
+                ),
                 _model_thread_turn(request_id, payload),
             ],
         }
@@ -1070,6 +1089,7 @@ async def _run_tldr_request(
     conversation_turns = _conversation_turns_for_request(
         thread_context,
         str(envelope["request_id"]),
+        reroll_context.get("follow_up_instruction") if isinstance(reroll_context, dict) else None,
     )
     if conversation_turns is not None:
         model_envelope["conversation_thread"] = {

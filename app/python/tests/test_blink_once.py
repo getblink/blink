@@ -477,6 +477,7 @@ class BlinkOnceTests(unittest.TestCase):
                 "reroll_context": {
                     "schema_version": 1,
                     "source_request_id": "11111111-1111-4111-8111-111111111111",
+                    "follow_up_instruction": "make these shorter",
                     "previous_suggestions": ["secret local text"],
                     "previous_suggestion_details": [
                         {"text": "secret local text", "tags": ["Reply"]}
@@ -490,6 +491,7 @@ class BlinkOnceTests(unittest.TestCase):
             {
                 "schema_version": 1,
                 "source_request_id": "11111111-1111-4111-8111-111111111111",
+                "follow_up_instruction": "make these shorter",
             },
         )
 

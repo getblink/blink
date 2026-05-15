@@ -34,6 +34,7 @@ final class SuggestionsPanel: NSPanel {
 final class CustomReplyField: NSTextField {
     var onFocusChanged: ((Bool) -> Void)?
     var onLocalKeyDown: ((NSEvent) -> Bool)?
+    var onTextChanged: ((String) -> Void)?
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
@@ -56,6 +57,10 @@ final class CustomReplyField: NSTextField {
             return
         }
         super.keyDown(with: event)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onTextChanged?(self.stringValue)
+        }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -90,6 +95,10 @@ final class CustomReplyField: NSTextField {
         case .cut:
             editor.cut(nil)
         }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onTextChanged?(self.stringValue)
+        }
         return true
     }
 
@@ -113,7 +122,12 @@ private final class SuggestionCardClickTarget: NSObject {
     }
 }
 
-final class SuggestionsOverlay: NSObject {
+final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
+    private enum CustomInputMode: Equatable {
+        case followUp
+        case write
+    }
+
     private enum Layout {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
@@ -146,6 +160,10 @@ final class SuggestionsOverlay: NSObject {
         static let suggestionCornerRadius: CGFloat = 22
         static let customInputHeight: CGFloat = 62
         static let customInputTextHeight: CGFloat = 24
+        static let customModeWidth: CGFloat = 148
+        static let customModeFollowUpWidth: CGFloat = 88
+        static let customModeGap: CGFloat = 14
+        static let customModeButtonHeight: CGFloat = 28
         static let suggestionSingleLineTextHeight: CGFloat = 24
         static let suggestionNumberX: CGFloat = 20
         static let suggestionNumberWidth: CGFloat = 28
@@ -230,6 +248,9 @@ final class SuggestionsOverlay: NSObject {
     private var customInputField: CustomReplyField?
     private var customInputHintLabel: NSTextField?
     private var customInputTint: NSView?
+    private var customInputMode: CustomInputMode = .followUp
+    private var customFollowUpButton: NSButton?
+    private var customWriteButton: NSButton?
     private var bottomHintLabel: NSTextField?
     private var bottomHintBaseFrame: NSRect = .zero
     private var showsTldrHeader: Bool = false
@@ -254,6 +275,7 @@ final class SuggestionsOverlay: NSObject {
 
     var onCustomInputFocusChanged: ((Bool) -> Void)?
     var onCustomInsert: ((String) -> Void)?
+    var onCustomFollowUp: ((String) -> Void)?
     var onChoiceKey: ((Int) -> Void)?
     var onInsertKey: (() -> Bool)?
     var onCustomInsertKey: (() -> Bool)?
@@ -266,6 +288,10 @@ final class SuggestionsOverlay: NSObject {
 
     var isVisible: Bool {
         panel?.isVisible == true
+    }
+
+    var customInputSubmitsFollowUp: Bool {
+        customInputMode == .followUp
     }
 
     /// True when the overlay is on screen and has already promoted past the
@@ -752,7 +778,15 @@ final class SuggestionsOverlay: NSObject {
             }
         }
 
-        let custom: (outer: NSView, content: NSView, field: CustomReplyField, enterHint: NSTextField, tint: NSView)?
+        let custom: (
+            outer: NSView,
+            content: NSView,
+            field: CustomReplyField,
+            enterHint: NSTextField,
+            tint: NSView,
+            followUpButton: NSButton,
+            writeButton: NSButton
+        )?
         let customFrame: NSRect
         if showsCustomInput {
             if !visibleSuggestions.isEmpty {
@@ -813,10 +847,14 @@ final class SuggestionsOverlay: NSObject {
         self.customInputField = custom?.field
         self.customInputHintLabel = custom?.enterHint
         self.customInputTint = custom?.tint
+        self.customInputMode = .followUp
+        self.customFollowUpButton = custom?.followUpButton
+        self.customWriteButton = custom?.writeButton
         self.bottomHintLabel = bottomHint
         self.bottomHintBaseFrame = bottomHintFrame
         self.showsTldrHeader = showsTldrHeader
         panel.customReplyField = custom?.field
+        applyCustomInputModeVisuals()
         self.currentHeightDelta = 0
         self.expandedSuggestionIndex = nil
         self.hasPlayedSuggestionArrival = false
@@ -920,23 +958,24 @@ final class SuggestionsOverlay: NSObject {
         currentHeightDelta = 0
         customInputField?.onFocusChanged?(false)
         panel?.customReplyField = nil
-        showRefreshStatusPill()
-
-        let views = suggestionCards.map(\.outer)
-            + [customInputCard, bottomHintLabel].compactMap { $0 }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Layout.animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for (index, view) in views.enumerated() {
-                view.animator().alphaValue = 0
-                view.animator().frame = view.frame.offsetBy(dx: 0, dy: 8 + CGFloat(index) * 1.5)
+            for card in suggestionCards {
+                card.outer.animator().alphaValue = 0.44
             }
         }
     }
 
     func endSuggestionRefresh() {
         isSuggestionRefreshing = false
-        hideRefreshStatusPill()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for card in suggestionCards {
+                card.outer.animator().alphaValue = 1
+            }
+        }
     }
 
     private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
@@ -1054,6 +1093,8 @@ final class SuggestionsOverlay: NSObject {
         customInputField = nil
         customInputHintLabel = nil
         customInputTint = nil
+        customFollowUpButton = nil
+        customWriteButton = nil
         bottomHintLabel?.removeFromSuperview()
         bottomHintLabel = nil
         panel.customReplyField = nil
@@ -1195,13 +1236,17 @@ final class SuggestionsOverlay: NSObject {
         self.customInputField = customCard.field
         self.customInputHintLabel = customCard.enterHint
         self.customInputTint = customCard.tint
+        self.customInputMode = .followUp
+        self.customFollowUpButton = customCard.followUpButton
+        self.customWriteButton = customCard.writeButton
         self.bottomHintLabel = bottomHint
         self.bottomHintBaseFrame = bottomHintFrame
         panel.customReplyField = customCard.field
+        applyCustomInputModeVisuals()
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
         self.currentHeightDelta = 0
-        let refreshArrivalViews = cards.map(\.outer) + [customCard.outer] + [bottomHint].compactMap { $0 }
+        let refreshArrivalViews = cards.map(\.outer)
         if shouldAnimateRefresh, !cards.isEmpty {
             playArrivalAnimation(summary: nil, cards: refreshArrivalViews)
         } else if !hasPlayedSuggestionArrival, !cards.isEmpty {
@@ -1368,6 +1413,13 @@ final class SuggestionsOverlay: NSObject {
 
     var customInputText: String {
         customInputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var customInputEditorText: String {
+        if let editor = customInputField?.currentEditor() as? NSTextView {
+            return editor.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return customInputText
     }
 
     @MainActor
@@ -1689,6 +1741,9 @@ final class SuggestionsOverlay: NSObject {
         customInputField = nil
         customInputHintLabel = nil
         customInputTint = nil
+        customInputMode = .followUp
+        customFollowUpButton = nil
+        customWriteButton = nil
         bottomHintLabel = nil
         bottomHintBaseFrame = .zero
         showsTldrHeader = false
@@ -2303,7 +2358,9 @@ final class SuggestionsOverlay: NSObject {
         content: NSView,
         field: CustomReplyField,
         enterHint: NSTextField,
-        tint: NSView
+        tint: NSView,
+        followUpButton: NSButton,
+        writeButton: NSButton
     ) {
         let pane = makeGlassPane(frame: frame, cornerRadius: frame.height / 2)
 
@@ -2343,11 +2400,37 @@ final class SuggestionsOverlay: NSObject {
         number.alignment = .center
         pane.content.addSubview(number)
 
+        let modeX = frame.width - Layout.cardPaddingX - Layout.customModeWidth
+        let followUpButton = customInputModeButton(
+            title: "Follow up",
+            tag: 0,
+            frame: NSRect(
+                x: modeX,
+                y: (frame.height - Layout.customModeButtonHeight) / 2,
+                width: Layout.customModeFollowUpWidth,
+                height: Layout.customModeButtonHeight
+            )
+        )
+        pane.content.addSubview(followUpButton)
+
+        let writeButton = customInputModeButton(
+            title: "Write",
+            tag: 1,
+            frame: NSRect(
+                x: modeX + Layout.customModeFollowUpWidth,
+                y: (frame.height - Layout.customModeButtonHeight) / 2,
+                width: Layout.customModeWidth - Layout.customModeFollowUpWidth,
+                height: Layout.customModeButtonHeight
+            )
+        )
+        pane.content.addSubview(writeButton)
+
         let textHeight = Layout.customInputTextHeight
+        let fieldX = Layout.suggestionTextX
         let field = CustomReplyField(frame: NSRect(
-            x: Layout.suggestionTextX,
+            x: fieldX,
             y: (frame.height - textHeight) / 2,
-            width: frame.width - Layout.suggestionTextX - Layout.cardPaddingX,
+            width: modeX - Layout.customModeGap - fieldX,
             height: textHeight
         ))
         // Default `placeholderTextColor` is too dim against the dark popover
@@ -2368,6 +2451,7 @@ final class SuggestionsOverlay: NSObject {
         field.focusRingType = .none
         field.lineBreakMode = .byTruncatingTail
         field.usesSingleLineMode = true
+        field.delegate = self
         field.target = self
         field.action = #selector(customInputReturnPressed(_:))
         field.onFocusChanged = { [weak self] active in
@@ -2384,13 +2468,17 @@ final class SuggestionsOverlay: NSObject {
         field.onLocalKeyDown = { [weak self] event in
             self?.handleLocalKeyDown(event) ?? false
         }
+        field.onTextChanged = { [weak self] _ in
+            self?.applyCustomInputModeVisuals()
+        }
         pane.content.addSubview(field)
 
+        let hintWidth: CGFloat = 104
         let enterHint = label(
             frame: NSRect(
-                x: frame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
+                x: modeX - Layout.customModeGap - hintWidth,
                 y: Layout.enterHintBottomInset,
-                width: Layout.enterHintWidth,
+                width: hintWidth,
                 height: Layout.enterHintHeight
             ),
             text: "\u{23CE} Enter to insert",
@@ -2403,7 +2491,76 @@ final class SuggestionsOverlay: NSObject {
         enterHint.autoresizingMask = [.minXMargin]
         pane.content.addSubview(enterHint)
 
-        return (pane.outer, pane.content, field, enterHint, tint)
+        return (pane.outer, pane.content, field, enterHint, tint, followUpButton, writeButton)
+    }
+
+    private func customInputModeButton(title: String, tag: Int, frame: NSRect) -> NSButton {
+        let button = NSButton(frame: frame)
+        button.title = title
+        button.tag = tag
+        button.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        button.alignment = .center
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.setButtonType(.momentaryPushIn)
+        button.target = self
+        button.action = #selector(customInputModeButtonClicked(_:))
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 10
+        button.layer?.masksToBounds = true
+        return button
+    }
+
+    @objc private func customInputModeButtonClicked(_ sender: NSButton) {
+        setCustomInputMode(sender.tag == 1 ? .write : .followUp, focusField: true)
+    }
+
+    private func setCustomInputMode(_ mode: CustomInputMode, focusField: Bool) {
+        customInputMode = mode
+        applyCustomInputModeVisuals()
+        if focusField {
+            focusCustomInput()
+        }
+    }
+
+    private func applyCustomInputModeVisuals() {
+        let activeColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+        let inactiveColor = NSColor.clear.cgColor
+        let buttonFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let hasTypedText = customInputEditorText.isEmpty == false
+        for (button, mode) in [(customFollowUpButton, CustomInputMode.followUp), (customWriteButton, CustomInputMode.write)] {
+            guard let button else { continue }
+            let isActive = customInputMode == mode
+            button.layer?.backgroundColor = isActive ? activeColor : inactiveColor
+            button.alphaValue = isActive || !hasTypedText ? 1 : 0
+            button.attributedTitle = NSAttributedString(
+                string: button.title,
+                attributes: [
+                    .foregroundColor: isActive ? NSColor.labelColor : NSColor.secondaryLabelColor,
+                    .font: buttonFont,
+                ]
+            )
+        }
+        guard let field = customInputField, let hint = customInputHintLabel else { return }
+        let placeholder = customInputMode == .followUp
+            ? "Tell Blink what to change..."
+            : "Type your own reply..."
+        field.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: field.font ?? NSFont.systemFont(ofSize: Layout.suggestionFontSize),
+            ]
+        )
+        setLabelText(
+            hint,
+            text: "",
+            font: NSFont.systemFont(ofSize: Layout.hintFontSize),
+            color: .clear,
+            lineSpacing: 0,
+            singleLine: true
+        )
+        hint.alignment = .right
     }
 
     private func setCustomInputHintVisible(_ visible: Bool) {
@@ -2414,22 +2571,23 @@ final class SuggestionsOverlay: NSObject {
         guard let hint = customInputHintLabel,
               let field = customInputField,
               let tint = customInputTint else { return }
-        // Field stays full-width regardless of focus state. The hint sits at
-        // the bottom edge (y ∈ [4, 22]) while the field text sits near
-        // vertical center (~y ∈ [22, 40]) within the 62pt card, so they
-        // occupy different vertical bands — text can extend horizontally
-        // past the hint glyph without visually colliding.
+        // Field stays full-width regardless of focus state. The old inline
+        // Return hint competed with the right-side mode switcher, so only the
+        // focused tint animates now.
         let cardWidth = customInputBaseFrame.width
-        let fullFieldWidth = cardWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let fieldX = Layout.suggestionTextX
+        let modeX = cardWidth - Layout.cardPaddingX - Layout.customModeWidth
+        let fullFieldWidth = modeX - Layout.customModeGap - fieldX
         var fieldFrame = field.frame
+        fieldFrame.origin.x = fieldX
         fieldFrame.size.width = fullFieldWidth
-        let targetAlpha: CGFloat = focused ? 1 : 0
+        let tintAlpha: CGFloat = focused ? 1 : 0
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = Layout.animationDuration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                hint.animator().alphaValue = targetAlpha
-                tint.animator().alphaValue = targetAlpha
+                hint.animator().alphaValue = 0
+                tint.animator().alphaValue = tintAlpha
                 field.animator().frame = fieldFrame
             }
         } else {
@@ -2438,8 +2596,8 @@ final class SuggestionsOverlay: NSObject {
             hint.layer?.removeAllAnimations()
             tint.layer?.removeAllAnimations()
             field.layer?.removeAllAnimations()
-            hint.alphaValue = targetAlpha
-            tint.alphaValue = targetAlpha
+            hint.alphaValue = 0
+            tint.alphaValue = tintAlpha
             field.frame = fieldFrame
         }
     }
@@ -2495,11 +2653,35 @@ final class SuggestionsOverlay: NSObject {
     @objc private func customInputReturnPressed(_ sender: CustomReplyField) {
         let text = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        onCustomInsert?(text)
+        if customInputMode == .followUp {
+            onCustomFollowUp?(text)
+        } else {
+            onCustomInsert?(text)
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === customInputField else { return false }
+        if commandSelector == #selector(NSResponder.insertTab(_:))
+            || commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+            toggleCustomInputMode()
+            return true
+        }
+        return false
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? CustomReplyField,
+              field === customInputField else { return }
+        applyCustomInputModeVisuals()
     }
 
     private func handleLocalKeyDown(_ event: NSEvent) -> Bool {
         let customInputActive = customInputField?.isEditing == true
+        if customInputActive, isTabKey(event) {
+            toggleCustomInputMode()
+            return true
+        }
         guard let command = OverlayKeyRouter.command(for: event, customInputActive: customInputActive) else {
             return false
         }
@@ -2524,6 +2706,16 @@ final class SuggestionsOverlay: NSObject {
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false
         }
+    }
+
+    private func isTabKey(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 48 else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.isEmpty || flags == .shift
+    }
+
+    private func toggleCustomInputMode() {
+        setCustomInputMode(customInputMode == .followUp ? .write : .followUp, focusField: false)
     }
 
     private func label(

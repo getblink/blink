@@ -71,11 +71,13 @@ final class HotkeyManager {
     private let onSummaryHotkeyWhileOverlay: (DispatchTime) -> Void
     private let onSubmitCollecting: () -> Void
     private let onCancelCollecting: () -> Void
+    private let onChoicePreflight: (Int) -> Void
     private let onChoice: (Int) -> Void
-    private let onInsert: () -> Bool
-    private let onCustomInsert: () -> Bool
+    private let shouldConsumeInsert: () -> Bool
+    private let onInsert: () -> Void
+    private let onCustomInsert: () -> Void
     private let onLeaveCustomInput: () -> Void
-    private let onTextEditing: (TextEditingShortcut) -> Bool
+    private let onTextEditing: (TextEditingShortcut) -> Void
     private let onReroll: () -> Void
     private let onDismiss: () -> Void
     private let tapStateLock = NSLock()
@@ -104,11 +106,13 @@ final class HotkeyManager {
         onSummaryHotkeyWhileOverlay: @escaping (DispatchTime) -> Void,
         onSubmitCollecting: @escaping () -> Void,
         onCancelCollecting: @escaping () -> Void,
+        onChoicePreflight: @escaping (Int) -> Void,
         onChoice: @escaping (Int) -> Void,
-        onInsert: @escaping () -> Bool,
-        onCustomInsert: @escaping () -> Bool,
+        shouldConsumeInsert: @escaping () -> Bool,
+        onInsert: @escaping () -> Void,
+        onCustomInsert: @escaping () -> Void,
         onLeaveCustomInput: @escaping () -> Void,
-        onTextEditing: @escaping (TextEditingShortcut) -> Bool,
+        onTextEditing: @escaping (TextEditingShortcut) -> Void,
         onReroll: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
@@ -121,7 +125,9 @@ final class HotkeyManager {
         self.onSummaryHotkeyWhileOverlay = onSummaryHotkeyWhileOverlay
         self.onSubmitCollecting = onSubmitCollecting
         self.onCancelCollecting = onCancelCollecting
+        self.onChoicePreflight = onChoicePreflight
         self.onChoice = onChoice
+        self.shouldConsumeInsert = shouldConsumeInsert
         self.onInsert = onInsert
         self.onCustomInsert = onCustomInsert
         self.onLeaveCustomInput = onLeaveCustomInput
@@ -324,15 +330,21 @@ final class HotkeyManager {
            ) {
             switch command {
             case .choice(let index):
+                manager.onChoicePreflight(index)
                 DispatchQueue.main.async { manager.onChoice(index) }
                 return nil
             case .dismiss:
                 DispatchQueue.main.async { manager.onDismiss() }
                 return nil
             case .insert:
-                return manager.onInsert() ? nil : Unmanaged.passUnretained(event)
+                guard manager.shouldConsumeInsert() else {
+                    return Unmanaged.passUnretained(event)
+                }
+                DispatchQueue.main.async { manager.onInsert() }
+                return nil
             case .insertCustomInput:
-                return manager.onCustomInsert() ? nil : Unmanaged.passUnretained(event)
+                DispatchQueue.main.async { manager.onCustomInsert() }
+                return nil
             case .leaveCustomInput:
                 DispatchQueue.main.async { manager.onLeaveCustomInput() }
                 return nil
@@ -340,7 +352,8 @@ final class HotkeyManager {
                 DispatchQueue.main.async { manager.onReroll() }
                 return nil
             case .textEditing(let shortcut):
-                return manager.onTextEditing(shortcut) ? nil : Unmanaged.passUnretained(event)
+                DispatchQueue.main.async { manager.onTextEditing(shortcut) }
+                return nil
             }
         }
 
