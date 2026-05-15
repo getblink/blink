@@ -190,6 +190,13 @@ if [[ "$UPLOAD" != "0" ]]; then
         fi
         if [[ -z "$BLINK_RCLONE_CONFIG_TEMP" ]]; then
             BLINK_RCLONE_CONFIG_TEMP="$(mktemp)"
+            # `no_check_bucket = true`: rclone's S3 backend probes the bucket
+            # via HeadBucket / CreateBucket by default, but our Cloudflare R2
+            # tokens are scoped to Object Read & Write — they have no bucket
+            # permissions, so the probe fails with `403 AccessDenied:
+            # CreateBucket` before any object upload is attempted. Caught
+            # during the 0.2.11 release when aws s3 cp hit BAD_RECORD_MAC and
+            # rclone fallback then died 20 retries deep on CreateBucket.
             cat > "$BLINK_RCLONE_CONFIG_TEMP" <<EOF
 [r2]
 type = s3
@@ -198,9 +205,14 @@ access_key_id = ${R2_ACCESS_KEY_ID}
 secret_access_key = ${R2_SECRET_ACCESS_KEY}
 endpoint = ${R2_ENDPOINT}
 region = auto
+no_check_bucket = true
 EOF
         fi
+        # `--s3-no-check-bucket` belt-and-suspenders with `no_check_bucket` in
+        # the config above: the flag wins if a stale config ever survives, and
+        # the config wins if the flag is dropped during a future refactor.
         RCLONE_CONFIG="$BLINK_RCLONE_CONFIG_TEMP" rclone copyto \
+            --s3-no-check-bucket \
             --s3-chunk-size=5M \
             --s3-upload-concurrency=1 \
             --retries 20 \
