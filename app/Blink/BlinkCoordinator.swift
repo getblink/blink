@@ -17,6 +17,13 @@ final class BlinkCoordinator: @unchecked Sendable {
         let sha256: String
         let thumbnail: NSImage?
         let frontmostApp: [String: Any]
+        /// The AppKit-screen rect (points) that this captured PNG
+        /// covers. Used by `ScreenAnnotator` to translate caret /
+        /// mouse / focused-bounds points into image pixels. Sourced
+        /// from `ScreenCapture.Capture.windowFramePoints` — the same
+        /// struct that produced the PNG bytes — so the rect can't
+        /// drift from the image (a separate AX query could).
+        let captureRectPoints: CGRect
     }
 
     private struct CaptureSession {
@@ -610,7 +617,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                     imageDiagnostics: frame.imageDiagnostics,
                     sha256: frame.sha256,
                     thumbnail: frame.thumbnail,
-                    frontmostApp: frame.frontmostApp
+                    frontmostApp: frame.frontmostApp,
+                    captureRectPoints: frame.captureRectPoints
                 )
                 status("no new content — scroll first")
                 isDuplicate = true
@@ -723,7 +731,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                     imageDiagnostics: frame.imageDiagnostics,
                     sha256: frame.sha256,
                     thumbnail: frame.thumbnail,
-                    frontmostApp: frame.frontmostApp
+                    frontmostApp: frame.frontmostApp,
+                    captureRectPoints: frame.captureRectPoints
                 )
                 status("no new content — scroll first")
                 isDuplicate = true
@@ -820,6 +829,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         if let title = capture.windowTitle, !title.isEmpty {
             frontmostApp["window_title"] = title
         }
+        // `Capture.windowFramePoints` comes straight from `SCWindow.frame`
+        // / `SCDisplay.frame`, which are CG global coordinates (origin
+        // top-left, +Y down). Every other marker input to ScreenAnnotator
+        // — caret point, mouse point, focused bounds — is AppKit-screen
+        // (origin bottom-left, +Y up). Flip Y here so the rect lives in
+        // the same coord system as the markers; ScreenAnnotator's
+        // pixel-mapping math relies on that consistency. The flip mirrors
+        // `CaptureConfirmationOverlay.flash` (ScreenCapture.swift:571-576)
+        // which does the same conversion for its overlay window.
+        let captureRectScreen = captureRectInAppKitScreen(capture.windowFramePoints)
         return CapturedFrameResult(
             frame: CapturedFrame(
                 index: index,
@@ -831,9 +850,27 @@ final class BlinkCoordinator: @unchecked Sendable {
                 imageDiagnostics: capturePayload.diagnostics,
                 sha256: sha256Hex(capture.pngData),
                 thumbnail: Self.makeThumbnail(from: capture.pngData),
-                frontmostApp: frontmostApp
+                frontmostApp: frontmostApp,
+                captureRectPoints: captureRectScreen
             ),
             shareableContent: capture.shareableContent
+        )
+    }
+
+    /// Flip a CG-global rect (top-left origin, +Y down) into AppKit-screen
+    /// coords (bottom-left, +Y up) so it matches the marker points
+    /// `ScreenAnnotator` receives. Falls back to the input if no screen
+    /// is attached so a future headless CI run can't crash here.
+    private func captureRectInAppKitScreen(_ cgRect: CGRect) -> CGRect {
+        let primaryHeight = DispatchQueue.main.sync {
+            NSScreen.screens.first?.frame.height ?? 0
+        }
+        guard primaryHeight > 0 else { return cgRect }
+        return CGRect(
+            x: cgRect.origin.x,
+            y: primaryHeight - cgRect.maxY,
+            width: cgRect.width,
+            height: cgRect.height
         )
     }
 
@@ -916,7 +953,33 @@ final class BlinkCoordinator: @unchecked Sendable {
             let focusedSnapshot = FocusedContextCapture.captureSnapshot(
                 allowContentRetention: runtime.allowContentRetention
             )
+            // NSEvent.mouseLocation is main-thread-only; this code path
+            // is on submitQueue. The sync hop is cheap (microseconds) and
+            // matches the existing pattern at the top of captureFrame
+            // (line ~788) for NSWorkspace.shared.frontmostApplication.
+            let mouseLocation: CGPoint = DispatchQueue.main.sync { NSEvent.mouseLocation }
             let focusedContext = focusedSnapshot.uploadPayload
+            // Annotate every frame in place before the runner reads them.
+            // Each frame carries its own captureRect, so the marker math
+            // stays correct for multi-frame scrolls where the window
+            // moved between captures.
+            if runtime.annotateScreenshots {
+                let markers = ScreenAnnotator.Markers(
+                    focusedBounds: focusedSnapshot.focusedBoundsScreen,
+                    caretPoint: focusedSnapshot.caretScreenPoint,
+                    mousePoint: mouseLocation,
+                    sourceConfidence: focusedSnapshot.sourceConfidence
+                )
+                for frame in active.frames {
+                    guard let pngData = try? Data(contentsOf: frame.pngURL) else { continue }
+                    guard let annotated = ScreenAnnotator.annotate(
+                        pngData: pngData,
+                        captureRect: frame.captureRectPoints,
+                        markers: markers
+                    ) else { continue }
+                    try? annotated.write(to: frame.pngURL, options: .atomic)
+                }
+            }
             let runtimeURL = active.staging.appendingPathComponent("runtime.json")
             let hostProfileURL = active.staging.appendingPathComponent("host_profile.json")
             let requestURL = active.staging.appendingPathComponent("request.json")
@@ -935,6 +998,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 screenshotMeta: firstFrame.screenshotMeta,
                 diagnostics: firstFrame.imageDiagnostics,
                 focusedContext: focusedContext,
+                mouseScreenPoint: mouseLocation,
                 captureMode: captureMode,
                 frames: active.frames
             )
@@ -2191,12 +2255,13 @@ final class BlinkCoordinator: @unchecked Sendable {
         screenshotMeta: [String: Any],
         diagnostics: [String: Any],
         focusedContext: [String: Any],
+        mouseScreenPoint: CGPoint? = nil,
         captureMode: String = "frontmost_window",
         frames: [CapturedFrame] = []
     ) -> [String: Any] {
         var preferences = requestPreferences(runtime: runtime)
         preferences["model"] = runtime.model
-        return [
+        var envelope: [String: Any] = [
             "schema_version": 1,
             "request_id": requestID,
             "client": clientMetadata,
@@ -2214,6 +2279,14 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "allow_content_retention": runtime.allowContentRetention,
             ],
         ]
+        if let mouseScreenPoint {
+            envelope["mouse_screen_point"] = [
+                "x": mouseScreenPoint.x,
+                "y": mouseScreenPoint.y,
+                "coordinate_space": "appkit_screen",
+            ]
+        }
+        return envelope
     }
 
     private func requestPreferences(runtime: RuntimeConfigFile) -> [String: Any] {

@@ -11,7 +11,26 @@ enum FocusedContextCapture {
     struct Snapshot {
         let uploadPayload: [String: Any]
         let meaningfulDraftText: String?
+        /// Focused element bounds in AppKit-screen coordinates (origin
+        /// bottom-left, +Y up). Differs from `uploadPayload["bounds"]`,
+        /// which is left in the raw AX top-left-origin frame for the
+        /// server. `nil` when AX is denied or no element is focused.
+        let focusedBoundsScreen: CGRect?
+        /// Caret position in AppKit-screen coordinates. Already Y-flipped.
+        let caretScreenPoint: CGPoint?
+        /// One of: `native_ax`, `chromium_input`, `chromium_contenteditable`,
+        /// `electron_partial`, `terminal_none`, `unknown`. Drives
+        /// per-app marker gating in ScreenAnnotator and instructs the
+        /// model on how much to trust caret_prefix/caret_suffix.
+        let sourceConfidence: String
     }
+
+    /// Max UTF-16 code units of `value` carried before/after the caret.
+    /// Tuned so a single beat (sentence or chat reply prefix) almost
+    /// always fits while staying well below `value`'s 1000-char upload
+    /// cap so the model isn't fighting for budget.
+    static let caretPrefixLimit = 200
+    static let caretSuffixLimit = 100
 
     static func capture(allowContentRetention: Bool) -> [String: Any] {
         captureSnapshot(allowContentRetention: allowContentRetention).uploadPayload
@@ -19,10 +38,17 @@ enum FocusedContextCapture {
 
     static func captureSnapshot(allowContentRetention: Bool) -> Snapshot {
         guard AXIsProcessTrusted() else {
-            return Snapshot(uploadPayload: [
-                "permission_status": "denied",
-                "warnings": ["accessibility_not_trusted"],
-            ], meaningfulDraftText: nil)
+            return Snapshot(
+                uploadPayload: [
+                    "permission_status": "denied",
+                    "warnings": ["accessibility_not_trusted"],
+                    "source_confidence": "unknown",
+                ],
+                meaningfulDraftText: nil,
+                focusedBoundsScreen: nil,
+                caretScreenPoint: nil,
+                sourceConfidence: "unknown"
+            )
         }
 
         let systemWide = AXUIElementCreateSystemWide()
@@ -33,25 +59,37 @@ enum FocusedContextCapture {
             &focusedRef
         )
         guard focusedError == .success, let rawFocused = focusedRef else {
-            return Snapshot(uploadPayload: [
-                "permission_status": "granted",
-                "warnings": ["no_focused_ui_element"],
-            ], meaningfulDraftText: nil)
+            return Snapshot(
+                uploadPayload: [
+                    "permission_status": "granted",
+                    "warnings": ["no_focused_ui_element"],
+                    "source_confidence": "unknown",
+                ],
+                meaningfulDraftText: nil,
+                focusedBoundsScreen: nil,
+                caretScreenPoint: nil,
+                sourceConfidence: "unknown"
+            )
         }
         let focused = rawFocused as! AXUIElement
 
+        let role = shortenedRole(stringAttr(focused, kAXRoleAttribute as CFString))
+        let value = stringAttr(focused, kAXValueAttribute as CFString)
+        let selectedRange = selectedRangeAttr(focused)
+
         var payload: [String: Any] = [
             "permission_status": "granted",
-            "role": shortenedRole(stringAttr(focused, kAXRoleAttribute as CFString)) as Any,
+            "role": role as Any,
             "subrole": stringAttr(focused, kAXSubroleAttribute as CFString) as Any,
             "title": stringAttr(focused, kAXTitleAttribute as CFString) as Any,
             "description": stringAttr(focused, kAXDescriptionAttribute as CFString) as Any,
             "label": stringAttr(focused, kAXLabelValueAttribute as CFString) as Any,
             "placeholder": stringAttr(focused, "AXPlaceholderValue" as CFString) as Any,
-            "value": stringAttr(focused, kAXValueAttribute as CFString) as Any,
+            "value": value as Any,
             "selected_text": stringAttr(focused, kAXSelectedTextAttribute as CFString) as Any,
         ]
-        if let bounds = focusedBoundsRect(focused) {
+        let rawBounds = focusedBoundsRect(focused)
+        if let bounds = rawBounds {
             payload["bounds"] = [
                 "x": bounds.origin.x,
                 "y": bounds.origin.y,
@@ -59,12 +97,37 @@ enum FocusedContextCapture {
                 "height": bounds.size.height,
             ]
         }
-        if let range = selectedRangeAttr(focused) {
+        if let range = selectedRange {
             payload["selected_range"] = [
                 "location": range.location,
                 "length": range.length,
             ]
         }
+
+        // caret_prefix / caret_suffix: the text immediately around the
+        // caret, sliced UTF-16-safely so the model can paste a continuation
+        // without having to re-derive what comes before/after itself.
+        // Routed through `sanitizeForUpload` so redaction-default users
+        // still drop them. Empty results are omitted to keep the payload
+        // shape stable.
+        let slices = caretSlices(
+            value: value,
+            selectedRange: selectedRange,
+            prefixLimit: caretPrefixLimit,
+            suffixLimit: caretSuffixLimit
+        )
+        if let prefix = slices.prefix { payload["caret_prefix"] = prefix }
+        if let suffix = slices.suffix { payload["caret_suffix"] = suffix }
+
+        let caretPoint = caretScreenPoint()
+        if let caret = caretPoint {
+            payload["caret_screen_point"] = [
+                "x": caret.x,
+                "y": caret.y,
+                "coordinate_space": "appkit_screen",
+            ]
+        }
+
         let meaningfulDraft = meaningfulText(payload["value"] as? String)
         if payload["value"] is String {
             payload["meaningful_value_char_count"] = meaningfulDraft?.count ?? 0
@@ -80,14 +143,166 @@ enum FocusedContextCapture {
         }
 
         var pid: pid_t = 0
+        var bundleID: String?
         if AXUIElementGetPid(focused, &pid) == .success,
            let app = NSRunningApplication(processIdentifier: pid) {
             payload["app_name"] = app.localizedName as Any
-            payload["bundle_id"] = app.bundleIdentifier as Any
+            bundleID = app.bundleIdentifier
+            payload["bundle_id"] = bundleID as Any
         }
+
+        let confidence = deriveSourceConfidence(
+            bundleID: bundleID,
+            role: role,
+            valueLength: (value ?? "").utf16.count,
+            selectedRange: selectedRange
+        )
+        payload["source_confidence"] = confidence
+
+        // Flip AX bounds (top-left origin, +Y down) into AppKit-screen
+        // coords (bottom-left, +Y up) for ScreenAnnotator. Caret + mouse
+        // are already AppKit-screen, so this puts every marker on the
+        // same coord system before ScreenAnnotator does its image-pixel
+        // translation.
+        let screenBounds = rawBounds.flatMap { axBoundsToScreen($0) }
+
         return Snapshot(
             uploadPayload: sanitizeForUpload(payload, allowContentRetention: allowContentRetention),
-            meaningfulDraftText: meaningfulDraft
+            meaningfulDraftText: meaningfulDraft,
+            focusedBoundsScreen: screenBounds,
+            caretScreenPoint: caretPoint,
+            sourceConfidence: confidence
+        )
+    }
+
+    /// Slice `value` around `selectedRange.location` and emit
+    /// `prefix` / `suffix` strings, taking up to `prefixLimit` UTF-16
+    /// code units before the caret and `suffixLimit` after the
+    /// selection end. UTF-16 indices come from AX directly; `String(
+    /// decoding:as:)` replaces any orphan surrogate with U+FFFD so a
+    /// boundary mid-grapheme yields a valid string instead of crashing.
+    static func caretSlices(
+        value: String?,
+        selectedRange: CFRange?,
+        prefixLimit: Int,
+        suffixLimit: Int
+    ) -> (prefix: String?, suffix: String?) {
+        guard let value, let range = selectedRange else { return (nil, nil) }
+        guard range.location >= 0, range.length >= 0 else { return (nil, nil) }
+        let totalUTF16 = value.utf16.count
+        guard range.location <= totalUTF16,
+              range.location + range.length <= totalUTF16 else {
+            return (nil, nil)
+        }
+        let codeUnits = Array(value.utf16)
+        let caretAt = range.location
+        let selectionEnd = range.location + range.length
+
+        let prefixStart = max(0, caretAt - prefixLimit)
+        let prefix: String?
+        if caretAt > prefixStart {
+            let slice = Array(codeUnits[prefixStart..<caretAt])
+            let decoded = String(decoding: slice, as: UTF16.self)
+            prefix = decoded.isEmpty ? nil : decoded
+        } else {
+            prefix = nil
+        }
+
+        let suffixEnd = min(totalUTF16, selectionEnd + suffixLimit)
+        let suffix: String?
+        if suffixEnd > selectionEnd {
+            let slice = Array(codeUnits[selectionEnd..<suffixEnd])
+            let decoded = String(decoding: slice, as: UTF16.self)
+            suffix = decoded.isEmpty ? nil : decoded
+        } else {
+            suffix = nil
+        }
+
+        return (prefix, suffix)
+    }
+
+    /// Derive a confidence label the model can use to weight the
+    /// reliability of `caret_prefix`/`caret_suffix` in this surface.
+    /// Cross-app reality (Hammerspoon notes, ghostty#9932, electron
+    /// #22908, gemini-cli#16154):
+    ///   - native AppKit + browser native inputs: AX is reliable
+    ///   - Chromium contentEditable / Electron: AX returns `{0,0}` for
+    ///     selectedTextRange even when value is non-empty
+    ///   - Terminals: AXBoundsForRange unimplemented, caret semantics
+    ///     don't exist as a "draft"
+    static func deriveSourceConfidence(
+        bundleID: String?,
+        role: String?,
+        valueLength: Int,
+        selectedRange: CFRange?
+    ) -> String {
+        if let id = bundleID {
+            if terminalBundles.contains(id) {
+                return "terminal_none"
+            }
+            if chromiumBundlePrefixes.contains(where: { id.hasPrefix($0) }) {
+                if roleLooksLikeTextInput(role) {
+                    return "chromium_input"
+                }
+                return "chromium_contenteditable"
+            }
+        }
+        // Electron-flavored probe: a substantial value with selection
+        // pinned at {0,0} is the signature of the Electron AX gap. The
+        // 16-char floor avoids misfiring on short prefilled fields
+        // (e.g. an email-shaped URL bar at caret-0 after Tab); 16 is
+        // longer than typical default values but shorter than any
+        // meaningful chat draft, so genuine Electron drafts still get
+        // flagged.
+        if valueLength >= 16,
+           let range = selectedRange,
+           range.location == 0,
+           range.length == 0 {
+            return "electron_partial"
+        }
+        if roleLooksLikeTextInput(role) {
+            return "native_ax"
+        }
+        return "unknown"
+    }
+
+    /// Apps where AX caret queries are known broken or conceptually
+    /// nonsensical. Drives "skip the caret marker entirely" in
+    /// ScreenAnnotator and prompts the model not to trust caret_prefix.
+    static let terminalBundles: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "com.mitchellh.ghostty",
+        "io.alacritty",
+        "net.kovidgoyal.kitty",
+        "com.warp.warp",
+    ]
+
+    /// Chromium-family browsers — native `<input>`/`<textarea>` work
+    /// well, contentEditable doesn't. Listed as prefixes because Chrome
+    /// has many channel-suffixed variants (`com.google.Chrome.canary`).
+    static let chromiumBundlePrefixes: [String] = [
+        "com.google.Chrome",
+        "org.chromium.Chromium",
+        "com.brave.Browser",
+        "com.microsoft.edgemac",
+        "com.thebrowser.Browser",   // Arc
+        "com.vivaldi.Vivaldi",
+        "com.operasoftware.Opera",
+    ]
+
+    /// Flip raw AX bounds (top-left origin, +Y down) into AppKit-screen
+    /// coords (bottom-left, +Y up) using the primary display's height.
+    /// Returns nil when no screen is attached.
+    static func axBoundsToScreen(_ axBounds: CGRect) -> CGRect? {
+        guard let primaryHeight = NSScreen.screens.first?.frame.height,
+              primaryHeight.isFinite, primaryHeight > 0 else { return nil }
+        let flippedY = primaryHeight - axBounds.origin.y - axBounds.size.height
+        return CGRect(
+            x: axBounds.origin.x,
+            y: flippedY,
+            width: axBounds.size.width,
+            height: axBounds.size.height
         )
     }
 
@@ -410,6 +625,13 @@ enum FocusedContextCapture {
         sanitized = boundField("value", limit: 1000, in: sanitized)
         sanitized = boundField("selected_text", limit: 500, in: sanitized)
         sanitized = boundField("nearby_relevant_text", limit: 400, in: sanitized)
+        // caret_prefix / caret_suffix slicing already enforces a UTF-16
+        // ceiling at extraction time, but bound again on character count
+        // so the value's truncation policy doesn't get bypassed via the
+        // caret slices. Limits match the upstream caretPrefixLimit /
+        // caretSuffixLimit constants.
+        sanitized = boundField("caret_prefix", limit: 200, in: sanitized)
+        sanitized = boundField("caret_suffix", limit: 100, in: sanitized)
 
         guard !allowContentRetention else {
             return sanitized
@@ -418,6 +640,8 @@ enum FocusedContextCapture {
         sanitized = redactField("value", in: sanitized)
         sanitized = redactField("selected_text", in: sanitized)
         sanitized = redactField("nearby_relevant_text", in: sanitized)
+        sanitized = redactField("caret_prefix", in: sanitized)
+        sanitized = redactField("caret_suffix", in: sanitized)
         return sanitized
     }
 
