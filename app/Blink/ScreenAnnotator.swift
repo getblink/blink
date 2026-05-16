@@ -95,13 +95,15 @@ enum ScreenAnnotator {
         // thickness at any backing scale.
         let scale = sx
 
-        drawFocusedOutline(
-            in: context,
-            captureRect: captureRect,
-            bounds: markers.focusedBounds,
-            transform: toPixels,
-            scale: scale
-        )
+        if drawFocusedOutlineAllowed(for: markers.sourceConfidence) {
+            drawFocusedOutline(
+                in: context,
+                captureRect: captureRect,
+                bounds: markers.focusedBounds,
+                transform: toPixels,
+                scale: scale
+            )
+        }
         if drawCaretAllowed(for: markers.sourceConfidence) {
             drawCaret(
                 in: context,
@@ -127,6 +129,22 @@ enum ScreenAnnotator {
     /// be stale or fabricated. Drawing a marker at {0,0} or at an
     /// AX-approximated point on a contentEditable misleads the model.
     static func drawCaretAllowed(for sourceConfidence: String) -> Bool {
+        switch sourceConfidence {
+        case "native_ax", "chromium_input":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Skip the focused-element outline on surfaces where AX bounds are
+    /// as unreliable as the caret. Caught dogfooding Conductor: AX
+    /// reported a focused TextArea near the top of the window while the
+    /// user was typing in the chat input near the bottom — drawing a
+    /// blue outline far from where the user's focus actually is sends
+    /// the vision model exactly the wrong signal. Mouse marker is not
+    /// gated this way — `NSEvent.mouseLocation` doesn't go through AX.
+    static func drawFocusedOutlineAllowed(for sourceConfidence: String) -> Bool {
         switch sourceConfidence {
         case "native_ax", "chromium_input":
             return true

@@ -220,4 +220,45 @@ final class ScreenAnnotatorTests: XCTestCase {
         XCTAssertFalse(ScreenAnnotator.drawCaretAllowed(for: "terminal_none"))
         XCTAssertFalse(ScreenAnnotator.drawCaretAllowed(for: "unknown"))
     }
+
+    func testDrawFocusedOutlineAllowedMatrix() {
+        // Mirrors `drawCaretAllowed`: bounds and caret AX queries are
+        // unreliable together, so we gate them together. Mouse marker
+        // (NSEvent.mouseLocation) bypasses AX and stays universal.
+        XCTAssertTrue(ScreenAnnotator.drawFocusedOutlineAllowed(for: "native_ax"))
+        XCTAssertTrue(ScreenAnnotator.drawFocusedOutlineAllowed(for: "chromium_input"))
+        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "chromium_contenteditable"))
+        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "electron_partial"))
+        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "terminal_none"))
+        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "unknown"))
+    }
+
+    func testFocusedOutlineSkippedForLowConfidenceSurfaces() {
+        // Caught dogfooding Conductor: drawing the outline at AX's
+        // reported (wrong) bounds was the visible regression. Lock in
+        // that an outline-providing markers struct on `electron_partial`
+        // produces byte-identical bytes to the no-markers baseline.
+        let png = makeBlankPNG()
+        let baseline = ScreenAnnotator.annotate(
+            pngData: png,
+            captureRect: captureRect,
+            markers: ScreenAnnotator.Markers(
+                focusedBounds: nil,
+                caretPoint: nil,
+                mousePoint: nil,
+                sourceConfidence: "electron_partial"
+            )
+        )!
+        let withOutline = ScreenAnnotator.annotate(
+            pngData: png,
+            captureRect: captureRect,
+            markers: ScreenAnnotator.Markers(
+                focusedBounds: CGRect(x: 200, y: 100, width: 100, height: 30),
+                caretPoint: nil,
+                mousePoint: nil,
+                sourceConfidence: "electron_partial"
+            )
+        )!
+        XCTAssertFalse(pixelsDiffer(baseline, withOutline))
+    }
 }
