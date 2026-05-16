@@ -958,11 +958,67 @@ final class BlinkCoordinator: @unchecked Sendable {
             // matches the existing pattern at the top of captureFrame
             // (line ~788) for NSWorkspace.shared.frontmostApplication.
             let mouseLocation: CGPoint = DispatchQueue.main.sync { NSEvent.mouseLocation }
-            let focusedContext = focusedSnapshot.uploadPayload
+            var focusedContext = focusedSnapshot.uploadPayload
             // Annotate every frame in place before the runner reads them.
             // Each frame carries its own captureRect, so the marker math
             // stays correct for multi-frame scrolls where the window
             // moved between captures.
+            //
+            // Stash the runtime values used for marker placement into
+            // `focused_context.marker_diagnostics` so a mis-placed marker
+            // can be debugged from request.json alone. Captures every
+            // intermediate coordinate without needing to attach a debugger.
+            let firstCaptureRect = active.frames.first?.captureRectPoints ?? .zero
+            let primaryScreenFrame = DispatchQueue.main.sync {
+                NSScreen.screens.first?.frame ?? .zero
+            }
+            let allScreenFrames = DispatchQueue.main.sync {
+                NSScreen.screens.map { $0.frame }
+            }
+            var diag: [String: Any] = [
+                "primary_screen_frame_appkit": [
+                    "x": primaryScreenFrame.origin.x,
+                    "y": primaryScreenFrame.origin.y,
+                    "width": primaryScreenFrame.size.width,
+                    "height": primaryScreenFrame.size.height,
+                ],
+                "all_screen_frames_appkit": allScreenFrames.map { [
+                    "x": $0.origin.x,
+                    "y": $0.origin.y,
+                    "width": $0.size.width,
+                    "height": $0.size.height,
+                ] },
+                "capture_rect_appkit_first_frame": [
+                    "x": firstCaptureRect.origin.x,
+                    "y": firstCaptureRect.origin.y,
+                    "width": firstCaptureRect.size.width,
+                    "height": firstCaptureRect.size.height,
+                    "max_x": firstCaptureRect.maxX,
+                    "max_y": firstCaptureRect.maxY,
+                ],
+                "mouse_screen_point_appkit": [
+                    "x": mouseLocation.x,
+                    "y": mouseLocation.y,
+                ],
+                "source_confidence": focusedSnapshot.sourceConfidence,
+            ]
+            if let bounds = focusedSnapshot.focusedBoundsScreen {
+                diag["focused_bounds_screen_appkit"] = [
+                    "x": bounds.origin.x,
+                    "y": bounds.origin.y,
+                    "width": bounds.size.width,
+                    "height": bounds.size.height,
+                    "max_y": bounds.maxY,
+                ]
+            }
+            if let caret = focusedSnapshot.caretScreenPoint {
+                diag["caret_screen_point_appkit"] = [
+                    "x": caret.x,
+                    "y": caret.y,
+                ]
+            }
+            focusedContext["marker_diagnostics"] = diag
+
             if runtime.annotateScreenshots {
                 let markers = ScreenAnnotator.Markers(
                     focusedBounds: focusedSnapshot.focusedBoundsScreen,

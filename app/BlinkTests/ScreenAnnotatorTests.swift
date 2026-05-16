@@ -46,6 +46,113 @@ final class ScreenAnnotatorTests: XCTestCase {
         a != b
     }
 
+    /// Decode `png` and return non-grey pixel locations as (x_frac, y_frac)
+    /// in 0…1 from the visual top-left. "Non-grey" = differs meaningfully
+    /// from the makeBlankPNG fill (0.5, 0.5, 0.5). Used to assert that
+    /// drawn markers land at the expected portion of the image.
+    private func nonGreyPixelCoords(_ png: Data, threshold: Int = 50) -> [(CGFloat, CGFloat)] {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return []
+        }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard let space = cgImage.colorSpace, space.model == .rgb else { return [] }
+        let bytesPerRow = width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        guard let ctx = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return [] }
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Note: `CGContext.draw` into a default bottom-up bitmap context
+        // still produces row-major data where row 0 corresponds to the
+        // VISUAL TOP of the image (CGImage's bytes are top-down). So
+        // `y` below is "rows from the top," exactly matching the user's
+        // mental model.
+        var result: [(CGFloat, CGFloat)] = []
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bytesPerRow + x * 4
+                let r = Int(bytes[offset])
+                let g = Int(bytes[offset + 1])
+                let b = Int(bytes[offset + 2])
+                let dr = abs(r - 128)
+                let dg = abs(g - 128)
+                let db = abs(b - 128)
+                if dr > threshold || dg > threshold || db > threshold {
+                    result.append((CGFloat(x) / CGFloat(width), CGFloat(y) / CGFloat(height)))
+                }
+            }
+        }
+        return result
+    }
+
+    func testCaretMarkerLandsAtCorrectYNotInverted() throws {
+        // Regression for the Y-inversion bug caught dogfooding on
+        // Conductor: a caret at AppKit y near the BOTTOM of the
+        // capture rect must render at the BOTTOM of the visual image,
+        // not the top. The original toPixels formula computed pixels
+        // from the top while drawing into a bottom-up CGBitmapContext,
+        // so the marker rendered upside-down by image-height.
+        let png = makeBlankPNG()
+        // Caret at AppKit (200, 30) inside captureRect (100, 50, 400, 240):
+        // 30 is at the very bottom of the rect (rect.minY=50,
+        // rect.maxY=290, so y=30 is *below* the rect and would be
+        // skipped by `captureRect.contains`). Use y=60 instead — 10pt
+        // above the bottom edge, clearly in the lower portion of the
+        // rect.
+        let caret = CGPoint(x: 300, y: 60)
+        let annotated = ScreenAnnotator.annotate(
+            pngData: png,
+            captureRect: captureRect,
+            markers: ScreenAnnotator.Markers(
+                focusedBounds: nil,
+                caretPoint: caret,
+                mousePoint: nil,
+                sourceConfidence: "native_ax"
+            )
+        )!
+        let nonGrey = nonGreyPixelCoords(annotated)
+        XCTAssertFalse(nonGrey.isEmpty, "caret should have drawn non-grey pixels")
+        // Centroid of caret pixels should sit in the bottom third of
+        // the image — AppKit y=60 is 10pt above the bottom of a 240pt
+        // capture rect, so the marker belongs visually near the
+        // bottom of the rendered PNG.
+        let avgY = nonGrey.map(\.1).reduce(0, +) / CGFloat(nonGrey.count)
+        XCTAssertGreaterThan(avgY, 0.66, "caret marker landed in upper 2/3 of image, indicating Y inversion")
+    }
+
+    func testCaretMarkerNearTopOfCaptureRendersNearTopOfImage() throws {
+        // Mirror of the bottom test: AppKit y near the TOP of the
+        // capture rect should render near the TOP of the image. Locks
+        // in that the direction is consistent across the y-axis range
+        // and not just for a single sample.
+        let png = makeBlankPNG()
+        // Caret at AppKit y=280 inside captureRect (100, 50, 400, 240):
+        // 10pt below the rect's top edge at y=290.
+        let caret = CGPoint(x: 300, y: 280)
+        let annotated = ScreenAnnotator.annotate(
+            pngData: png,
+            captureRect: captureRect,
+            markers: ScreenAnnotator.Markers(
+                focusedBounds: nil,
+                caretPoint: caret,
+                mousePoint: nil,
+                sourceConfidence: "native_ax"
+            )
+        )!
+        let nonGrey = nonGreyPixelCoords(annotated)
+        XCTAssertFalse(nonGrey.isEmpty, "caret should have drawn non-grey pixels")
+        let avgY = nonGrey.map(\.1).reduce(0, +) / CGFloat(nonGrey.count)
+        XCTAssertLessThan(avgY, 0.33, "caret marker landed in lower 2/3 of image, indicating Y inversion")
+    }
+
     func testAnnotateProducesDecodablePNGWhenAllMarkersAreNil() {
         // Even with every marker nil the annotate pass still re-encodes
         // through CGContext, so we can't byte-equality-check vs the
@@ -221,44 +328,4 @@ final class ScreenAnnotatorTests: XCTestCase {
         XCTAssertFalse(ScreenAnnotator.drawCaretAllowed(for: "unknown"))
     }
 
-    func testDrawFocusedOutlineAllowedMatrix() {
-        // Mirrors `drawCaretAllowed`: bounds and caret AX queries are
-        // unreliable together, so we gate them together. Mouse marker
-        // (NSEvent.mouseLocation) bypasses AX and stays universal.
-        XCTAssertTrue(ScreenAnnotator.drawFocusedOutlineAllowed(for: "native_ax"))
-        XCTAssertTrue(ScreenAnnotator.drawFocusedOutlineAllowed(for: "chromium_input"))
-        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "chromium_contenteditable"))
-        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "electron_partial"))
-        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "terminal_none"))
-        XCTAssertFalse(ScreenAnnotator.drawFocusedOutlineAllowed(for: "unknown"))
-    }
-
-    func testFocusedOutlineSkippedForLowConfidenceSurfaces() {
-        // Caught dogfooding Conductor: drawing the outline at AX's
-        // reported (wrong) bounds was the visible regression. Lock in
-        // that an outline-providing markers struct on `electron_partial`
-        // produces byte-identical bytes to the no-markers baseline.
-        let png = makeBlankPNG()
-        let baseline = ScreenAnnotator.annotate(
-            pngData: png,
-            captureRect: captureRect,
-            markers: ScreenAnnotator.Markers(
-                focusedBounds: nil,
-                caretPoint: nil,
-                mousePoint: nil,
-                sourceConfidence: "electron_partial"
-            )
-        )!
-        let withOutline = ScreenAnnotator.annotate(
-            pngData: png,
-            captureRect: captureRect,
-            markers: ScreenAnnotator.Markers(
-                focusedBounds: CGRect(x: 200, y: 100, width: 100, height: 30),
-                caretPoint: nil,
-                mousePoint: nil,
-                sourceConfidence: "electron_partial"
-            )
-        )!
-        XCTAssertFalse(pixelsDiffer(baseline, withOutline))
-    }
 }

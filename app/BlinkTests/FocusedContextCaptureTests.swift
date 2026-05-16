@@ -306,43 +306,6 @@ final class FocusedContextCaptureTests: XCTestCase {
         XCTAssertEqual(arc, "chromium_input")
     }
 
-    func testSourceConfidenceKnownElectronBundlesGetElectronPartial() {
-        // Conductor: caught dogfooding — AX reports a focused TextArea
-        // near the top of the window with empty value while the user is
-        // typing in the chat input at the bottom. Without the allowlist
-        // we'd fall through to `native_ax` (role=TextArea, valueLength
-        // below the {0,0} probe floor) and draw markers in the wrong
-        // place.
-        let conductor = FocusedContextCapture.deriveSourceConfidence(
-            bundleID: "com.conductor.app",
-            role: "TextArea",
-            valueLength: 0,
-            selectedRange: CFRange(location: 0, length: 0)
-        )
-        XCTAssertEqual(conductor, "electron_partial")
-
-        let slack = FocusedContextCapture.deriveSourceConfidence(
-            bundleID: "com.tinyspeck.slackmacgap",
-            role: "TextArea",
-            valueLength: 0,
-            selectedRange: nil
-        )
-        XCTAssertEqual(slack, "electron_partial")
-    }
-
-    func testSourceConfidenceTodesktopPrefixGetsElectronPartial() {
-        // Cursor and other ToDesktop-wrapped Electron apps have
-        // unique-per-app bundle IDs that all share the `com.todesktop.`
-        // prefix. Prefix-match instead of enumerating each one.
-        let cursor = FocusedContextCapture.deriveSourceConfidence(
-            bundleID: "com.todesktop.230313mzl4w4u92",
-            role: "TextArea",
-            valueLength: 0,
-            selectedRange: nil
-        )
-        XCTAssertEqual(cursor, "electron_partial")
-    }
-
     func testSourceConfidenceElectronPartialFlaggedWhenSelectionPinnedAtOrigin() {
         // Slack desktop: bundle isn't in our terminal or Chromium set,
         // value is non-trivial, selection comes back as {0,0}.

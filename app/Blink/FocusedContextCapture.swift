@@ -246,20 +246,6 @@ enum FocusedContextCapture {
                 }
                 return "chromium_contenteditable"
             }
-            // Known-Electron allowlist: these apps wrap Electron / a
-            // Chromium webview AND report AX data unreliably (focused
-            // element often differs from the user's actual input, bounds
-            // can be wildly off, selectedTextRange pinned at {0,0}).
-            // The selection-shape probe below misses them when the value
-            // happens to be empty. Caught dogfooding Conductor: AX
-            // reported a TextArea at CG (-1183, 820) with value="" while
-            // the user was typing into the chat input near the bottom of
-            // the window.
-            if knownElectronBundles.contains(id)
-                || id.hasPrefix("com.todesktop.")
-            {
-                return "electron_partial"
-            }
         }
         // Electron-flavored probe: a substantial value with selection
         // pinned at {0,0} is the signature of the Electron AX gap. The
@@ -303,34 +289,6 @@ enum FocusedContextCapture {
         "com.thebrowser.Browser",   // Arc
         "com.vivaldi.Vivaldi",
         "com.operasoftware.Opera",
-    ]
-
-    /// Apps that wrap Electron / a Chromium webview and are observed
-    /// to misreport AX focused-element data on macOS. Marker drawing is
-    /// suppressed on these surfaces (bounds + caret) since drawing them
-    /// in the wrong place is worse than not drawing — the model trusts
-    /// what it sees. Mouse marker stays universal: `NSEvent.mouseLocation`
-    /// doesn't go through AX.
-    ///
-    /// Extension hint: ToDesktop-wrapped apps (`com.todesktop.*`) are
-    /// also matched via prefix in `deriveSourceConfidence`. If a new
-    /// Electron app shows up dogfooding, add it here rather than
-    /// trying to widen the {0,0} selection probe (that path catches
-    /// legitimate native AppKit fields too).
-    static let knownElectronBundles: Set<String> = [
-        "com.conductor.app",            // Conductor
-        "com.tinyspeck.slackmacgap",    // Slack desktop
-        "com.hnc.Discord",              // Discord
-        "com.microsoft.VSCode",         // VS Code
-        "com.microsoft.VSCodeInsiders",
-        "com.notion.id",                // Notion
-        "com.linear.linear",            // Linear
-        "com.figma.Desktop",            // Figma
-        "WhatsApp",                     // WhatsApp desktop (legacy id)
-        "net.whatsapp.WhatsApp",
-        "com.spotify.client",           // Spotify
-        "com.github.GitHubClient",      // GitHub Desktop
-        "com.postmanlabs.mac",          // Postman
     ]
 
     /// Flip raw AX bounds (top-left origin, +Y down) into AppKit-screen

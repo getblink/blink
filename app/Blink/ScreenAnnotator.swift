@@ -77,15 +77,23 @@ enum ScreenAnnotator {
         let sx = CGFloat(pxW) / captureRect.width
         let sy = CGFloat(pxH) / captureRect.height
 
-        // Translate AppKit-screen (bottom-left, +Y up) into image-pixel
-        // top-left-origin coords. The Y flip is `captureRect.maxY - p.y`
-        // because the *top* of the capture rect maps to image-pixel
-        // row 0 — the captured image's first row is the highest-Y
-        // AppKit-screen line in the capture.
+        // Translate AppKit-screen (bottom-left, +Y up) into context-pixel
+        // coords. CGBitmapContext defaults to a bottom-left origin with
+        // +Y up — the same convention as AppKit-screen — so distance
+        // along the y-axis from `captureRect.minY` (window's bottom
+        // edge in AppKit) is the same direction as distance from the
+        // context's bottom edge. Earlier I had `captureRect.maxY - p.y`
+        // here, which produced a top-down "pixels from top" value that
+        // the bottom-up context then rendered upside down: a marker
+        // intended for y=84% of the image landed at y=16%.
+        // `context.draw(cgImage, in:)` already handles the source PNG's
+        // top-down byte order correctly when drawing into this bottom-up
+        // context, so only marker coords need to match the context's
+        // convention.
         func toPixels(_ p: CGPoint) -> CGPoint {
             CGPoint(
                 x: (p.x - captureRect.minX) * sx,
-                y: (captureRect.maxY - p.y) * sy
+                y: (p.y - captureRect.minY) * sy
             )
         }
 
@@ -95,15 +103,13 @@ enum ScreenAnnotator {
         // thickness at any backing scale.
         let scale = sx
 
-        if drawFocusedOutlineAllowed(for: markers.sourceConfidence) {
-            drawFocusedOutline(
-                in: context,
-                captureRect: captureRect,
-                bounds: markers.focusedBounds,
-                transform: toPixels,
-                scale: scale
-            )
-        }
+        drawFocusedOutline(
+            in: context,
+            captureRect: captureRect,
+            bounds: markers.focusedBounds,
+            transform: toPixels,
+            scale: scale
+        )
         if drawCaretAllowed(for: markers.sourceConfidence) {
             drawCaret(
                 in: context,
@@ -137,22 +143,6 @@ enum ScreenAnnotator {
         }
     }
 
-    /// Skip the focused-element outline on surfaces where AX bounds are
-    /// as unreliable as the caret. Caught dogfooding Conductor: AX
-    /// reported a focused TextArea near the top of the window while the
-    /// user was typing in the chat input near the bottom — drawing a
-    /// blue outline far from where the user's focus actually is sends
-    /// the vision model exactly the wrong signal. Mouse marker is not
-    /// gated this way — `NSEvent.mouseLocation` doesn't go through AX.
-    static func drawFocusedOutlineAllowed(for sourceConfidence: String) -> Bool {
-        switch sourceConfidence {
-        case "native_ax", "chromium_input":
-            return true
-        default:
-            return false
-        }
-    }
-
     private static func drawFocusedOutline(
         in context: CGContext,
         captureRect: CGRect,
@@ -171,13 +161,17 @@ enum ScreenAnnotator {
             / max(captureRect.width * captureRect.height, 1)
         guard bothFraction < 0.6 else { return }
 
-        let topLeft = transform(CGPoint(x: bounds.minX, y: bounds.maxY))
-        let bottomRight = transform(CGPoint(x: bounds.maxX, y: bounds.minY))
+        // Map AppKit-screen corners into context-pixel coords. The
+        // CGBitmapContext is bottom-up, so the rect's `y` is the bottom
+        // edge and `height` extends upward — matching the natural
+        // direction of the AppKit-screen input.
+        let bottomLeft = transform(CGPoint(x: bounds.minX, y: bounds.minY))
+        let topRight = transform(CGPoint(x: bounds.maxX, y: bounds.maxY))
         let rect = CGRect(
-            x: topLeft.x,
-            y: topLeft.y,
-            width: bottomRight.x - topLeft.x,
-            height: bottomRight.y - topLeft.y
+            x: bottomLeft.x,
+            y: bottomLeft.y,
+            width: topRight.x - bottomLeft.x,
+            height: topRight.y - bottomLeft.y
         ).integral
 
         context.saveGState()
@@ -235,17 +229,21 @@ enum ScreenAnnotator {
 
         // Downward-pointing triangle floating just above the bar so the
         // model can locate the caret even if the bar overlaps a busy
-        // background.
+        // background. CGBitmapContext is bottom-up, so "above the bar"
+        // means a larger Y in context coords — apex sits just above
+        // `bar.maxY`, base sits even higher (apex below base = triangle
+        // points down at the bar in the final image).
         let triangleHeight = 6 * scale
         let triangleWidth = 6 * scale
-        let triangleTop = bar.minY - 2 * scale - triangleHeight
-        let triangleApex = CGPoint(x: p.x, y: bar.minY - 2 * scale)
-        let triangleLeft = CGPoint(x: p.x - triangleWidth / 2, y: triangleTop)
-        let triangleRight = CGPoint(x: p.x + triangleWidth / 2, y: triangleTop)
+        let apexY = bar.maxY + 2 * scale
+        let baseY = apexY + triangleHeight
+        let triangleApex = CGPoint(x: p.x, y: apexY)
+        let triangleBaseLeft = CGPoint(x: p.x - triangleWidth / 2, y: baseY)
+        let triangleBaseRight = CGPoint(x: p.x + triangleWidth / 2, y: baseY)
         context.beginPath()
-        context.move(to: triangleLeft)
-        context.addLine(to: triangleRight)
-        context.addLine(to: triangleApex)
+        context.move(to: triangleApex)
+        context.addLine(to: triangleBaseLeft)
+        context.addLine(to: triangleBaseRight)
         context.closePath()
         context.fillPath()
         context.restoreGState()
