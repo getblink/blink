@@ -24,13 +24,20 @@
   padding: 0;
 }
 
-body {
-  background-color: var(--bg);
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
   background-image: url("/pointilism-3.webp");
   background-size: cover;
   background-position: center;
-  background-attachment: fixed;
   background-repeat: no-repeat;
+  z-index: -1;
+  pointer-events: none;
+}
+
+body {
+  background-color: var(--bg);
   color: var(--fg);
   font-family:
     "Inter Variable",
@@ -192,25 +199,20 @@ html.pending-pointer .shell--animate-in {
     border-radius: 0;
   }
 
-  .shell--fixed {
-    grid-template-rows: 44px minmax(0, 1fr) 44px;
-    height: 100vh;
-    height: 100svh;
-    min-height: 0;
-  }
-
-  .meta {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  /* Hide "landing / 01" (cell 2). Keep cell 3 ("macOS beta") so the
-     header preserves the desktop's grid texture. */
-  .meta .cell:nth-child(2) {
+  /* Drop the header + footer meta strips on every shell on mobile. */
+  .shell > .meta {
     display: none;
   }
 
-  .meta .cell:nth-child(3) {
-    justify-content: flex-end;
+  .shell--fixed,
+  .shell--scroll {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .shell--fixed {
+    height: 100vh;
+    height: 100svh;
+    min-height: 0;
   }
 }
 

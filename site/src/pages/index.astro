@@ -67,7 +67,7 @@ const desktopDemoUrls = parseUrls(
               name="email"
               type="email"
               autocomplete="email"
-              placeholder="you@example.com"
+              placeholder="email"
               aria-label="email"
               maxlength="320"
               required
@@ -721,7 +721,10 @@ const desktopDemoUrls = parseUrls(
 
     @media (max-width: 880px) {
       /* Single-column flow. wordmark+tagline pinned to top, form+secondary
-         pinned to bottom, demo absorbs all remaining vertical space. */
+         pinned to bottom, demo absorbs all remaining vertical space.
+         The shell's meta strips are hidden at this breakpoint, so the
+         wordmark sits flush with the viewport top and the CTA with the
+         bottom — both pad against the iPhone safe areas. */
       .hero {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr auto;
@@ -732,8 +735,10 @@ const desktopDemoUrls = parseUrls(
         grid-column: 1;
         grid-row: 1;
         border-right: 0;
-        border-bottom: 1px solid var(--line);
-        padding: clamp(20px, 3vh, 32px) clamp(24px, 6vw, 40px)
+        border-bottom: 1px solid var(--line-soft);
+        padding:
+          max(clamp(20px, 3vh, 32px), env(safe-area-inset-top))
+          clamp(24px, 6vw, 40px)
           clamp(16px, 2vh, 24px);
         gap: clamp(12px, 2vh, 18px);
       }
@@ -753,7 +758,7 @@ const desktopDemoUrls = parseUrls(
         width: 100%;
         max-width: 100%;
         min-height: 0;
-        border-bottom: 1px solid var(--line);
+        border-bottom: 1px solid var(--line-soft);
       }
 
       .cta-cell {
@@ -762,8 +767,10 @@ const desktopDemoUrls = parseUrls(
         border-right: 0;
         border-bottom: 0;
         align-items: stretch;
-        padding: clamp(16px, 2.4vh, 24px) clamp(24px, 6vw, 40px)
-          clamp(16px, 2.4vh, 24px);
+        padding:
+          clamp(16px, 2.4vh, 24px)
+          clamp(24px, 6vw, 40px)
+          max(clamp(16px, 2.4vh, 24px), env(safe-area-inset-bottom));
       }
 
       /* On touch widths, skip the staging step — show the field by default
@@ -778,16 +785,21 @@ const desktopDemoUrls = parseUrls(
         animation: none;
       }
 
-      .signup__field {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 12px;
+      /* Keep the field + submit inline (matches the desktop expanded
+         pattern). The submit button shrinks its padding so the email
+         field keeps comfortable room on a 390px viewport. */
+      .signup {
+        gap: 14px;
       }
 
       .signup__submit {
-        width: 100%;
-        justify-content: center;
+        padding: 0 16px;
       }
 
+      .signup__secondary {
+        color: var(--fg-muted);
+        font-size: 13px;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
