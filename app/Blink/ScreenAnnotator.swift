@@ -297,9 +297,14 @@ enum ScreenAnnotator {
             }
         }
         context.closePath()
-        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
-        context.setStrokeColor(red: 0, green: 0, blue: 0, alpha: 0.85)
-        context.setLineWidth(1.0 * scale)
+        // Black body with a white halo: black reads on light surfaces
+        // (the typical case in macOS), the white stroke gives contrast
+        // on dark surfaces. `drawPath(.fillStroke)` strokes the outline
+        // half-inside half-outside the fill, but with a 1.5pt stroke
+        // the visible white halo around the black is clearly readable.
+        context.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+        context.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.setLineWidth(1.5 * scale)
         context.drawPath(using: .fillStroke)
         context.restoreGState()
     }
