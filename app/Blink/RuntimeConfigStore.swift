@@ -83,6 +83,7 @@ struct RuntimeConfigFile: Codable {
     var recentNudgeDismissals: [Date]
     var nudgeCooldownMinutes: Int
     var style: StylePrefs
+    var annotateScreenshots: Bool
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -97,6 +98,7 @@ struct RuntimeConfigFile: Codable {
         case recentNudgeDismissals = "recent_nudge_dismissals"
         case nudgeCooldownMinutes = "nudge_cooldown_minutes"
         case style
+        case annotateScreenshots = "annotate_screenshots"
     }
 
     init(
@@ -111,7 +113,8 @@ struct RuntimeConfigFile: Codable {
         lastNudgeAt: Date?,
         recentNudgeDismissals: [Date],
         nudgeCooldownMinutes: Int,
-        style: StylePrefs = .default
+        style: StylePrefs = .default,
+        annotateScreenshots: Bool = true
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -125,6 +128,7 @@ struct RuntimeConfigFile: Codable {
         self.recentNudgeDismissals = recentNudgeDismissals
         self.nudgeCooldownMinutes = nudgeCooldownMinutes
         self.style = style
+        self.annotateScreenshots = annotateScreenshots
     }
 
     init(from decoder: Decoder) throws {
@@ -143,6 +147,7 @@ struct RuntimeConfigFile: Codable {
         recentNudgeDismissals = try container.decodeIfPresent([Date].self, forKey: .recentNudgeDismissals) ?? []
         nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
         style = try container.decodeIfPresent(StylePrefs.self, forKey: .style) ?? .default
+        annotateScreenshots = try container.decodeIfPresent(Bool.self, forKey: .annotateScreenshots) ?? true
     }
 }
 
@@ -181,6 +186,9 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var style: StylePrefs {
         didSet { save() }
     }
+    @Published var annotateScreenshots: Bool {
+        didSet { save() }
+    }
 
     private var isSaving = false
 
@@ -197,6 +205,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.recentNudgeDismissals = config.recentNudgeDismissals
         self.nudgeCooldownMinutes = config.nudgeCooldownMinutes
         self.style = config.style
+        self.annotateScreenshots = config.annotateScreenshots
     }
 
     var snapshot: RuntimeConfigFile {
@@ -212,7 +221,8 @@ final class RuntimeConfigStore: ObservableObject {
             lastNudgeAt: lastNudgeAt,
             recentNudgeDismissals: recentNudgeDismissals,
             nudgeCooldownMinutes: nudgeCooldownMinutes,
-            style: style
+            style: style,
+            annotateScreenshots: annotateScreenshots
         )
     }
 
@@ -234,7 +244,8 @@ final class RuntimeConfigStore: ObservableObject {
             lastNudgeAt: nil,
             recentNudgeDismissals: [],
             nudgeCooldownMinutes: 30,
-            style: .default
+            style: .default,
+            annotateScreenshots: true
         )
         write(config)
         return config

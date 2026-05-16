@@ -163,6 +163,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
                     { [weak controller] in controller?.checkForUpdates(nil) }
                 }
                 return NSHostingView(rootView: AdvancedSettingsView(
+                    runtimeStore: runtimeStore,
                     onOpenRuns: onOpenRuns,
                     onOpenRuntime: onOpenRuntime,
                     onCheckForUpdates: updateAction

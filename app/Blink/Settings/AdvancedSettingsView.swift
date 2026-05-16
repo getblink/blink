@@ -2,6 +2,7 @@ import SwiftUI
 
 @available(macOS 14.0, *)
 struct AdvancedSettingsView: View {
+    @ObservedObject var runtimeStore: RuntimeConfigStore
     let onOpenRuns: () -> Void
     let onOpenRuntime: () -> Void
     let onCheckForUpdates: (() -> Void)?
@@ -15,6 +16,18 @@ struct AdvancedSettingsView: View {
                     Button("Open ~/.blink") { onOpenRuntime() }
                         .help("Local config, prompts, runtime state.")
                     Spacer()
+                }
+            }
+
+            Section("Capture") {
+                Toggle(isOn: $runtimeStore.annotateScreenshots) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Annotate screenshots with focus markers")
+                        Text("Adds a subtle outline around the focused element and small markers at the caret and mouse pointer. macOS screen capture omits both natively.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
