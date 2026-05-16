@@ -1686,6 +1686,181 @@ class BlinkOnceTests(unittest.TestCase):
             ],
         )
 
+    def test_build_stateful_context_extracts_same_surface_follow_up_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            recent = runs / "20260503-120300-000"
+            recent.mkdir(parents=True)
+            (recent / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "source_request_id": "abc-123",
+                            "follow_up_instruction": "use proper email format",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (recent / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T12:03:05+00:00"}),
+                encoding="utf-8",
+            )
+
+            older = runs / "20260503-114000-000"
+            older.mkdir(parents=True)
+            (older / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "source_request_id": "def-456",
+                            "follow_up_instruction": "keep it under 3 sentences",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (older / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T11:40:00+00:00"}),
+                encoding="utf-8",
+            )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"}},
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        history = context["recent_follow_up_instructions"]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["instruction"], "use proper email format")
+        self.assertEqual(history[0]["app_bundle_id"], "com.apple.mail")
+        self.assertEqual(history[0]["app_name"], "Mail")
+        # Recent entry is ~2 minutes old (05:00 - 03:05 = 1m55s).
+        self.assertLess(history[0]["age_seconds"], 180)
+        self.assertEqual(history[1]["instruction"], "keep it under 3 sentences")
+        # Older entry is ~25 minutes old.
+        self.assertGreater(history[1]["age_seconds"], 60 * 20)
+        self.assertEqual(context["follow_up_history_count"], 2)
+
+    def test_build_stateful_context_drops_follow_up_instructions_from_other_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            mail_run = runs / "20260503-120300-000"
+            mail_run.mkdir(parents=True)
+            (mail_run / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "source_request_id": "abc-123",
+                            "follow_up_instruction": "use proper email format",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (mail_run / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T12:03:05+00:00"}),
+                encoding="utf-8",
+            )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.apple.MobileSMS", "app_name": "Messages"}},
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        # Cross-surface: no Mail follow-up should bleed into Messages.
+        if context is not None:
+            self.assertEqual(context.get("recent_follow_up_instructions", []), [])
+            self.assertEqual(context.get("follow_up_history_count", 0), 0)
+
+    def test_build_stateful_context_drops_follow_up_instructions_past_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            stale = runs / "20260503-050000-000"
+            stale.mkdir(parents=True)
+            (stale / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "source_request_id": "abc-123",
+                            "follow_up_instruction": "use proper email format",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (stale / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T05:00:00+00:00"}),
+                encoding="utf-8",
+            )
+
+            # Now is ~7 hours later; FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS is 6h.
+            context = blink_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"}},
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        if context is not None:
+            self.assertEqual(context.get("recent_follow_up_instructions", []), [])
+
+    def test_build_stateful_context_deduplicates_repeated_follow_up_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+            for index, minute in enumerate((4, 3, 2)):
+                run = runs / f"20260503-120{minute}00-000"
+                run.mkdir(parents=True)
+                (run / "request.json").write_text(
+                    json.dumps(
+                        {
+                            "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                            "reroll_context": {
+                                "schema_version": 1,
+                                "source_request_id": f"req-{index}",
+                                "follow_up_instruction": "use proper email format",
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (run / "run.json").write_text(
+                    json.dumps({"finished_at": f"2026-05-03T12:0{minute}:00+00:00"}),
+                    encoding="utf-8",
+                )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {"frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"}},
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        history = context["recent_follow_up_instructions"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["instruction"], "use proper email format")
+        # The most-recent run (minute=4) wins, so age_seconds should be ~60s.
+        self.assertLess(history[0]["age_seconds"], 120)
+
     def test_disable_proxy_env_ignores_proxy_credentials(self) -> None:
         old_proxy_url = os.environ.get("BLINK_PROXY_URL")
         old_proxy_token = os.environ.get("BLINK_PROXY_TOKEN")
