@@ -34,8 +34,11 @@ const desktopDemoUrls = parseUrls(
         <span>blink</span>
       </div>
       <div class="cell muted">landing / 01</div>
-      <div class="cell muted">macOS · beta</div>
-      <div class="cell right"><a href="/story">read the story →</a></div>
+      <div class="cell">
+        <span class="chip"
+          ><span class="chip__dot" aria-hidden="true"></span>macOS beta</span
+        >
+      </div>
     </header>
 
     <section class="row hero" aria-labelledby="hero-title">
@@ -58,15 +61,6 @@ const desktopDemoUrls = parseUrls(
           data-endpoint={betaSignupUrl}
           data-share-origin={shareOrigin}
         >
-          <button
-            class="signup__open"
-            type="button"
-            aria-expanded="false"
-            aria-controls="signup-field"
-          >
-            <span>join the beta</span>
-            <span class="signup__arrow" aria-hidden="true">→</span>
-          </button>
           <div class="signup__field" id="signup-field">
             <input
               id="email"
@@ -90,6 +84,21 @@ const desktopDemoUrls = parseUrls(
               <span>join the beta</span>
               <span class="signup__arrow" aria-hidden="true">→</span>
             </button>
+          </div>
+          <div class="cta-row">
+            <button
+              class="signup__open"
+              type="button"
+              aria-expanded="false"
+              aria-controls="signup-field"
+            >
+              <span>join the beta</span>
+              <span class="signup__arrow" aria-hidden="true">→</span>
+            </button>
+            <a class="signup__secondary" href="/story">
+              <span class="signup__caret" aria-hidden="true">›</span>
+              <span>read the story</span>
+            </a>
           </div>
           <p class="status status--submitting">sending…</p>
           <p class="status status--success">you're on the list.</p>
@@ -117,14 +126,11 @@ const desktopDemoUrls = parseUrls(
                 </svg>
               </span>
               <span class="share__goal-text"
-                >refer 1 friend to skip the line</span
+                >you're on the list. share to skip the line.</span
               >
               <span class="share__goal-text--met"
-                >referred 1 friend. you're in line for the next batch.</span
+                >shared with 1 friend. you're in line for the next batch.</span
               >
-            </p>
-            <p class="share__email" hidden>
-              signed up as <span class="share__email-value"></span>
             </p>
             <div class="share__row">
               <input
@@ -134,23 +140,15 @@ const desktopDemoUrls = parseUrls(
                 aria-label="your referral link"
               />
               <button class="share__copy" type="button">
-                <span class="share__copy-label">copy</span>
+                <span class="signup__caret" aria-hidden="true">›</span>
+                <span class="share__copy-label">copy link</span>
               </button>
-              <a
-                class="share__tweet"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span>tweet</span>
-                <span class="signup__arrow" aria-hidden="true">→</span>
-              </a>
             </div>
+            <p class="share__email" hidden>
+              signed up as <span class="share__email-value"></span>
+            </p>
           </div>
         </form>
-        <a class="signup__secondary" href="/story">
-          <span>read the story</span>
-          <span class="signup__arrow" aria-hidden="true">→</span>
-        </a>
       </div>
       <div
         class="cell demo-cell demo-cell--desktop"
@@ -268,7 +266,7 @@ const desktopDemoUrls = parseUrls(
       grid-row: 2;
       min-width: 0;
       flex-direction: column;
-      align-items: stretch;
+      align-items: flex-start;
       gap: 8px;
       padding: clamp(20px, 3vh, 32px) clamp(28px, 4vw, 56px)
         clamp(20px, 3vh, 32px);
@@ -378,6 +376,27 @@ const desktopDemoUrls = parseUrls(
       gap: 10px;
     }
 
+    /* In success / already-signed-up states: float share to the top and
+       hide the (now-meaningless) join button so only "read the story"
+       remains in the cta-row. Driven off data-state for browser-wide
+       reliability — :has() variants have been flaky in practice. */
+    .signup[data-state="success"] .share,
+    .signup[data-state="already"] .share {
+      order: -1;
+    }
+
+    .signup[data-state="success"] .signup__open,
+    .signup[data-state="already"] .signup__open,
+    .signup[data-state="success"] .signup__field,
+    .signup[data-state="already"] .signup__field {
+      display: none;
+    }
+
+    .signup[data-state="success"] .cta-row,
+    .signup[data-state="already"] .cta-row {
+      gap: 0;
+    }
+
     .signup__open,
     .signup__submit {
       height: 48px;
@@ -389,17 +408,24 @@ const desktopDemoUrls = parseUrls(
       color: var(--bg);
       background: var(--fg);
       border: 0;
-      border-radius: 0;
+      border-radius: var(--radius-md);
       cursor: pointer;
       white-space: nowrap;
       display: inline-flex;
       align-items: center;
       gap: 14px;
-      transition: opacity 120ms ease;
+      transition: opacity 120ms ease, transform 120ms ease;
+      box-shadow: 0 8px 20px -10px rgba(29, 28, 33, 0.45);
+    }
+
+    .cta-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
     }
 
     .signup__open {
-      justify-self: start;
+      flex-shrink: 0;
     }
 
     .signup__open:hover,
@@ -425,6 +451,17 @@ const desktopDemoUrls = parseUrls(
       line-height: 1;
     }
 
+    /* Leading "›" used on text-action items (read the story, copy link).
+       Mirrors the wordmark cursor's accent color — same visual prompt. */
+    .signup__caret {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 1.2em;
+      line-height: 1;
+      display: inline-block;
+      transform: translateY(-0.04em);
+    }
+
     .signup__field {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -439,6 +476,11 @@ const desktopDemoUrls = parseUrls(
 
     .signup[data-mode="expanded"] .signup__open {
       display: none;
+    }
+
+    /* When expanded and the button is hidden, collapse the cta-row gap */
+    .signup[data-mode="expanded"] .cta-row {
+      gap: 0;
     }
 
     @keyframes signup-field-in {
@@ -528,14 +570,20 @@ const desktopDemoUrls = parseUrls(
       display: none;
     }
 
+    /* When the share block carries the success message, the standalone
+       status lines are redundant. */
+    .signup[data-state="success"] .status--success,
+    .signup[data-state="already"] .status--already {
+      display: none;
+    }
+
     .share__goal {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      font-weight: 500;
+      font-size: 14px;
+      font-weight: 600;
       color: var(--fg);
-      line-height: 1.2;
+      line-height: 1.4;
+      max-width: 38ch;
+      margin: 0;
     }
 
     .share__check {
@@ -569,13 +617,6 @@ const desktopDemoUrls = parseUrls(
     }
 
     .share__email {
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--fg-muted);
-      margin: 0;
-    }
-
-    .share__email[hidden] {
       display: none;
     }
 
@@ -599,8 +640,7 @@ const desktopDemoUrls = parseUrls(
     }
 
     .share__row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      display: flex;
       gap: 8px;
       align-items: stretch;
     }
@@ -609,10 +649,10 @@ const desktopDemoUrls = parseUrls(
       width: 100%;
       min-width: 0;
       height: 40px;
-      padding: 0 10px;
+      padding: 0 12px;
       border: 1px solid var(--line-soft);
-      border-radius: 0;
-      background: var(--surface);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.7);
       color: var(--fg);
       font: inherit;
       font-size: 13px;
@@ -625,36 +665,30 @@ const desktopDemoUrls = parseUrls(
       border-color: var(--accent);
     }
 
-    .share__copy,
-    .share__tweet {
-      height: 40px;
-      padding: 0 14px;
+    .share__copy {
+      appearance: none;
+      padding: 0;
       font: inherit;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--fg);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--fg-muted);
       background: transparent;
-      border: 1px solid var(--line);
-      border-radius: 0;
+      border: 0;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       white-space: nowrap;
-      text-decoration: none;
-      transition: background 120ms ease, color 120ms ease;
+      transition: color 120ms ease;
     }
 
-    .share__copy:hover,
-    .share__tweet:hover {
-      background: var(--fg);
-      color: var(--bg);
+    .share__copy:hover {
+      color: var(--fg);
     }
 
-    .share__copy:focus-visible,
-    .share__tweet:focus-visible {
+    .share__copy:focus-visible {
       outline: 2px solid var(--accent);
-      outline-offset: 2px;
+      outline-offset: 3px;
     }
 
     .share[data-copied="true"] .share__copy-label::after {
@@ -663,6 +697,25 @@ const desktopDemoUrls = parseUrls(
     }
 
     .signup__secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--fg-muted);
+      white-space: nowrap;
+    }
+
+    .signup__secondary:hover {
+      color: var(--fg);
+      border-bottom-color: transparent;
+    }
+
+    .share__check {
+      display: none;
+    }
+
+    .share__url {
       display: none;
     }
 
@@ -708,6 +761,7 @@ const desktopDemoUrls = parseUrls(
         grid-row: 3;
         border-right: 0;
         border-bottom: 0;
+        align-items: stretch;
         padding: clamp(16px, 2.4vh, 24px) clamp(24px, 6vw, 40px)
           clamp(16px, 2.4vh, 24px);
       }
@@ -734,35 +788,6 @@ const desktopDemoUrls = parseUrls(
         justify-content: center;
       }
 
-      .share__row {
-        grid-template-columns: minmax(0, 1fr);
-      }
-
-      .share__copy,
-      .share__tweet {
-        width: 100%;
-        justify-content: center;
-      }
-
-      .signup__secondary {
-        display: inline-flex;
-        align-items: center;
-        gap: 14px;
-        align-self: center;
-        height: 48px;
-        padding: 0 22px;
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: 0;
-        color: var(--fg);
-        border-bottom-color: transparent;
-      }
-
-      .signup__secondary:hover {
-        color: var(--fg);
-        opacity: 0.7;
-        border-bottom-color: transparent;
-      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -795,7 +820,6 @@ const desktopDemoUrls = parseUrls(
     const shareUrlInput = share?.querySelector(".share__url");
     const shareCopyButton = share?.querySelector(".share__copy");
     const shareCopyLabel = share?.querySelector(".share__copy-label");
-    const shareTweetLink = share?.querySelector(".share__tweet");
     const shareEmailRow = share?.querySelector(".share__email");
     const shareEmailValue = share?.querySelector(".share__email-value");
     const statsBase = endpoint
@@ -848,17 +872,10 @@ const desktopDemoUrls = parseUrls(
     let goalMetCaptured = false;
 
     const showShareRow = (signupId, email) => {
-      if (!share || !shareUrlInput || !shareTweetLink) return;
+      if (!share || !shareUrlInput) return;
       currentSignupId = signupId;
       const shareUrl = `${shareOrigin}/?ref=${signupId}`;
       shareUrlInput.value = shareUrl;
-      const tweetText =
-        "just joined the blink beta. reads your screen, writes the rest. grab a spot:";
-      shareTweetLink.href =
-        "https://twitter.com/intent/tweet?text=" +
-        encodeURIComponent(tweetText) +
-        "&url=" +
-        encodeURIComponent(shareUrl);
       const resolvedEmail = (email || readStoredEmail()).trim();
       if (resolvedEmail && shareEmailRow && shareEmailValue) {
         shareEmailValue.textContent = resolvedEmail;
@@ -912,15 +929,9 @@ const desktopDemoUrls = parseUrls(
         signup_id: currentSignupId,
       });
       setTimeout(() => {
-        if (shareCopyLabel) shareCopyLabel.textContent = "copy";
+        if (shareCopyLabel) shareCopyLabel.textContent = "copy link";
         share.dataset.copied = "false";
       }, 1800);
-    });
-
-    shareTweetLink?.addEventListener("click", () => {
-      window.posthog?.capture("referral_link_shared_twitter", {
-        signup_id: currentSignupId,
-      });
     });
 
     document.addEventListener("visibilitychange", () => {

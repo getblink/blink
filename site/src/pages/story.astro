@@ -11,13 +11,12 @@ const description =
 <Base title={title} description={description} ogType="article">
   <main class="shell shell--scroll">
     <header class="row meta">
-      <div class="cell">
+      <a class="cell" href="/">
         <BrandMark />
         <span>blink</span>
-      </div>
+      </a>
       <div class="cell muted">story / 02</div>
-      <div class="cell muted">essay</div>
-      <div class="cell right"><a href="/">← back to index</a></div>
+      <div class="cell"></div>
     </header>
 
     <section class="row article-row">
@@ -91,6 +90,11 @@ const description =
   </main>
 
   <style>
+    /* The blink cell is an <a> for back-nav; suppress the global link underline */
+    header a.cell {
+      border-bottom: 0;
+    }
+
     .article-row {
       grid-template-columns: 1fr;
       min-height: 0;

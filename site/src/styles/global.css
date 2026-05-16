@@ -3,15 +3,16 @@
 :root {
   color-scheme: light;
   --bg: #f4f3ee;
-  --surface: #fafaf7;
+  --surface: rgba(250, 250, 247, 0.9);
+  --surface-solid: #fafaf7;
   --fg: #1d1c21;
   --fg-muted: #6b6b6b;
   --line: #1d1c21;
-  --line-soft: #d8d6cf;
+  --line-soft: rgba(29, 28, 33, 0.12);
   --accent: #6fb6e6;
   --accent-soft: rgba(111, 182, 230, 0.18);
   --radius-shell: 22px;
-  --radius-md: 12px;
+  --radius-md: 14px;
   --radius-sm: 8px;
 }
 
@@ -25,11 +26,7 @@
 
 body {
   background-color: var(--bg);
-  background-image: url("/seurat-channel.jpg");
-  background-image: image-set(
-    url("/seurat-channel.webp") 1x,
-    url("/seurat-channel.jpg") 1x
-  );
+  background-image: url("/pointilism-3.webp");
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
@@ -83,10 +80,14 @@ a:focus-visible {
 .shell {
   margin: var(--shell-inset);
   background: var(--surface);
-  border: 1px solid var(--line);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(29, 28, 33, 0.10);
   border-radius: var(--radius-shell);
   overflow: hidden;
   display: grid;
+  box-shadow: 0 36px 90px -40px rgba(29, 28, 33, 0.5),
+    0 8px 24px -12px rgba(29, 28, 33, 0.18);
 }
 
 html:not(.no-shell-animate):not(.pending-pointer) .shell--animate-in {
@@ -115,7 +116,7 @@ html.pending-pointer .shell--animate-in {
 /* Row + cell primitives */
 .row {
   display: grid;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
   min-width: 0;
 }
 
@@ -128,7 +129,7 @@ html.pending-pointer .shell--animate-in {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--line-soft);
   min-width: 0;
 }
 
@@ -142,7 +143,7 @@ html.pending-pointer .shell--animate-in {
 
 /* Meta strips (header & footer rows) */
 .meta {
-  grid-template-columns: 1.2fr 1fr 1fr 1.2fr;
+  grid-template-columns: 1.2fr 1fr 1fr;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -154,6 +155,30 @@ html.pending-pointer .shell--animate-in {
 
 .muted {
   color: var(--fg-muted);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(111, 182, 230, 0.25);
 }
 
 @media (max-width: 880px) {
@@ -178,11 +203,9 @@ html.pending-pointer .shell--animate-in {
     grid-template-columns: 1fr 1fr;
   }
 
-  /* Hide "landing / 01" (cell 2) and "read the story" (cell 4 — moved
-     under the join CTA on mobile). Keep cell 3 ("macOS · beta") so the
+  /* Hide "landing / 01" (cell 2). Keep cell 3 ("macOS beta") so the
      header preserves the desktop's grid texture. */
-  .meta .cell:nth-child(2),
-  .meta .cell:nth-child(4) {
+  .meta .cell:nth-child(2) {
     display: none;
   }
 
