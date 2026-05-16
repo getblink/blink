@@ -260,22 +260,47 @@ enum ScreenAnnotator {
         guard captureRect.contains(point) else { return }
         let p = transform(point)
 
+        // Macros-style arrow cursor with the hotspot (tip) at `p`.
+        // Coordinates below are in points relative to the tip, expressed
+        // top-down (positive Y goes "visually downward"); negated at
+        // draw time because the CGBitmapContext is bottom-up. Shape
+        // matches the macOS system arrow closely enough that the
+        // marker reads as "cursor" instantly without confusing the
+        // model — the prior hollow ring left users (and the model)
+        // unsure whether it was a marker or part of the underlying UI.
+        let arrowOffsets: [(CGFloat, CGFloat)] = [
+            ( 0.0,  0.0),   // tip (hotspot)
+            ( 0.0, 14.0),   // bottom-left of body
+            ( 4.0, 11.0),   // inner-left at tail base
+            ( 7.0, 17.0),   // tail bottom-left
+            ( 9.0, 16.0),   // tail bottom-right
+            ( 6.0, 10.0),   // inner-right at tail base
+            (10.0, 10.0),   // right edge of body
+        ]
+
         context.saveGState()
         context.setShadow(
-            offset: CGSize(width: 0, height: 1 * scale),
+            offset: CGSize(width: 0, height: -1 * scale),
             blur: 2 * scale,
             color: CGColor(gray: 0, alpha: 0.7)
         )
-        let diameter = 10 * scale
-        let ring = CGRect(
-            x: p.x - diameter / 2,
-            y: p.y - diameter / 2,
-            width: diameter,
-            height: diameter
-        )
-        context.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 0.95)
-        context.setLineWidth(1.5 * scale)
-        context.strokeEllipse(in: ring)
+        context.beginPath()
+        for (index, offset) in arrowOffsets.enumerated() {
+            let pt = CGPoint(
+                x: p.x + offset.0 * scale,
+                y: p.y - offset.1 * scale   // bottom-up: subtract to go visually down
+            )
+            if index == 0 {
+                context.move(to: pt)
+            } else {
+                context.addLine(to: pt)
+            }
+        }
+        context.closePath()
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.setStrokeColor(red: 0, green: 0, blue: 0, alpha: 0.85)
+        context.setLineWidth(1.0 * scale)
+        context.drawPath(using: .fillStroke)
         context.restoreGState()
     }
 
