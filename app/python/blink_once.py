@@ -104,6 +104,10 @@ VOICE_SAMPLE_MIN_CHARS = 15
 SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
+FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4
+# Style/format guidance ages slower than concrete surface state, so the
+# follow-up-instruction window is longer than SURFACE_CONTEXT_WINDOW_SECONDS.
+FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS = 6 * 60 * 60
 SURFACE_CONTEXT_WINDOW_SECONDS = 15 * 60
 RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
@@ -140,6 +144,41 @@ STYLE_KNOB_INSTRUCTIONS: dict[str, dict[str, str]] = {
     },
 }
 STYLE_KNOB_ORDER = ("initiative", "tone", "length", "directness", "voice_mirror")
+
+
+def _format_relative_time(age_seconds: Any) -> str:
+    try:
+        seconds = int(age_seconds)
+    except (TypeError, ValueError):
+        return "recently"
+    if seconds < 0:
+        return "just now"
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+def _follow_up_history_lines(history: Any) -> list[str]:
+    if not isinstance(history, list):
+        return []
+    lines: list[str] = []
+    for item in history[:FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        instruction = _bounded_text(item.get("instruction"), FOLLOW_UP_INSTRUCTION_MAX_CHARS)
+        if not instruction:
+            continue
+        relative = _format_relative_time(item.get("age_seconds"))
+        app_label = _bounded_text(item.get("app_name"), 80) or _bounded_text(item.get("app_bundle_id"), 80)
+        if app_label:
+            lines.append(f'- {relative}, in {app_label}: "{instruction}"')
+        else:
+            lines.append(f'- {relative}: "{instruction}"')
+    return lines
 
 
 def style_block(style: dict[str, Any] | None) -> str:
@@ -543,6 +582,8 @@ def build_stateful_context(
     preference_examples: list[dict[str, Any]] = []
     seen_preference: set[str] = set()
     recent_surface_history: list[dict[str, Any]] = []
+    follow_up_history: list[dict[str, Any]] = []
+    seen_follow_up: set[str] = set()
     current_surface_key = _surface_key(current_envelope)
     surface_match_debug: dict[str, Any] = {
         "match_mode": "no_match",
@@ -598,6 +639,40 @@ def build_stateful_context(
             reason = skipped_reason or "no_match"
             surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
             continue
+
+        # Follow-up instructions are durable style preferences (format, tone,
+        # register) and outlive concrete surface state, so they have their own
+        # wider recency gate. Same-surface gating already applied above.
+        if (
+            age_seconds <= FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS
+            and len(follow_up_history) < FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT
+        ):
+            reroll = request_log.get("reroll_context") if isinstance(request_log.get("reroll_context"), dict) else None
+            follow_up = (
+                _bounded_text(reroll.get("follow_up_instruction"), FOLLOW_UP_INSTRUCTION_MAX_CHARS)
+                if reroll
+                else None
+            )
+            if follow_up and follow_up not in seen_follow_up:
+                frontmost = request_log.get("frontmost_app")
+                if not isinstance(frontmost, dict):
+                    frontmost = {}
+                follow_up_history.append(
+                    {
+                        "instruction": follow_up,
+                        "created_at": (
+                            request_log.get("created_at")
+                            or run_log.get("started_at")
+                            or run_log.get("finished_at")
+                        ),
+                        "age_seconds": int(age_seconds),
+                        "app_bundle_id": frontmost.get("bundle_id"),
+                        "app_name": frontmost.get("app_name"),
+                        "match_mode": match_mode,
+                    }
+                )
+                seen_follow_up.add(follow_up)
+
         if age_seconds > SURFACE_CONTEXT_WINDOW_SECONDS:
             reason = f"{match_mode}_too_old"
             surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
@@ -655,7 +730,12 @@ def build_stateful_context(
     voice_candidates.sort(key=_voice_priority)
     voice_samples = voice_candidates[:VOICE_SAMPLE_LIMIT]
 
-    if not voice_samples and not recent_surface_history and not preference_examples:
+    if (
+        not voice_samples
+        and not recent_surface_history
+        and not preference_examples
+        and not follow_up_history
+    ):
         if not surface_match_debug["skipped_reasons"]:
             return None
         return {
@@ -663,22 +743,26 @@ def build_stateful_context(
             "voice_samples": [],
             "preference_examples": [],
             "recent_surface_history": [],
+            "recent_follow_up_instructions": [],
             "surface_match_debug": surface_match_debug,
             "surface_key": current_surface_key,
             "matched_history_count": 0,
             "voice_sample_count": 0,
             "preference_example_count": 0,
+            "follow_up_history_count": 0,
         }
     return {
         "schema_version": STATEFUL_CONTEXT_VERSION,
         "voice_samples": voice_samples,
         "preference_examples": preference_examples,
         "recent_surface_history": recent_surface_history,
+        "recent_follow_up_instructions": follow_up_history,
         "surface_match_debug": surface_match_debug,
         "surface_key": current_surface_key,
         "matched_history_count": len(recent_surface_history),
         "voice_sample_count": len(voice_samples),
         "preference_example_count": len(preference_examples),
+        "follow_up_history_count": len(follow_up_history),
     }
 
 
@@ -701,6 +785,7 @@ def prompt_with_context(
         surface_history = []
     if not SURFACE_HISTORY_ENABLED:
         surface_history = []
+    follow_up_history_lines = _follow_up_history_lines(stateful_context.get("recent_follow_up_instructions"))
     if not isinstance(reroll_context, dict):
         reroll_context = {}
     previous_suggestions = reroll_context.get("previous_suggestions")
@@ -723,6 +808,7 @@ def prompt_with_context(
         and not previous_suggestion_texts
         and not style_text
         and not follow_up_instruction
+        and not follow_up_history_lines
     ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
@@ -736,6 +822,14 @@ def prompt_with_context(
     lines = [""]
     if style_text:
         lines.append(style_text)
+    if follow_up_history_lines:
+        lines.extend(
+            [
+                "Recent standing guidance:",
+                "These are follow-up instructions the user gave recently on this same surface. Treat them as durable preferences for how this user wants suggestions on this kind of surface (format, tone, length, register). Apply them silently to the new suggestions when relevant. The most recent guidance wins on conflict. They are style preferences, not evidence: never carry their content as facts about the current screen, and the current capture's tone still wins where it clashes.",
+            ]
+        )
+        lines.extend(follow_up_history_lines)
     if has_stateful_context:
         lines.extend(
             [

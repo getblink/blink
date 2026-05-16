@@ -19,6 +19,8 @@ SHARED_LIMIT_CONSTANTS = (
     "SURFACE_TEXT_MAX_CHARS",
     "PREFERENCE_TEXT_MAX_CHARS",
     "FOLLOW_UP_INSTRUCTION_MAX_CHARS",
+    "FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT",
+    "FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS",
     "RESPONSE_SCHEMA_VERSION",
     "SUGGESTION_TAG_LIMIT",
     "SUGGESTION_TAG_MAX_CHARS",
@@ -195,6 +197,99 @@ class PromptParityTests(unittest.TestCase):
             rendered.index("Style preferences:"),
             rendered.index("Stateful Blink context:"),
         )
+
+    def test_follow_up_history_renders_standing_guidance_block(self) -> None:
+        stateful = {
+            "voice_samples": [],
+            "preference_examples": [],
+            "recent_surface_history": [],
+            "recent_follow_up_instructions": [
+                {
+                    "instruction": "use proper email format with a greeting and sign-off",
+                    "age_seconds": 312,
+                    "app_bundle_id": "com.apple.mail",
+                    "app_name": "Mail",
+                    "match_mode": "window_match",
+                },
+                {
+                    "instruction": "keep it under 3 sentences",
+                    "age_seconds": 3600 + 120,
+                    "app_bundle_id": "com.apple.mail",
+                    "app_name": "Mail",
+                    "match_mode": "bundle_match",
+                },
+            ],
+        }
+        rendered = blink_once.prompt_with_context("BASE PROMPT", stateful)
+        self.assertEqual(
+            rendered,
+            gemini.prompt_with_context("BASE PROMPT", stateful),
+        )
+        self.assertIn("Recent standing guidance:", rendered)
+        self.assertIn(
+            '- 5m ago, in Mail: "use proper email format with a greeting and sign-off"',
+            rendered,
+        )
+        self.assertIn('- 1h ago, in Mail: "keep it under 3 sentences"', rendered)
+        # The block must not introduce a Stateful Blink context heading when
+        # there is no voice/preference/surface signal alongside it.
+        self.assertNotIn("Stateful Blink context:", rendered)
+
+    def test_follow_up_history_empty_keeps_prompt_unchanged(self) -> None:
+        for value in (
+            None,
+            [],
+            [{"instruction": "", "age_seconds": 0}],
+            [{"age_seconds": 60, "app_name": "Mail"}],  # missing instruction
+            "not-a-list",
+        ):
+            stateful = {
+                "voice_samples": [],
+                "preference_examples": [],
+                "recent_surface_history": [],
+                "recent_follow_up_instructions": value,
+            }
+            with self.subTest(value=value):
+                self.assertEqual(
+                    blink_once.prompt_with_context("BASE PROMPT", stateful),
+                    "BASE PROMPT",
+                )
+                self.assertEqual(
+                    gemini.prompt_with_context("BASE PROMPT", stateful),
+                    "BASE PROMPT",
+                )
+
+    def test_follow_up_history_truncates_long_instructions(self) -> None:
+        long_text = "y" * (blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS + 50)
+        stateful = {
+            "recent_follow_up_instructions": [
+                {"instruction": long_text, "age_seconds": 60, "app_name": "Mail"},
+            ],
+        }
+        rendered = blink_once.prompt_with_context("BASE PROMPT", stateful)
+        self.assertEqual(rendered, gemini.prompt_with_context("BASE PROMPT", stateful))
+        self.assertIn("y" * blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS, rendered)
+        self.assertNotIn("y" * (blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS + 1), rendered)
+
+    def test_follow_up_history_caps_at_limit(self) -> None:
+        entries = [
+            {
+                "instruction": f"instruction number {index}",
+                "age_seconds": 60 * (index + 1),
+                "app_name": "Mail",
+            }
+            for index in range(blink_once.FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT + 2)
+        ]
+        stateful = {"recent_follow_up_instructions": entries}
+        rendered = blink_once.prompt_with_context("BASE PROMPT", stateful)
+        self.assertEqual(rendered, gemini.prompt_with_context("BASE PROMPT", stateful))
+        for index in range(blink_once.FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT):
+            self.assertIn(f"instruction number {index}", rendered)
+        for index in (
+            blink_once.FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT,
+            blink_once.FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT + 1,
+        ):
+            self.assertNotIn(f"instruction number {index}", rendered)
 
     def test_prompt_with_context_matches_for_reroll_fixture(self) -> None:
         reroll_context = {
