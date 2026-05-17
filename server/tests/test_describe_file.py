@@ -98,6 +98,19 @@ class DescribeFileTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_text_and_other_kinds_rejected(self) -> None:
+        """Text + opaque-binary entries are described client-side; server refuses
+        to burn Gemini tokens on them even if a stale client sends them up."""
+        for kind in ("text", "other"):
+            response = self.client.post(
+                "/v1/describe-file",
+                headers={"Authorization": "Bearer dev-token"},
+                files={"file": ("snip.md", b"# hello", "text/plain")},
+                data={"kind": kind},
+            )
+            self.assertEqual(response.status_code, 422, f"kind={kind} should be rejected")
+            self.assertIn("client-side", response.json()["detail"])
+
     def test_unauthenticated_rejected(self) -> None:
         fake_bytes = b"data"
         response = self.client.post(

@@ -353,12 +353,22 @@ def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
         name = str(item.get("displayName") or "").strip()
         description = str(item.get("description") or "").strip()
         kind = str(item.get("kind") or "other").strip()
+        body = str(item.get("body") or "")
         if not item_id or not name:
             continue
         line = f"- id={item_id!r} name={name!r} kind={kind}"
         if description:
             line += f" description={description!r}"
         lines.append(line)
+        # Text entries carry their (already capped) contents inline so the
+        # model can quote them directly into the suggestion text. Anything
+        # at >4KB has already been trimmed client-side.
+        if kind == "text" and body:
+            lines.append("  Content:")
+            lines.append("  ```")
+            for body_line in body.splitlines():
+                lines.append(f"  {body_line}")
+            lines.append("  ```")
     if len(lines) <= 1:
         return ""
     return "\n".join(lines) + "\n"
@@ -1638,11 +1648,16 @@ async def describe_file(
     kind: str = Form("other"),
     _token_data: dict[str, Any] = Depends(require_bearer_token),
 ) -> dict[str, Any]:
-    """Auto-generate a one-line description for a staged attachment."""
-    if kind not in {"image", "pdf", "other"}:
+    """Auto-generate a one-line description for a staged attachment.
+
+    Only image and pdf hit Gemini here. Text and opaque-binary entries are
+    described client-side (cheap, deterministic, doesn't burn tokens) and
+    never reach this endpoint in a healthy client.
+    """
+    if kind not in {"image", "pdf"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="kind must be image, pdf, or other",
+            detail="kind must be image or pdf (text and other are described client-side)",
         )
     raw_bytes = await file.read()
     mime_type = file.content_type or "application/octet-stream"
