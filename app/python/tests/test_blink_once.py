@@ -647,6 +647,56 @@ class BlinkOnceTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_carries_attachments_through(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {
+                        "text": "attached the guide",
+                        "tags": ["Draft"],
+                        "attachments": [
+                            {"id": "guide-ab12", "reason": "Implementation guide"},
+                            {"id": "no-reason"},  # missing reason — dropped
+                            {"reason": "no id"},  # missing id — dropped
+                            "not a dict",  # not a dict — dropped
+                        ],
+                    },
+                    {
+                        "text": "no attachments here",
+                        "tags": ["Reply"],
+                        "attachments": [],
+                    },
+                    {"text": "plain", "tags": ["Reply"]},
+                ],
+            }
+        )
+        self.assertEqual(
+            details[0]["attachments"],
+            [{"id": "guide-ab12", "reason": "Implementation guide"}],
+        )
+        self.assertNotIn("attachments", details[1])  # empty list is omitted
+        self.assertNotIn("attachments", details[2])  # field absent in source
+
+    def test_normalize_payload_truncates_attachment_reason(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {
+                        "text": "x",
+                        "tags": ["Draft"],
+                        "attachments": [{"id": "g-1", "reason": "r" * 200}],
+                    },
+                    {"text": "y", "tags": ["Reply"]},
+                    {"text": "z", "tags": ["Reply"]},
+                ],
+            }
+        )
+        self.assertEqual(len(details[0]["attachments"][0]["reason"]), 80)
+
     def test_normalize_payload_fills_blank_v2_tags(self) -> None:
         _, _, details = blink_once.normalize_payload(
             {
