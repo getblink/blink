@@ -1751,7 +1751,12 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertGreater(history[1]["age_seconds"], 60 * 20)
         self.assertEqual(context["follow_up_history_count"], 2)
 
-    def test_build_stateful_context_drops_follow_up_instructions_from_other_surface(self) -> None:
+    def test_build_stateful_context_carries_follow_up_instructions_across_surfaces(self) -> None:
+        # Cross-surface follow-up instructions are carried with their app
+        # annotation so the model can judge relevance per entry. This
+        # avoids the bundle_id gate's failure modes (Mail.app vs Gmail in
+        # Chrome looking like unrelated apps; every Chrome tab looking
+        # like the same app).
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -1782,10 +1787,19 @@ class BlinkOnceTests(unittest.TestCase):
                 now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
             )
 
-        # Cross-surface: no Mail follow-up should bleed into Messages.
-        if context is not None:
-            self.assertEqual(context.get("recent_follow_up_instructions", []), [])
-            self.assertEqual(context.get("follow_up_history_count", 0), 0)
+        self.assertIsNotNone(context)
+        assert context is not None
+        history = context["recent_follow_up_instructions"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["instruction"], "use proper email format")
+        # Annotation preserved so the model can judge relevance against
+        # the current iMessage capture.
+        self.assertEqual(history[0]["app_bundle_id"], "com.apple.mail")
+        self.assertEqual(history[0]["app_name"], "Mail")
+        # match_mode is no longer recorded on follow-up entries since the
+        # surface gate was removed.
+        self.assertNotIn("match_mode", history[0])
+        self.assertEqual(context["follow_up_history_count"], 1)
 
     def test_build_stateful_context_drops_follow_up_instructions_past_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -254,7 +254,7 @@ def prompt_with_context(
         lines.extend(
             [
                 "Recent standing guidance:",
-                "These are follow-up instructions the user gave recently on this same surface. Treat them as durable preferences for how this user wants suggestions on this kind of surface (format, tone, length, register). Apply them silently to the new suggestions when relevant. The most recent guidance wins on conflict. They are style preferences, not evidence: never carry their content as facts about the current screen, and the current capture's tone still wins where it clashes.",
+                "These are follow-up instructions the user gave on recent captures. Each entry is annotated with the app it came from and how long ago. They are style preferences (format, tone, length, register), not screen evidence. Decide per entry whether it applies to the current capture: an email-format instruction from Mail clearly applies to a Gmail draft on screen now, but not to a casual iMessage. Apply applicable ones silently; skip the ones that obviously don't fit. The most recent applicable guidance wins on conflict. The current capture's tone still wins where it clashes, and never carry the guidance's content as facts about the current screen.",
             ]
         )
         lines.extend(follow_up_history_lines)
