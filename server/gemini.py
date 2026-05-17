@@ -593,6 +593,7 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
         raw_suggestions = []
     details: list[dict[str, Any]] = []
     for item in raw_suggestions:
+        attachments: list[dict[str, str]] = []
         if isinstance(item, dict):
             text = str(item.get("text") or item.get("suggestion") or "").strip()
             raw_tags = item.get("tags")
@@ -603,13 +604,25 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
                 for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
                 if tag
             ][:SUGGESTION_TAG_LIMIT]
+            raw_attachments = item.get("attachments")
+            if isinstance(raw_attachments, list):
+                for attachment in raw_attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    att_id = str(attachment.get("id") or "").strip()
+                    att_reason = str(attachment.get("reason") or "").strip()
+                    if att_id and att_reason:
+                        attachments.append({"id": att_id, "reason": att_reason[:80]})
         else:
             text = str(item or "").strip()
             tags = []
         if text:
             if not tags:
                 tags = fallback_suggestion_tags(text, len(details))
-            details.append({"text": text, "tags": tags})
+            entry: dict[str, Any] = {"text": text, "tags": tags}
+            if attachments:
+                entry["attachments"] = attachments
+            details.append(entry)
     return details[:3]
 
 
