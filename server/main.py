@@ -362,6 +362,11 @@ def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
         body = str(item.get("body") or "")
         if not item_id or not name:
             continue
+        # Empty text entries have nothing to inline AND aren't a real
+        # attachment per rule 6 — exclude them so the model doesn't
+        # improvise filler content from the description.
+        if kind == "text" and not body:
+            continue
         attrs = [
             f'id={_xml_attr(item_id)}',
             f'name={_xml_attr(name)}',
