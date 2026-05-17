@@ -253,8 +253,7 @@ def prompt_with_context(
     if follow_up_history_lines:
         lines.extend(
             [
-                "Recent standing guidance:",
-                "These are follow-up instructions the user gave recently on this same surface. Treat them as durable preferences for how this user wants suggestions on this kind of surface (format, tone, length, register). Apply them silently to the new suggestions when relevant. The most recent guidance wins on conflict. They are style preferences, not evidence: never carry their content as facts about the current screen, and the current capture's tone still wins where it clashes.",
+                "User's recent follow-up guidance (apply per suggestion rule 7):",
             ]
         )
         lines.extend(follow_up_history_lines)

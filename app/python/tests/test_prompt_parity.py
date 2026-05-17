@@ -225,7 +225,7 @@ class PromptParityTests(unittest.TestCase):
             rendered,
             gemini.prompt_with_context("BASE PROMPT", stateful),
         )
-        self.assertIn("Recent standing guidance:", rendered)
+        self.assertIn("User's recent follow-up guidance", rendered)
         self.assertIn(
             '- 5m ago, in Mail: "use proper email format with a greeting and sign-off"',
             rendered,

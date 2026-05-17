@@ -635,14 +635,15 @@ def build_stateful_context(
             )
             seen_voice.add(custom_text)
 
-        if match_mode is None:
-            reason = skipped_reason or "no_match"
-            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
-            continue
-
         # Follow-up instructions are durable style preferences (format, tone,
-        # register) and outlive concrete surface state, so they have their own
-        # wider recency gate. Same-surface gating already applied above.
+        # register). They're carried regardless of surface match — each entry
+        # is annotated with the app it came from, and the model decides
+        # relevance per entry against the current capture. This avoids the
+        # bundle_id gate's two failure modes: (a) false negative across
+        # apps that mean the same thing semantically (Mail.app vs Gmail in
+        # Chrome), and (b) false positive across tabs that share a bundle
+        # (Gmail in Chrome vs GitHub in Chrome). Only the recency window
+        # and the dedupe-by-instruction-text gates still apply.
         if (
             age_seconds <= FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS
             and len(follow_up_history) < FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT
@@ -668,11 +669,14 @@ def build_stateful_context(
                         "age_seconds": int(age_seconds),
                         "app_bundle_id": frontmost.get("bundle_id"),
                         "app_name": frontmost.get("app_name"),
-                        "match_mode": match_mode,
                     }
                 )
                 seen_follow_up.add(follow_up)
 
+        if match_mode is None:
+            reason = skipped_reason or "no_match"
+            surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
+            continue
         if age_seconds > SURFACE_CONTEXT_WINDOW_SECONDS:
             reason = f"{match_mode}_too_old"
             surface_match_debug["skipped_reasons"][reason] = surface_match_debug["skipped_reasons"].get(reason, 0) + 1
@@ -825,8 +829,7 @@ def prompt_with_context(
     if follow_up_history_lines:
         lines.extend(
             [
-                "Recent standing guidance:",
-                "These are follow-up instructions the user gave recently on this same surface. Treat them as durable preferences for how this user wants suggestions on this kind of surface (format, tone, length, register). Apply them silently to the new suggestions when relevant. The most recent guidance wins on conflict. They are style preferences, not evidence: never carry their content as facts about the current screen, and the current capture's tone still wins where it clashes.",
+                "User's recent follow-up guidance (apply per suggestion rule 7):",
             ]
         )
         lines.extend(follow_up_history_lines)
