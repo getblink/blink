@@ -6,7 +6,7 @@ import Combine
 /// Settings scene. Toolbar carries Summarize (primary action), Model and
 /// Reasoning popups, and a Settings shortcut.
 @MainActor
-final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
+final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, LibraryStripDelegate {
     private let coordinator: BlinkCoordinator
     private let runtimeStore: RuntimeConfigStore
     private let hotkey: Hotkey
@@ -20,10 +20,13 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     private var keycaps: [(part: String, view: KeycapView)] = []
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    private var libraryStrip: LibraryStripView?
+    private var libraryStripAddErrorLabel: NSTextField?
 
     private var statusSubscription: AnyCancellable?
     private var modelSubscription: AnyCancellable?
     private var reasoningSubscription: AnyCancellable?
+    private var librarySubscription: AnyCancellable?
 
     private enum ToolbarID {
         static let summarize = NSToolbarItem.Identifier("BlinkControl.summarize")
@@ -61,7 +64,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
             previousFrontmost = frontmost
         }
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Skip reactivate when the user is mid-drag (dragging a file toward
+        // the library strip). NSApp.activate during a drag can interrupt the
+        // drag session on some macOS versions. We detect this via the most
+        // recent draggingEntered timestamp from the strip.
+        let dragAge = libraryStrip.map { Date().timeIntervalSince($0.lastDragEnteredAt) } ?? .infinity
+        if dragAge > 1.0 {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         // Re-show paths (menubar item, dock click, second show()) need to
         // tear down stale subscriptions before re-subscribing.
         stopSubscriptions()
@@ -173,6 +183,21 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         hotkeyBlock.alignment = .leading
         hotkeyBlock.spacing = 8
         stack.addArrangedSubview(hotkeyBlock)
+
+        // Attachment library strip — horizontally-scrolling file pill row.
+        let strip = LibraryStripView()
+        strip.delegate = self
+        libraryStrip = strip
+        stack.addArrangedSubview(strip)
+        NSLayoutConstraint.activate([
+            strip.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 0),
+            strip.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 0),
+        ])
+        // Sync current library state
+        strip.update(
+            entries: AttachmentLibrary.shared.entries,
+            unavailableIDs: AttachmentLibrary.shared.unavailableIDs
+        )
 
         let footer = NSTextField(wrappingLabelWithString:
             "Summaries and suggestions are stored to improve Blink; "
@@ -360,6 +385,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
                     self?.statusLabel?.stringValue = text
                 }
             }
+        librarySubscription = AttachmentLibrary.shared.$entries
+            .combineLatest(AttachmentLibrary.shared.$unavailableIDs)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] entries, unavailableIDs in
+                MainActor.assumeIsolated {
+                    self?.libraryStrip?.update(entries: entries, unavailableIDs: unavailableIDs)
+                }
+            }
         modelSubscription = runtimeStore.$model
             .receive(on: RunLoop.main)
             .sink { [weak self] selected in
@@ -387,6 +420,52 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         statusSubscription = nil
         modelSubscription = nil
         reasoningSubscription = nil
+        librarySubscription = nil
+    }
+
+    // MARK: - LibraryStripDelegate
+
+    func libraryStripDidDrop(urls: [URL]) {
+        let proxyConfig = RuntimeEnvironment.proxyConfig()
+        for url in urls {
+            do {
+                let result = try AttachmentLibrary.shared.addFile(at: url)
+                if result.largeSizeWarning {
+                    // Brief status message; doesn't block the add
+                    coordinator.statusSubject.send("Large file (>25 MB) staged — may slow Blink")
+                }
+                if let cfg = proxyConfig {
+                    AttachmentLibrary.shared.scheduleDescription(entryID: result.entry.id, proxyConfig: cfg)
+                }
+            } catch AttachmentError.fileTooLarge(let size) {
+                let mb = size / (1024 * 1024)
+                coordinator.statusSubject.send("File too large (\(mb) MB) — 100 MB limit")
+            } catch {
+                coordinator.statusSubject.send("Couldn't add file: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func libraryStripDragEntered() {
+        // lastDragEnteredAt is tracked by the strip itself; nothing extra to do here
+    }
+
+    func libraryStripDidRequestRemove(id: String) {
+        AttachmentLibrary.shared.removeEntry(id: id)
+    }
+
+    func libraryStripDidRequestShowInFinder(id: String) {
+        guard let entry = AttachmentLibrary.shared.entries.first(where: { $0.id == id }),
+              let url = AttachmentLibrary.shared.resolveURLSync(for: entry) else {
+            coordinator.statusSubject.send("File unavailable")
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func libraryStripDidRequestRetry(id: String) {
+        guard let cfg = RuntimeEnvironment.proxyConfig() else { return }
+        AttachmentLibrary.shared.retryDescription(entryID: id, proxyConfig: cfg)
     }
 
     // MARK: - Actions

@@ -222,6 +222,8 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         let hasTags: Bool
         let collapsedLabelHeight: CGFloat
         let collapsedSingleLine: Bool
+        let attachments: [AttachmentRef]
+        let attachmentBadge: NSTextField?
     }
 
     private var panel: SuggestionsPanel?
@@ -771,7 +773,9 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 expandedHeight: expandedHeights[offset],
                 hasTags: !renderTags(detail.tags).isEmpty,
                 collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
-                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                attachments: detail.attachments,
+                attachmentBadge: card.attachmentBadge
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -1184,7 +1188,9 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 expandedHeight: expandedHeights[offset],
                 hasTags: !renderTags(detail.tags).isEmpty,
                 collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
-                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont)
+                collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont),
+                attachments: detail.attachments,
+                attachmentBadge: card.attachmentBadge
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -1895,6 +1901,11 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         completion()
     }
 
+    func activeAttachments(for index: Int) -> [AttachmentRef] {
+        guard index >= 0, index < suggestionCards.count else { return [] }
+        return suggestionCards[index].attachments
+    }
+
     func confirmInsert(completion: @escaping () -> Void) {
         completion()
     }
@@ -2137,7 +2148,8 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         label: NSTextField,
         tagIcon: NSImageView,
         tagLabel: NSTextField,
-        enterHint: NSTextField
+        enterHint: NSTextField,
+        attachmentBadge: NSTextField?
     ) {
         let pane = makeGlassPane(frame: frame, cornerRadius: Layout.optionCornerRadius(for: frame.height))
         let clickTarget = SuggestionCardClickTarget(index: index - 1) { [weak self] index in
@@ -2250,7 +2262,27 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         enterHint.autoresizingMask = [.minXMargin]
         pane.content.addSubview(enterHint)
 
-        return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint)
+        let attachmentBadge: NSTextField?
+        if !detail.attachments.isEmpty {
+            let badge = label(
+                frame: NSRect(
+                    x: Layout.suggestionTextX,
+                    y: Layout.enterHintBottomInset,
+                    width: 60,
+                    height: Layout.enterHintHeight
+                ),
+                text: "\u{1F4CE} \(detail.attachments.count)",
+                font: NSFont.systemFont(ofSize: Layout.hintFontSize),
+                color: .tertiaryLabelColor,
+                singleLine: true
+            )
+            pane.content.addSubview(badge)
+            attachmentBadge = badge
+        } else {
+            attachmentBadge = nil
+        }
+
+        return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint, attachmentBadge)
     }
 
     private func makeTagIcon(frame: NSRect, color: NSColor) -> NSImageView {
