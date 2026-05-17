@@ -701,14 +701,23 @@ def build_stateful_context(
                     if surface_match_debug["match_mode"] == "no_match":
                         surface_match_debug["match_mode"] = match_mode
 
-        raw_suggestions = response.get("suggestions")
-        rejected_suggestions = []
-        if isinstance(raw_suggestions, list):
-            rejected_suggestions = [
-                text
-                for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in raw_suggestions)
-                if text
-            ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
+        # New run logs only persist `suggestion_details`; older logs from
+        # before that change still carry a flat `suggestions` list, so we
+        # accept either when mining preference history.
+        raw_details = response.get("suggestion_details")
+        if isinstance(raw_details, list):
+            raw_suggestion_texts: list[Any] = [
+                item.get("text") if isinstance(item, dict) else item
+                for item in raw_details
+            ]
+        else:
+            legacy_suggestions = response.get("suggestions")
+            raw_suggestion_texts = legacy_suggestions if isinstance(legacy_suggestions, list) else []
+        rejected_suggestions = [
+            text
+            for text in (_bounded_text(item, PREFERENCE_TEXT_MAX_CHARS) for item in raw_suggestion_texts)
+            if text
+        ][:PREFERENCE_REJECTED_SUGGESTION_LIMIT]
         if (
             custom_text
             and custom_text not in seen_preference
@@ -950,7 +959,39 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     return prompt_with_context(prompt_text, stateful_context)
 
 
-def response_schema_contract() -> dict[str, Any]:
+def response_schema_contract(supports_attachments: bool = False) -> dict[str, Any]:
+    suggestion_properties: dict[str, Any] = {
+        "text": {
+            "type": "string",
+            "description": "A candidate reply or next action the user might send next.",
+        },
+        "tags": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 2,
+            "items": {
+                "type": "string",
+                "max_length": SUGGESTION_TAG_MAX_CHARS,
+                "description": "A short label describing the suggestion's move.",
+            },
+        },
+    }
+    suggestion_required = ["text", "tags"]
+    suggestion_ordering = ["text", "tags"]
+    if supports_attachments:
+        suggestion_properties["attachments"] = {
+            "type": "array",
+            "default": [],
+            "items": {
+                "type": "object",
+                "required": ["id", "reason"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "reason": {"type": "string", "maxLength": 80},
+                },
+            },
+        }
+        suggestion_ordering = ["text", "tags", "attachments"]
     return {
         "type": "object",
         "required": ["schema_version", "tldr", "suggestions"],
@@ -970,34 +1011,52 @@ def response_schema_contract() -> dict[str, Any]:
                 "max_items": 3,
                 "items": {
                     "type": "object",
-                    "required": ["text", "tags"],
-                    "property_ordering": ["text", "tags"],
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "A candidate reply or next action the user might send next.",
-                        },
-                        "tags": {
-                            "type": "array",
-                            "min_items": 1,
-                            "max_items": 2,
-                            "items": {
-                                "type": "string",
-                                "max_length": SUGGESTION_TAG_MAX_CHARS,
-                                "description": "A short label describing the suggestion's move.",
-                            },
-                        },
-                    },
+                    "required": suggestion_required,
+                    "property_ordering": suggestion_ordering,
+                    "properties": suggestion_properties,
                 },
             },
         },
     }
 
 
-def response_schema():
+def response_schema(supports_attachments: bool = False):
     from google.genai import types
 
-    contract = response_schema_contract()
+    contract = response_schema_contract(supports_attachments=supports_attachments)
+    suggestion_item_contract = contract["properties"]["suggestions"]["items"]
+    suggestion_required = suggestion_item_contract["required"]
+    suggestion_ordering = suggestion_item_contract["property_ordering"]
+
+    suggestion_properties: dict[str, Any] = {
+        "text": types.Schema(
+            type=types.Type.STRING,
+            description="A candidate reply or next action the user might send next.",
+        ),
+        "tags": types.Schema(
+            type=types.Type.ARRAY,
+            minItems=1,
+            maxItems=2,
+            items=types.Schema(
+                type=types.Type.STRING,
+                maxLength=SUGGESTION_TAG_MAX_CHARS,
+                description="A short label describing the suggestion's move.",
+            ),
+        ),
+    }
+    if supports_attachments:
+        suggestion_properties["attachments"] = types.Schema(
+            type=types.Type.ARRAY,
+            items=types.Schema(
+                type=types.Type.OBJECT,
+                required=["id", "reason"],
+                properties={
+                    "id": types.Schema(type=types.Type.STRING),
+                    "reason": types.Schema(type=types.Type.STRING, maxLength=80),
+                },
+            ),
+        )
+
     return types.Schema(
         type=types.Type.OBJECT,
         required=contract["required"],
@@ -1017,24 +1076,9 @@ def response_schema():
                 maxItems=3,
                 items=types.Schema(
                     type=types.Type.OBJECT,
-                    required=["text", "tags"],
-                    propertyOrdering=["text", "tags"],
-                    properties={
-                        "text": types.Schema(
-                            type=types.Type.STRING,
-                            description="A candidate reply or next action the user might send next.",
-                        ),
-                        "tags": types.Schema(
-                            type=types.Type.ARRAY,
-                            minItems=1,
-                            maxItems=2,
-                            items=types.Schema(
-                                type=types.Type.STRING,
-                                maxLength=SUGGESTION_TAG_MAX_CHARS,
-                                description="A short label describing the suggestion's move.",
-                            ),
-                        ),
-                    },
+                    required=suggestion_required,
+                    propertyOrdering=suggestion_ordering,
+                    properties=suggestion_properties,
                 ),
             ),
         },
@@ -1090,6 +1134,7 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
         raw_suggestions = []
     details: list[dict[str, Any]] = []
     for item in raw_suggestions:
+        attachments: list[dict[str, str]] = []
         if isinstance(item, dict):
             text = str(item.get("text") or item.get("suggestion") or "").strip()
             raw_tags = item.get("tags")
@@ -1100,13 +1145,25 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
                 for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
                 if tag
             ][:SUGGESTION_TAG_LIMIT]
+            raw_attachments = item.get("attachments")
+            if isinstance(raw_attachments, list):
+                for attachment in raw_attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    att_id = str(attachment.get("id") or "").strip()
+                    att_reason = str(attachment.get("reason") or "").strip()
+                    if att_id and att_reason:
+                        attachments.append({"id": att_id, "reason": att_reason[:80]})
         else:
             text = str(item or "").strip()
             tags = []
         if text:
             if not tags:
                 tags = fallback_suggestion_tags(text, len(details))
-            details.append({"text": text, "tags": tags})
+            entry: dict[str, Any] = {"text": text, "tags": tags}
+            if attachments:
+                entry["attachments"] = attachments
+            details.append(entry)
     return details[:3]
 
 
@@ -1148,7 +1205,7 @@ def build_response_payload(
             {
                 "status": "parse_error",
                 "tldr": "Gemini returned non-JSON output.",
-                "suggestions": [raw_text or "[empty response]"],
+                "suggestion_details": [],
             }
         )
         return payload
@@ -1157,7 +1214,7 @@ def build_response_payload(
             {
                 "status": "schema_mismatch",
                 "tldr": "Gemini returned an unexpected JSON shape.",
-                "suggestions": [raw_text or "[empty response]"],
+                "suggestion_details": [],
             }
         )
         return payload
@@ -1167,7 +1224,7 @@ def build_response_payload(
             {
                 "status": "schema_mismatch",
                 "tldr": tldr or "Gemini returned an incomplete response.",
-                "suggestions": suggestions or [raw_text or "[empty response]"],
+                "suggestion_details": suggestion_details,
             }
         )
         return payload
@@ -1176,7 +1233,6 @@ def build_response_payload(
             "status": "ok",
             "schema_version": RESPONSE_SCHEMA_VERSION,
             "tldr": tldr,
-            "suggestions": suggestions,
             "suggestion_details": suggestion_details,
         }
     )
@@ -1548,11 +1604,11 @@ def _proxy_error_payload(
     return {
         "status": "error",
         "tldr": "Proxy request failed.",
-        "suggestions": [message],
+        "suggestion_details": [],
         "raw": message,
         "usage": None,
         "duration_ms": duration_ms,
-        "parse_error": None,
+        "parse_error": message,
         "warnings": [],
         "request_id": None,
         "model": None,
@@ -1718,7 +1774,8 @@ def generate_via_proxy(
                             final_payload = {
                                 "status": "error",
                                 "tldr": "Proxy request failed.",
-                                "suggestions": [str(data.get("detail") or "Proxy returned an error event.")],
+                                "suggestion_details": [],
+                                "parse_error": str(data.get("detail") or "Proxy returned an error event."),
                                 "duration_ms": int(round((time.perf_counter() - started) * 1000)),
                                 "warnings": data.get("warnings") if isinstance(data.get("warnings"), list) else [],
                                 "request_id": data.get("request_id"),
@@ -1807,29 +1864,49 @@ def generate_via_proxy(
             proxy_diagnostics=proxy_diagnostics,
         )
 
-    suggestion_details = normalize_suggestion_details(parsed)
-    if suggestion_details:
-        suggestions = [item["text"] for item in suggestion_details]
-    else:
-        raw_suggestions = parsed.get("suggestions")
-        if not isinstance(raw_suggestions, list):
-            raw_suggestions = []
-        suggestions = []
-        for item in raw_suggestions:
-            if isinstance(item, dict):
-                text = str(item.get("text") or "").strip()
+    # `suggestion_details` is the only source of truth on the wire — it
+    # carries text + tags + attachments. The legacy flat `suggestions: [str]`
+    # field used to ride alongside it and was the source of a subtle bug
+    # (re-deriving details from those strings silently dropped attachments),
+    # so we no longer read it here.
+    proxy_details = parsed.get("suggestion_details")
+    suggestion_details: list[dict[str, Any]] = []
+    if isinstance(proxy_details, list):
+        for item in proxy_details:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            entry: dict[str, Any] = {"text": text}
+            raw_tags = item.get("tags")
+            if isinstance(raw_tags, list):
+                tags = [
+                    tag
+                    for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
+                    if tag
+                ][:SUGGESTION_TAG_LIMIT]
             else:
-                text = str(item or "").strip()
-            if text:
-                suggestions.append(text)
-            if len(suggestions) >= 3:
-                break
-        suggestion_details = [{"text": text, "tags": []} for text in suggestions]
+                tags = []
+            entry["tags"] = tags or fallback_suggestion_tags(text, len(suggestion_details))
+            raw_attachments = item.get("attachments")
+            if isinstance(raw_attachments, list):
+                attachments: list[dict[str, str]] = []
+                for attachment in raw_attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    att_id = str(attachment.get("id") or "").strip()
+                    att_reason = str(attachment.get("reason") or "").strip()
+                    if att_id and att_reason:
+                        attachments.append({"id": att_id, "reason": att_reason[:80]})
+                if attachments:
+                    entry["attachments"] = attachments
+            suggestion_details.append(entry)
+        suggestion_details = suggestion_details[:3]
 
     payload: dict[str, Any] = {
         "status": str(parsed.get("status") or "error"),
         "tldr": str(parsed.get("tldr") or ""),
-        "suggestions": suggestions,
         "suggestion_details": suggestion_details,
         "raw": raw_text,
         "usage": None,
@@ -2006,6 +2083,11 @@ def main(argv: list[str] | None = None) -> int:
             dict(incoming_prefs) if isinstance(incoming_prefs, dict) else {}
         )
         forwarded_prefs["model"] = settings["model"]
+        # Phase C: include attachment catalog when request advertises support
+        forwarded_prefs["supports_attachments"] = True
+        catalog = request_payload.get("attachments_catalog")
+        if isinstance(catalog, list) and catalog:
+            forwarded_prefs["attachments_catalog"] = catalog
         request_payload["preferences"] = forwarded_prefs
     generation_path = (
         "skip_gemini"
@@ -2104,11 +2186,6 @@ def main(argv: list[str] | None = None) -> int:
             response = {
                 "status": "ok",
                 "tldr": "You're testing the packaged Blink app.",
-                "suggestions": [
-                    "This looks good to me.",
-                    "Nice, the packaged Blink flow is working.",
-                    "Let's try it on one more real conversation.",
-                ],
                 "suggestion_details": [
                     {"text": "This looks good to me.", "tags": ["Reply"]},
                     {"text": "Nice, the packaged Blink flow is working.", "tags": ["Confirm"]},
@@ -2166,7 +2243,6 @@ def main(argv: list[str] | None = None) -> int:
                 "request_id": response.get("request_id"),
                 "response": {
                     "tldr": response["tldr"],
-                    "suggestions": response["suggestions"],
                     "suggestion_details": response.get("suggestion_details"),
                     "duration_ms": response.get("duration_ms"),
                     "model": response.get("model"),
@@ -2192,8 +2268,7 @@ def main(argv: list[str] | None = None) -> int:
             "status": response["status"],
             "bundle_dir": str(run_dir),
             "tldr": response["tldr"],
-            "suggestions": response["suggestions"],
-            "suggestion_details": response.get("suggestion_details"),
+            "suggestion_details": response.get("suggestion_details") or [],
             "request_id": response.get("request_id"),
             "duration_ms": response.get("duration_ms"),
             "warnings": response.get("warnings"),

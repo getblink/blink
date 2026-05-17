@@ -1046,6 +1046,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 to: active.staging.appendingPathComponent("screenshot.png")
             )
 
+            let attachmentsCatalog: [[String: Any]] = DispatchQueue.main.sync {
+                AttachmentLibrary.shared.entries.map(\.catalogItem)
+            }
             let requestEnvelope = makeRequestEnvelope(
                 requestID: requestID,
                 runtime: runtime,
@@ -1056,7 +1059,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 focusedContext: focusedContext,
                 mouseScreenPoint: mouseLocation,
                 captureMode: captureMode,
-                frames: active.frames
+                frames: active.frames,
+                attachmentsCatalog: attachmentsCatalog
             )
             try JSONFiles.writeObject(requestEnvelope, to: requestURL)
 
@@ -1230,7 +1234,6 @@ final class BlinkCoordinator: @unchecked Sendable {
                 guard self.currentRequestID == requestID else { return }
                 self.currentSuggestionDetails = self.normalizedSuggestionDetails(
                     result.suggestionDetails,
-                    fallbackSuggestions: result.suggestions,
                     draft: focusedSnapshot.meaningfulDraftText ?? ""
                 )
                 self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
@@ -1555,7 +1558,6 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard self.currentRequestID == requestID else { return }
                     self.currentSuggestionDetails = self.normalizedSuggestionDetails(
                         result.suggestionDetails,
-                        fallbackSuggestions: result.suggestions,
                         draft: ""
                     )
                     self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
@@ -1663,18 +1665,17 @@ final class BlinkCoordinator: @unchecked Sendable {
 
     private func normalizedSuggestionDetails(
         _ details: [SuggestionDetail],
-        fallbackSuggestions: [String],
         draft: String
     ) -> [SuggestionDetail] {
-        let source = details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
-        return Array(source.prefix(3)).enumerated().map { offset, detail in
+        return Array(details.prefix(3)).enumerated().map { offset, detail in
             let text = SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
                 from: detail.text,
                 draft: draft
             )
             return SuggestionDetail(
                 text: text,
-                tags: normalizedSuggestionTags(detail.tags, text: text, index: offset)
+                tags: normalizedSuggestionTags(detail.tags, text: text, index: offset),
+                attachments: detail.attachments
             )
         }
     }
@@ -1922,6 +1923,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         currentBundleDir = nil
         resetChoiceState(suggestionCount: 0)
         let finishingRequestID = requestID
+        let attachmentRefs = index < currentSuggestionDetails.count ? overlay.activeAttachments(for: index) : []
         status("inserting suggestion \(index + 1)...")
 
         if let requestID {
@@ -1948,10 +1950,13 @@ final class BlinkCoordinator: @unchecked Sendable {
             }
             self.overlay.dismissAnimated { [weak self] in
                 guard let self else { return }
+                let fileURLs = AttachmentLibrary.shared.resolveURLs(for: attachmentRefs) { [weak self] count in
+                    self?.status("\(count) attachment(s) couldn't be found — skipped")
+                }
                 // Give NSRunningApplication.activate time to land on the previous
                 // frontmost app before we synthesize Cmd+V — otherwise the paste
                 // sometimes hits Blink's still-active panel context instead.
-                Inserter.insert(text: text, activationDelay: 0.15) { [weak self] result in
+                Inserter.insert(text: text, fileURLs: fileURLs, activationDelay: 0.15) { [weak self] result in
                     guard let self else { return }
                     switch result {
                     case .success(let outcome):
@@ -2313,10 +2318,12 @@ final class BlinkCoordinator: @unchecked Sendable {
         focusedContext: [String: Any],
         mouseScreenPoint: CGPoint? = nil,
         captureMode: String = "frontmost_window",
-        frames: [CapturedFrame] = []
+        frames: [CapturedFrame] = [],
+        attachmentsCatalog: [[String: Any]] = []
     ) -> [String: Any] {
         var preferences = requestPreferences(runtime: runtime)
         preferences["model"] = runtime.model
+        preferences["supports_attachments"] = true
         var envelope: [String: Any] = [
             "schema_version": 1,
             "request_id": requestID,
@@ -2335,6 +2342,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "allow_content_retention": runtime.allowContentRetention,
             ],
         ]
+        if !attachmentsCatalog.isEmpty {
+            envelope["attachments_catalog"] = attachmentsCatalog
+        }
         if let mouseScreenPoint {
             envelope["mouse_screen_point"] = [
                 "x": mouseScreenPoint.x,

@@ -247,7 +247,8 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "error")
-        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertEqual(payload["parse_error"], "Not Found")
         self.assertEqual(
             payload["proxy_diagnostics"],
             {
@@ -367,7 +368,8 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "error")
-        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertEqual(payload["parse_error"], "Not Found")
         self.assertEqual(payload["proxy_diagnostics"]["host"], "proxy.example")
         self.assertEqual(payload["proxy_diagnostics"]["http_status"], 200)
         self.assertEqual(payload["proxy_diagnostics"]["content_type"], "application/json")
@@ -390,7 +392,11 @@ class BlinkOnceTests(unittest.TestCase):
                         "request_id": "req-json-fallback",
                         "status": "ok",
                         "tldr": "Sarah needs a reply.",
-                        "suggestions": ["One", "Two", "Three"],
+                        "suggestion_details": [
+                            {"text": "One", "tags": ["Reply"]},
+                            {"text": "Two", "tags": ["Reply"]},
+                            {"text": "Three", "tags": ["Reply"]},
+                        ],
                         "duration_ms": 12,
                         "model": "gemini-3-flash-preview",
                         "warnings": [],
@@ -418,11 +424,14 @@ class BlinkOnceTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["request_id"], "req-json-fallback")
-        self.assertEqual(payload["suggestions"], ["One", "Two", "Three"])
+        self.assertEqual(
+            [item["text"] for item in payload["suggestion_details"]],
+            ["One", "Two", "Three"],
+        )
         self.assertEqual(payload["proxy_diagnostics"]["fallback"], "json_response")
         self.assertNotIn("error_type", payload["proxy_diagnostics"])
 
-    def test_proxy_v2_blank_dict_suggestions_do_not_stringify_dicts(self) -> None:
+    def test_proxy_blank_suggestion_details_are_filtered(self) -> None:
         class FakeResponse:
             status = 200
             headers = {"content-type": "application/json"}
@@ -439,7 +448,7 @@ class BlinkOnceTests(unittest.TestCase):
                         "request_id": "req-v2-blank",
                         "status": "ok",
                         "tldr": "Sarah needs a reply.",
-                        "suggestions": [
+                        "suggestion_details": [
                             {"text": "   ", "tags": ["Reply"]},
                             {"text": "", "tags": ["Ask"]},
                         ],
@@ -469,9 +478,80 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["suggestions"], [])
         self.assertEqual(payload["suggestion_details"], [])
-        self.assertNotIn("{'text'", json.dumps(payload["suggestions"]))
+
+    def test_proxy_response_preserves_attachments_from_rich_suggestion_details(self) -> None:
+        """Staging returns suggestions as plain strings + suggestion_details as
+        the rich form (with attachments). The proxy path must read attachments
+        from suggestion_details, not re-normalize from the stringified suggestions
+        list (which has no attachment data)."""
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "request_id": "req-attach",
+                        "status": "ok",
+                        "tldr": "Drafting reply with a doc.",
+                        "suggestions": [
+                            "first reply",
+                            "second reply",
+                            "third reply with file",
+                        ],
+                        "suggestion_details": [
+                            {"text": "first reply", "tags": ["Reply"]},
+                            {"text": "second reply", "tags": ["Draft"]},
+                            {
+                                "text": "third reply with file",
+                                "tags": ["Draft", "Evidence"],
+                                "attachments": [
+                                    {"id": "doc-ab12", "reason": "Requested guide"}
+                                ],
+                            },
+                        ],
+                        "duration_ms": 42,
+                        "model": "gemini-3-flash-preview",
+                        "warnings": [],
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", return_value=FakeResponse()):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-attach"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(len(payload["suggestion_details"]), 3)
+        self.assertNotIn("attachments", payload["suggestion_details"][0])
+        self.assertNotIn("attachments", payload["suggestion_details"][1])
+        self.assertEqual(
+            payload["suggestion_details"][2]["attachments"],
+            [{"id": "doc-ab12", "reason": "Requested guide"}],
+        )
+        # Tags also flow through.
+        self.assertEqual(payload["suggestion_details"][2]["tags"], ["Draft", "Evidence"])
 
     def test_request_payload_for_proxy_trims_reroll_context_to_source_id(self) -> None:
         payload = blink_once.request_payload_for_proxy(
@@ -646,6 +726,56 @@ class BlinkOnceTests(unittest.TestCase):
                 {"text": "three", "tags": ["Next step"]},
             ],
         )
+
+    def test_normalize_payload_carries_attachments_through(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {
+                        "text": "attached the guide",
+                        "tags": ["Draft"],
+                        "attachments": [
+                            {"id": "guide-ab12", "reason": "Implementation guide"},
+                            {"id": "no-reason"},  # missing reason — dropped
+                            {"reason": "no id"},  # missing id — dropped
+                            "not a dict",  # not a dict — dropped
+                        ],
+                    },
+                    {
+                        "text": "no attachments here",
+                        "tags": ["Reply"],
+                        "attachments": [],
+                    },
+                    {"text": "plain", "tags": ["Reply"]},
+                ],
+            }
+        )
+        self.assertEqual(
+            details[0]["attachments"],
+            [{"id": "guide-ab12", "reason": "Implementation guide"}],
+        )
+        self.assertNotIn("attachments", details[1])  # empty list is omitted
+        self.assertNotIn("attachments", details[2])  # field absent in source
+
+    def test_normalize_payload_truncates_attachment_reason(self) -> None:
+        _, _, details = blink_once.normalize_payload(
+            {
+                "schema_version": 2,
+                "tldr": "hi",
+                "suggestions": [
+                    {
+                        "text": "x",
+                        "tags": ["Draft"],
+                        "attachments": [{"id": "g-1", "reason": "r" * 200}],
+                    },
+                    {"text": "y", "tags": ["Reply"]},
+                    {"text": "z", "tags": ["Reply"]},
+                ],
+            }
+        )
+        self.assertEqual(len(details[0]["attachments"][0]["reason"]), 80)
 
     def test_normalize_payload_fills_blank_v2_tags(self) -> None:
         _, _, details = blink_once.normalize_payload(
@@ -1052,7 +1182,7 @@ class BlinkOnceTests(unittest.TestCase):
             self.assertTrue(any(event["event"] == "partial_tldr" for event in events))
             self.assertEqual(events[-1]["event"], "final")
             self.assertEqual(events[-1]["status"], "ok")
-            self.assertEqual(len(events[-1]["suggestions"]), 3)
+            self.assertEqual(len(events[-1]["suggestion_details"]), 3)
             self.assertTrue((bundles[0] / "run.json").exists())
 
     def test_stream_phase_message_uses_reroll_copy(self) -> None:

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		057DEA137FBCB5D08BFC72E5 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */; };
 		06D5F20E2A2C8DE388596F7B /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */; };
+		0C86153A76280A714D14064C /* AttachmentLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */; };
 		0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 733316E4538EF5998654016C /* Carbon.framework */; };
 		126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */; };
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
@@ -21,6 +22,7 @@
 		39EF5881D30049E64A6BC7B1 /* FocusedContextCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE528B648E6A873778F7825C /* FocusedContextCapture.swift */; };
 		4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */; };
 		50308AE5E3F7FADD8F91C786 /* ScreenAnnotator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */; };
+		5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F40CDC441E9D455D7493380 /* LibraryStripView.swift */; };
 		50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */; };
 		55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */; };
 		5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */; };
@@ -48,6 +50,7 @@
 		A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */; };
+		B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */; };
 		B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */; };
 		B82573088A91D3E3C93A0DBC /* ScreenAnnotatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F2731FA7A6D053A6388EA8 /* ScreenAnnotatorTests.swift */; };
 		C555231889A49F9834BC5D16 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BACCF164226F25B851C687 /* SettingsWindow.swift */; };
@@ -89,6 +92,7 @@
 		154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
 		1B874CA83CFFA290563A148F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
 		1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClientTests.swift; sourceTree = "<group>"; };
+		260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibrary.swift; sourceTree = "<group>"; };
 		27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningLevels.swift; sourceTree = "<group>"; };
 		2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
 		306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriverTests.swift; sourceTree = "<group>"; };
@@ -102,6 +106,7 @@
 		426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionDetail.swift; sourceTree = "<group>"; };
 		48431B2C296BDB92BF0BB93C /* Blink.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Blink.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionsOverlay.swift; sourceTree = "<group>"; };
+		4F40CDC441E9D455D7493380 /* LibraryStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStripView.swift; sourceTree = "<group>"; };
 		5003916E3C9E51FF96494423 /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
 		5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuBuilder.swift; sourceTree = "<group>"; };
@@ -124,6 +129,7 @@
 		8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		989DBB159CA5CB427CCCADEF /* BlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkApp.swift; sourceTree = "<group>"; };
+		9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySettingsView.swift; sourceTree = "<group>"; };
 		9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceState.swift; sourceTree = "<group>"; };
 		9C2C613B92765D6101795F64 /* tldr.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tldr.json; sourceTree = "<group>"; };
 		9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayKeyRouter.swift; sourceTree = "<group>"; };
@@ -202,6 +208,7 @@
 			isa = PBXGroup;
 			children = (
 				111C775580802A86D963BB01 /* ArtifactWriter.swift */,
+				260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */,
 				63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */,
 				8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */,
 				989DBB159CA5CB427CCCADEF /* BlinkApp.swift */,
@@ -217,6 +224,8 @@
 				0B47EB8B7273BB95141192DE /* Info.plist */,
 				71B0F9AAF9A7972C08DC337C /* Inserter.swift */,
 				5003916E3C9E51FF96494423 /* JSONFiles.swift */,
+				9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */,
+				4F40CDC441E9D455D7493380 /* LibraryStripView.swift */,
 				57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */,
 				009080B616A8506A5210AC26 /* MenubarController.swift */,
 				1B874CA83CFFA290563A148F /* ModelChoices.swift */,
@@ -394,6 +403,7 @@
 				A19A16C5B1CA08F3C61BB513 /* AboutMeTextEditor.swift in Sources */,
 				E41C2B60366AF0F2E7DFDB87 /* AdvancedSettingsView.swift in Sources */,
 				306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */,
+				0C86153A76280A714D14064C /* AttachmentLibrary.swift in Sources */,
 				82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */,
 				25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */,
 				2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */,
@@ -408,6 +418,8 @@
 				5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */,
 				DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */,
 				9C4F5B01E1D71DEF511D97ED /* JSONFiles.swift in Sources */,
+				B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */,
+				5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */,
 				875FED3FFB2C90AEAF04377E /* MainMenuBuilder.swift in Sources */,
 				F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */,
 				C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */,

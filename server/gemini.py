@@ -16,6 +16,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "timeout_seconds": 120,
 }
 
+_FOR_DESCRIBE_FILE: dict[str, Any] = {
+    **DEFAULT_SETTINGS,
+    "temperature": 0.4,
+    "max_output_tokens": 128,
+    "thinking_level": "low",
+}
+
 MODEL_CONTENT_TEXT = "Summarize this active window and propose three replies."
 REROLL_CONTENT_TEXT = (
     "Produce a fresh set of three suggestions. They must not overlap in stance, "
@@ -400,19 +407,50 @@ def plain_data(value: Any) -> Any:
     return payload
 
 
-def create_client(api_key: str | None, settings: dict[str, Any]) -> Any:
+def create_client(api_key: str | None, settings: dict[str, Any] | None = None) -> Any:
     from google import genai
     from google.genai import types
 
+    timeout_ms = int((settings or _FOR_DESCRIBE_FILE)["timeout_seconds"] * 1000)
     return genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(
-            timeout=int(settings["timeout_seconds"] * 1000)
-        ),
+        http_options=types.HttpOptions(timeout=timeout_ms),
     )
 
 
-def response_schema_contract() -> dict[str, Any]:
+def response_schema_contract(supports_attachments: bool = False) -> dict[str, Any]:
+    suggestion_properties: dict[str, Any] = {
+        "text": {
+            "type": "string",
+            "description": "A candidate reply the user might send next.",
+        },
+        "tags": {
+            "type": "array",
+            "min_items": 1,
+            "max_items": 2,
+            "items": {
+                "type": "string",
+                "max_length": SUGGESTION_TAG_MAX_CHARS,
+                "description": "A short label describing the suggestion's move.",
+            },
+        },
+    }
+    suggestion_required = ["text", "tags"]
+    suggestion_ordering = ["text", "tags"]
+    if supports_attachments:
+        suggestion_properties["attachments"] = {
+            "type": "array",
+            "default": [],
+            "items": {
+                "type": "object",
+                "required": ["id", "reason"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "reason": {"type": "string", "maxLength": 80},
+                },
+            },
+        }
+        suggestion_ordering = ["text", "tags", "attachments"]
     return {
         "type": "object",
         "required": ["schema_version", "tldr", "suggestions"],
@@ -432,32 +470,51 @@ def response_schema_contract() -> dict[str, Any]:
                 "max_items": 3,
                 "items": {
                     "type": "object",
-                    "required": ["text", "tags"],
-                    "property_ordering": ["text", "tags"],
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "A candidate reply the user might send next.",
-                        },
-                        "tags": {
-                            "type": "array",
-                            "min_items": 1,
-                            "max_items": 2,
-                            "items": {
-                                "type": "string",
-                                "max_length": SUGGESTION_TAG_MAX_CHARS,
-                                "description": "A short label describing the suggestion's move.",
-                            },
-                        },
-                    },
+                    "required": suggestion_required,
+                    "property_ordering": suggestion_ordering,
+                    "properties": suggestion_properties,
                 },
             },
         },
     }
 
 
-def _schema() -> types.Schema:
+def _schema(supports_attachments: bool = False) -> types.Schema:
     from google.genai import types
+
+    contract = response_schema_contract(supports_attachments=supports_attachments)
+    suggestion_item_contract = contract["properties"]["suggestions"]["items"]
+    suggestion_required = suggestion_item_contract["required"]
+    suggestion_ordering = suggestion_item_contract["property_ordering"]
+
+    suggestion_properties: dict[str, Any] = {
+        "text": types.Schema(
+            type=types.Type.STRING,
+            description="A candidate reply the user might send next.",
+        ),
+        "tags": types.Schema(
+            type=types.Type.ARRAY,
+            minItems=1,
+            maxItems=2,
+            items=types.Schema(
+                type=types.Type.STRING,
+                maxLength=SUGGESTION_TAG_MAX_CHARS,
+                description="A short label describing the suggestion's move.",
+            ),
+        ),
+    }
+    if supports_attachments:
+        suggestion_properties["attachments"] = types.Schema(
+            type=types.Type.ARRAY,
+            items=types.Schema(
+                type=types.Type.OBJECT,
+                required=["id", "reason"],
+                properties={
+                    "id": types.Schema(type=types.Type.STRING),
+                    "reason": types.Schema(type=types.Type.STRING, maxLength=80),
+                },
+            ),
+        )
 
     return types.Schema(
         type=types.Type.OBJECT,
@@ -478,24 +535,9 @@ def _schema() -> types.Schema:
                 maxItems=3,
                 items=types.Schema(
                     type=types.Type.OBJECT,
-                    required=["text", "tags"],
-                    propertyOrdering=["text", "tags"],
-                    properties={
-                        "text": types.Schema(
-                            type=types.Type.STRING,
-                            description="A candidate reply the user might send next.",
-                        ),
-                        "tags": types.Schema(
-                            type=types.Type.ARRAY,
-                            minItems=1,
-                            maxItems=2,
-                            items=types.Schema(
-                                type=types.Type.STRING,
-                                maxLength=SUGGESTION_TAG_MAX_CHARS,
-                                description="A short label describing the suggestion's move.",
-                            ),
-                        ),
-                    },
+                    required=suggestion_required,
+                    propertyOrdering=suggestion_ordering,
+                    properties=suggestion_properties,
                 ),
             ),
         },
@@ -551,6 +593,7 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
         raw_suggestions = []
     details: list[dict[str, Any]] = []
     for item in raw_suggestions:
+        attachments: list[dict[str, str]] = []
         if isinstance(item, dict):
             text = str(item.get("text") or item.get("suggestion") or "").strip()
             raw_tags = item.get("tags")
@@ -561,13 +604,25 @@ def normalize_suggestion_details(parsed: dict[str, Any]) -> list[dict[str, Any]]
                 for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
                 if tag
             ][:SUGGESTION_TAG_LIMIT]
+            raw_attachments = item.get("attachments")
+            if isinstance(raw_attachments, list):
+                for attachment in raw_attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    att_id = str(attachment.get("id") or "").strip()
+                    att_reason = str(attachment.get("reason") or "").strip()
+                    if att_id and att_reason:
+                        attachments.append({"id": att_id, "reason": att_reason[:80]})
         else:
             text = str(item or "").strip()
             tags = []
         if text:
             if not tags:
                 tags = fallback_suggestion_tags(text, len(details))
-            details.append({"text": text, "tags": tags})
+            entry: dict[str, Any] = {"text": text, "tags": tags}
+            if attachments:
+                entry["attachments"] = attachments
+            details.append(entry)
     return details[:3]
 
 
@@ -836,13 +891,14 @@ def _conversation_contents(
 def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> Any:
     model = settings.get("model", "")
     max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    supports_attachments = bool(settings.get("supports_attachments", False))
     config_kwargs = dict(
         system_instruction=prompt_text,
         temperature=settings["temperature"],
         max_output_tokens=max_tokens,
         media_resolution=media_resolution_for_model(model, settings["media_resolution"]),
         response_mime_type="application/json",
-        response_schema=_schema(),
+        response_schema=_schema(supports_attachments=supports_attachments),
     )
     override = settings.get("thinking_level")
     if isinstance(override, str) and override and _is_thinking_model(model):
@@ -862,6 +918,7 @@ def generate_tldr_and_suggestions(
     image_bytes: bytes | None = None,
     mime_type: str = "image/png",
     conversation_turns: list[dict[str, Any]] | None = None,
+    supports_attachments: bool = False,
 ) -> dict[str, Any]:
     from google.genai import types
 
@@ -921,6 +978,43 @@ def generate_tldr_and_suggestions(
         }
     )
     return payload
+
+
+def generate_file_description(client: Any, file_data: bytes, mime_type: str, kind: str) -> str:
+    """Call Gemini with a file and return a one-sentence description."""
+    from google.genai import types
+
+    prompt = (
+        "In one sentence, describe what this file is and when it would be useful to attach to an email. "
+        "Be concrete. Examples: "
+        "'Professional headshot, vertical orientation, suitable for press features.' / "
+        "'Q1 2026 sponsored-post rate card with UGC pricing.'"
+    )
+    settings = _FOR_DESCRIBE_FILE.copy()
+    model = settings.pop("model")
+    timeout_s = settings.pop("timeout_seconds", 120)
+    # Remove keys the SDK doesn't accept in generate_content config
+    settings.pop("media_resolution", None)
+    thinking_level = settings.pop("thinking_level", "low")
+
+    contents = [
+        types.Part.from_bytes(data=file_data, mime_type=mime_type),
+        types.Part.from_text(text=prompt),
+    ]
+    config = types.GenerateContentConfig(
+        temperature=settings.get("temperature", 0.4),
+        max_output_tokens=settings.get("max_output_tokens", 128),
+        thinking_config=types.ThinkingConfig(thinking_budget=0 if thinking_level == "low" else None),
+        http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),
+    )
+    response = client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=config,
+    )
+    text = (response.text or "").strip()
+    # Trim to 200 chars as a hard safety cap
+    return text[:200]
 
 
 def generate_tldr_and_suggestions_streaming(

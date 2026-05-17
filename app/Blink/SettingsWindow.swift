@@ -22,12 +22,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
     private weak var updaterController: SPUStandardUpdaterController?
 
     enum Pane: String, CaseIterable {
-        case general, style, permissions, advanced
+        case general, style, library, permissions, advanced
 
         var title: String {
             switch self {
             case .general: return "General"
             case .style: return "Style"
+            case .library: return "Library"
             case .permissions: return "Permissions"
             case .advanced: return "Advanced"
             }
@@ -37,6 +38,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
             switch self {
             case .general: return "gearshape"
             case .style: return "slider.horizontal.3"
+            case .library: return "paperclip"
             case .permissions: return "lock.shield"
             case .advanced: return "wrench.and.screwdriver"
             }
@@ -152,6 +154,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSToolbarDeleg
             case .style:
                 return NSHostingView(rootView: StyleSettingsView(
                     runtimeStore: runtimeStore
+                ))
+            case .library:
+                return NSHostingView(rootView: LibrarySettingsView(
+                    library: AttachmentLibrary.shared
                 ))
             case .permissions:
                 return NSHostingView(rootView: PermissionsSettingsView(
