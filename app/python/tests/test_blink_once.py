@@ -247,7 +247,8 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "error")
-        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertEqual(payload["parse_error"], "Not Found")
         self.assertEqual(
             payload["proxy_diagnostics"],
             {
@@ -367,7 +368,8 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "error")
-        self.assertEqual(payload["suggestions"], ["Not Found"])
+        self.assertEqual(payload["suggestion_details"], [])
+        self.assertEqual(payload["parse_error"], "Not Found")
         self.assertEqual(payload["proxy_diagnostics"]["host"], "proxy.example")
         self.assertEqual(payload["proxy_diagnostics"]["http_status"], 200)
         self.assertEqual(payload["proxy_diagnostics"]["content_type"], "application/json")
@@ -390,7 +392,11 @@ class BlinkOnceTests(unittest.TestCase):
                         "request_id": "req-json-fallback",
                         "status": "ok",
                         "tldr": "Sarah needs a reply.",
-                        "suggestions": ["One", "Two", "Three"],
+                        "suggestion_details": [
+                            {"text": "One", "tags": ["Reply"]},
+                            {"text": "Two", "tags": ["Reply"]},
+                            {"text": "Three", "tags": ["Reply"]},
+                        ],
                         "duration_ms": 12,
                         "model": "gemini-3-flash-preview",
                         "warnings": [],
@@ -418,11 +424,14 @@ class BlinkOnceTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["request_id"], "req-json-fallback")
-        self.assertEqual(payload["suggestions"], ["One", "Two", "Three"])
+        self.assertEqual(
+            [item["text"] for item in payload["suggestion_details"]],
+            ["One", "Two", "Three"],
+        )
         self.assertEqual(payload["proxy_diagnostics"]["fallback"], "json_response")
         self.assertNotIn("error_type", payload["proxy_diagnostics"])
 
-    def test_proxy_v2_blank_dict_suggestions_do_not_stringify_dicts(self) -> None:
+    def test_proxy_blank_suggestion_details_are_filtered(self) -> None:
         class FakeResponse:
             status = 200
             headers = {"content-type": "application/json"}
@@ -439,7 +448,7 @@ class BlinkOnceTests(unittest.TestCase):
                         "request_id": "req-v2-blank",
                         "status": "ok",
                         "tldr": "Sarah needs a reply.",
-                        "suggestions": [
+                        "suggestion_details": [
                             {"text": "   ", "tags": ["Reply"]},
                             {"text": "", "tags": ["Ask"]},
                         ],
@@ -469,9 +478,7 @@ class BlinkOnceTests(unittest.TestCase):
                 )
 
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["suggestions"], [])
         self.assertEqual(payload["suggestion_details"], [])
-        self.assertNotIn("{'text'", json.dumps(payload["suggestions"]))
 
     def test_proxy_response_preserves_attachments_from_rich_suggestion_details(self) -> None:
         """Staging returns suggestions as plain strings + suggestion_details as
@@ -1175,7 +1182,7 @@ class BlinkOnceTests(unittest.TestCase):
             self.assertTrue(any(event["event"] == "partial_tldr" for event in events))
             self.assertEqual(events[-1]["event"], "final")
             self.assertEqual(events[-1]["status"], "ok")
-            self.assertEqual(len(events[-1]["suggestions"]), 3)
+            self.assertEqual(len(events[-1]["suggestion_details"]), 3)
             self.assertTrue((bundles[0] / "run.json").exists())
 
     def test_stream_phase_message_uses_reroll_copy(self) -> None:
