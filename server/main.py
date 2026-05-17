@@ -312,6 +312,58 @@ def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _slice_pdf(raw_bytes: bytes, max_pages: int = 3, max_bytes: int = 2 * 1024 * 1024) -> bytes:
+    """Return raw_bytes truncated to at most max_pages pages or max_bytes, whichever is smaller."""
+    try:
+        import io
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        total = len(reader.pages)
+        pages_to_take = min(total, max_pages)
+        if pages_to_take >= total:
+            # Already within page limit — enforce byte cap only
+            if len(raw_bytes) <= max_bytes:
+                return raw_bytes
+            # Still need to truncate bytes; fall through to writer path
+            pages_to_take = total
+
+        writer = PdfWriter()
+        for i in range(pages_to_take):
+            writer.add_page(reader.pages[i])
+        buf = io.BytesIO()
+        writer.write(buf)
+        sliced = buf.getvalue()
+        # Enforce byte cap after slicing
+        if len(sliced) > max_bytes:
+            return sliced[:max_bytes]
+        return sliced
+    except Exception:
+        # Fallback: hard-truncate bytes
+        return raw_bytes[:max_bytes]
+
+
+def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
+    """Build the attachments catalog block for injection into the prompt."""
+    if not catalog:
+        return ""
+    lines = ["## Available Attachments\n"]
+    for item in catalog:
+        item_id = str(item.get("id") or "").strip()
+        name = str(item.get("displayName") or "").strip()
+        description = str(item.get("description") or "").strip()
+        kind = str(item.get("kind") or "other").strip()
+        if not item_id or not name:
+            continue
+        line = f"- id={item_id!r} name={name!r} kind={kind}"
+        if description:
+            line += f" description={description!r}"
+        lines.append(line)
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -451,13 +503,16 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
     install_id = str(client.get("install_id") or "").strip() or None
     consent = payload.get("consent")
     consent_dict = consent if isinstance(consent, dict) else {}
+    preferences = _dict_or_none(payload.get("preferences")) or {}
+    attachments_catalog = _list_or_empty(preferences.get("attachments_catalog"))
+    supports_attachments = bool(preferences.get("supports_attachments", False))
     return {
         "schema_version": int(payload.get("schema_version") or 1),
         "request_id": request_id,
         "client": client,
         "install_id": install_id,
         "capture_mode": str(payload.get("capture_mode") or "frontmost_window").strip().lower(),
-        "preferences": _dict_or_none(payload.get("preferences")) or {},
+        "preferences": preferences,
         "frontmost_app": _dict_or_none(payload.get("frontmost_app")) or {},
         "input_mode": input_mode,
         "screenshot": _dict_or_none(payload.get("screenshot")),
@@ -473,6 +528,8 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
             "allow_content_retention": bool(consent_dict.get("allow_content_retention", False)),
         },
         "warnings": _list_or_empty(payload.get("warnings")),
+        "attachments_catalog": attachments_catalog,
+        "supports_attachments": supports_attachments,
     }
 
 
@@ -544,6 +601,8 @@ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[st
             settings["thinking_level"] = requested_thinking
         else:
             warnings.append("requested_thinking_level_disallowed")
+    settings["supports_attachments"] = envelope.get("supports_attachments", False)
+    settings["attachments_catalog"] = envelope.get("attachments_catalog", [])
     return settings
 
 
@@ -1158,8 +1217,12 @@ async def _run_tldr_request(
         )
 
     client = gemini.create_client(api_key, settings)
+    base_prompt = _prompt_text()
+    catalog_block = _build_catalog_block(settings.get("attachments_catalog") or [])
+    if catalog_block:
+        base_prompt = base_prompt.rstrip() + "\n\n" + catalog_block
     prompt_text = gemini.prompt_with_context(
-        _prompt_text(),
+        base_prompt,
         model_envelope.get("stateful_context"),
         None if conversation_turns is not None else model_envelope.get("reroll_context"),
         model_envelope.get("style"),
@@ -1316,6 +1379,7 @@ async def _run_tldr_request(
             prompt_text=prompt_text,
             images=images,
             conversation_turns=conversation_turns,
+            supports_attachments=settings.get("supports_attachments", False),
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"
@@ -1349,6 +1413,24 @@ async def _run_tldr_request(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=detail,
         ) from exc
+
+    # Strip hallucinated attachment IDs
+    if settings.get("supports_attachments"):
+        valid_ids = {str(item.get("id") or "") for item in settings.get("attachments_catalog", []) if item.get("id")}
+        for suggestion in payload.get("suggestion_details") or []:
+            raw_attachments = suggestion.get("attachments") or []
+            filtered = []
+            stripped_count = 0
+            for att in raw_attachments:
+                att_id = str(att.get("id") or "").strip()
+                if att_id in valid_ids:
+                    att["reason"] = str(att.get("reason") or "")[:80]  # belt-and-suspenders
+                    filtered.append(att)
+                else:
+                    stripped_count += 1
+            if stripped_count:
+                logger.warning("stripped_hallucinated_attachments count=%d", stripped_count)
+            suggestion["attachments"] = filtered
 
     usage_tokens = gemini.usage_token_count(payload.get("usage"))
     _log_request(
@@ -1548,6 +1630,42 @@ async def tldr_v1(
         token_id=token_id,
         stream=wants_stream,
     )
+
+
+@app.post("/v1/describe-file")
+async def describe_file(
+    file: UploadFile = File(...),
+    kind: str = Form("other"),
+    _token_data: dict[str, Any] = Depends(require_bearer_token),
+) -> dict[str, Any]:
+    """Auto-generate a one-line description for a staged attachment."""
+    if kind not in {"image", "pdf", "other"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="kind must be image, pdf, or other",
+        )
+    raw_bytes = await file.read()
+    mime_type = file.content_type or "application/octet-stream"
+
+    # PDF: slice to first 3 pages or 2 MB, whichever smaller
+    if kind == "pdf":
+        raw_bytes = _slice_pdf(raw_bytes, max_pages=3, max_bytes=2 * 1024 * 1024)
+        mime_type = "application/pdf"
+
+    # Image: the raw bytes go to Gemini directly (client already downscaled)
+    if kind == "image":
+        if not mime_type.startswith("image/"):
+            mime_type = "image/jpeg"
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="server misconfigured: GEMINI_API_KEY is empty",
+        )
+    client = gemini.create_client(api_key=api_key)
+    description = gemini.generate_file_description(client, raw_bytes, mime_type, kind)
+    return {"description": description}
 
 
 @app.post("/v1/tldr/events")
