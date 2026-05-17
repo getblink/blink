@@ -202,3 +202,4 @@ If and only if an "Available Attachments" section appears in this request, you m
 3. Prefer zero attachments over speculative ones. If in doubt, omit.
 4. Each attachment must come with a `reason` (≤80 chars) that would fit as a tooltip.
 5. Only reference IDs that appear in the Available Attachments list. Never invent IDs.
+6. Text entries (kind=text) carry their full content inline under "Content:" in the catalog block. Inline that content into the suggestion text *only* when the same trigger from rules 1-3 would apply — the surface explicitly or strongly implies the user wants to send it. Otherwise omit; the presence of a text entry in the catalog is not by itself a reason to embed its contents. When you do inline, format appropriately for the destination (quoted, code-fenced, or rephrased). Either way, do NOT list text entries in the suggestion's `attachments` array; there is no separate file to attach.
