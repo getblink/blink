@@ -344,10 +344,16 @@ def _slice_pdf(raw_bytes: bytes, max_pages: int = 3, max_bytes: int = 2 * 1024 *
 
 
 def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
-    """Build the attachments catalog block for injection into the prompt."""
+    """Build the attachments catalog block for injection into the prompt.
+
+    Emits XML to match the surrounding prompt's <identity>/<rule_*>/<focus_signal>
+    style, so the model has one consistent structure to parse. Text entries
+    carry their (client-capped) content inline under <content> for the
+    `<rule_6_text_inlining>` path.
+    """
     if not catalog:
         return ""
-    lines = ["## Available Attachments\n"]
+    lines = ["<available_attachments>"]
     for item in catalog:
         item_id = str(item.get("id") or "").strip()
         name = str(item.get("displayName") or "").strip()
@@ -356,22 +362,36 @@ def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
         body = str(item.get("body") or "")
         if not item_id or not name:
             continue
-        line = f"- id={item_id!r} name={name!r} kind={kind}"
+        attrs = [
+            f'id={_xml_attr(item_id)}',
+            f'name={_xml_attr(name)}',
+            f'kind={_xml_attr(kind)}',
+        ]
         if description:
-            line += f" description={description!r}"
-        lines.append(line)
-        # Text entries carry their (already capped) contents inline so the
-        # model can quote them directly into the suggestion text. Anything
-        # at >4KB has already been trimmed client-side.
+            attrs.append(f'description={_xml_attr(description)}')
         if kind == "text" and body:
-            lines.append("  Content:")
-            lines.append("  ```")
-            for body_line in body.splitlines():
-                lines.append(f"  {body_line}")
-            lines.append("  ```")
-    if len(lines) <= 1:
+            lines.append(f"<attachment {' '.join(attrs)}>")
+            lines.append("<content>")
+            lines.append(body.rstrip())
+            lines.append("</content>")
+            lines.append("</attachment>")
+        else:
+            lines.append(f"<attachment {' '.join(attrs)}/>")
+    if len(lines) == 1:
         return ""
+    lines.append("</available_attachments>")
     return "\n".join(lines) + "\n"
+
+
+def _xml_attr(value: str) -> str:
+    """Quote a string for use as an XML attribute value."""
+    escaped = (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return f'"{escaped}"'
 
 
 def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
