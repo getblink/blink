@@ -253,8 +253,7 @@ def prompt_with_context(
     if follow_up_history_lines:
         lines.extend(
             [
-                "Recent standing guidance:",
-                "These are follow-up instructions the user gave on recent captures. Each entry is annotated with the app it came from and how long ago. They are style preferences (format, tone, length, register), not screen evidence. Decide per entry whether it applies to the current capture: an email-format instruction from Mail clearly applies to a Gmail draft on screen now, but not to a casual iMessage. Apply applicable ones silently; skip the ones that obviously don't fit. The most recent applicable guidance wins on conflict. The current capture's tone still wins where it clashes, and never carry the guidance's content as facts about the current screen.",
+                "User's recent follow-up guidance (apply per suggestion rule 7):",
             ]
         )
         lines.extend(follow_up_history_lines)
