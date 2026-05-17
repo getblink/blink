@@ -473,6 +473,79 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(payload["suggestion_details"], [])
         self.assertNotIn("{'text'", json.dumps(payload["suggestions"]))
 
+    def test_proxy_response_preserves_attachments_from_rich_suggestion_details(self) -> None:
+        """Staging returns suggestions as plain strings + suggestion_details as
+        the rich form (with attachments). The proxy path must read attachments
+        from suggestion_details, not re-normalize from the stringified suggestions
+        list (which has no attachment data)."""
+        class FakeResponse:
+            status = 200
+            headers = {"content-type": "application/json"}
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "request_id": "req-attach",
+                        "status": "ok",
+                        "tldr": "Drafting reply with a doc.",
+                        "suggestions": [
+                            "first reply",
+                            "second reply",
+                            "third reply with file",
+                        ],
+                        "suggestion_details": [
+                            {"text": "first reply", "tags": ["Reply"]},
+                            {"text": "second reply", "tags": ["Draft"]},
+                            {
+                                "text": "third reply with file",
+                                "tags": ["Draft", "Evidence"],
+                                "attachments": [
+                                    {"id": "doc-ab12", "reason": "Requested guide"}
+                                ],
+                            },
+                        ],
+                        "duration_ms": 42,
+                        "model": "gemini-3-flash-preview",
+                        "warnings": [],
+                    }
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screen.png"
+            screenshot.write_bytes(b"fake")
+            with mock.patch.object(blink_once.request, "urlopen", return_value=FakeResponse()):
+                payload = blink_once.generate_via_proxy(
+                    request_payload={"request_id": "req-attach"},
+                    settings={
+                        "model": "gemini-3-flash-preview",
+                        "temperature": 0.2,
+                        "max_output_tokens": 512,
+                        "media_resolution": "MEDIA_RESOLUTION_LOW",
+                        "timeout_seconds": 120,
+                    },
+                    proxy_settings={"url": "https://proxy.example", "token": "token"},
+                    image_paths=[screenshot],
+                    stream_events=False,
+                )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(len(payload["suggestion_details"]), 3)
+        self.assertNotIn("attachments", payload["suggestion_details"][0])
+        self.assertNotIn("attachments", payload["suggestion_details"][1])
+        self.assertEqual(
+            payload["suggestion_details"][2]["attachments"],
+            [{"id": "doc-ab12", "reason": "Requested guide"}],
+        )
+        # Tags also flow through.
+        self.assertEqual(payload["suggestion_details"][2]["tags"], ["Draft", "Evidence"])
+
     def test_request_payload_for_proxy_trims_reroll_context_to_source_id(self) -> None:
         payload = blink_once.request_payload_for_proxy(
             {

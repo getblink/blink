@@ -1855,10 +1855,50 @@ def generate_via_proxy(
             proxy_diagnostics=proxy_diagnostics,
         )
 
-    suggestion_details = normalize_suggestion_details(parsed)
+    # Prefer the rich suggestion_details the proxy already built — it carries
+    # tags + attachments. Re-normalizing from `suggestions` (plain strings on
+    # the wire) would silently drop attachments. Only fall back when the
+    # proxy returned just strings (older server, error path, etc.).
+    proxy_details = parsed.get("suggestion_details")
+    suggestion_details: list[dict[str, Any]] = []
+    if isinstance(proxy_details, list):
+        for item in proxy_details:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            entry: dict[str, Any] = {"text": text}
+            raw_tags = item.get("tags")
+            if isinstance(raw_tags, list):
+                tags = [
+                    tag
+                    for tag in (_normalize_tag(raw_tag) for raw_tag in raw_tags)
+                    if tag
+                ][:SUGGESTION_TAG_LIMIT]
+            else:
+                tags = []
+            entry["tags"] = tags or fallback_suggestion_tags(text, len(suggestion_details))
+            raw_attachments = item.get("attachments")
+            if isinstance(raw_attachments, list):
+                attachments: list[dict[str, str]] = []
+                for attachment in raw_attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    att_id = str(attachment.get("id") or "").strip()
+                    att_reason = str(attachment.get("reason") or "").strip()
+                    if att_id and att_reason:
+                        attachments.append({"id": att_id, "reason": att_reason[:80]})
+                if attachments:
+                    entry["attachments"] = attachments
+            suggestion_details.append(entry)
+        suggestion_details = suggestion_details[:3]
+
     if suggestion_details:
         suggestions = [item["text"] for item in suggestion_details]
     else:
+        # Fallback: proxy returned suggestions as plain strings without
+        # suggestion_details. Re-derive the minimum needed shape.
         raw_suggestions = parsed.get("suggestions")
         if not isinstance(raw_suggestions, list):
             raw_suggestions = []
