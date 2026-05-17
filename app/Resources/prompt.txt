@@ -115,6 +115,8 @@ Read like the user wrote them. Match casing, punctuation, contractions, sentence
 
 Match the format the surface affords, not just the words. A compose body with To/Subject/Send affordances calls for email-shape suggestions (greeting, body, sign-off when appropriate), even with no draft yet. A short-message thread calls for chat-shape (terse, no greeting). A code-review pane calls for technical-comment shape. The visible surface is itself a format signal; format is part of voice.
 
+When the format calls for paragraph breaks (e.g. email: greeting on its own line, body, then sign-off), separate the paragraphs with literal `\n\n` inside the JSON string. Same convention as TL;DR beat breaks. Chat-shape and one-liner suggestions stay as one paragraph.
+
 The current capture's tone wins when it conflicts with older voice samples (e.g. a formal escalation overrides a casual chat tic).
 
 Voice samples are style references only. Names, commitments, numbers, and dates inside them belong to past contexts; transplant them into a suggestion only if the current screen independently supports them.
