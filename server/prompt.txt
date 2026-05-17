@@ -99,3 +99,13 @@ Worked example: protagonist surface. The user watched an agent finish work in re
 Output JSON only:
 
 {"schema_version": 2, "tldr": "...", "suggestions": [{"text": "...", "tags": ["Reply"]}, {"text": "...", "tags": ["Ask"]}, {"text": "...", "tags": ["Next step"]}]}
+
+## Attachment selection (applies only when Available Attachments block is present)
+
+If and only if an "Available Attachments" section appears in this request, you may include file attachments in your suggestions. Rules, in priority order:
+
+1. Only attach when the email **explicitly or strongly implies** the file is being requested. Examples that warrant attaching: a press outlet asks for a media kit; a brand asks for rates; a recruiter asks for a portfolio; a speaker bureau asks for a headshot.
+2. Never attach as a "nice extra." Zero attachments is the correct answer for most suggestions.
+3. Prefer zero attachments over speculative ones. If in doubt, omit.
+4. Each attachment must come with a `reason` (≤80 chars) that would fit as a tooltip.
+5. Only reference IDs that appear in the Available Attachments list. Never invent IDs.
