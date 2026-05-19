@@ -176,6 +176,21 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         static let tagIconGap: CGFloat = 5
         static let suggestionLineSpacing: CGFloat = 5
         static let suggestionBottomPaddingExpanded: CGFloat = 28
+        static let attachmentChipHeight: CGFloat = 22
+        static let attachmentChipBottomInset: CGFloat = 28
+        static let attachmentChipGap: CGFloat = 8
+        static let attachmentChipMaxLabelWidth: CGFloat = 180
+        static let attachmentChipIconSize: CGFloat = 13
+        static let attachmentChipIconLabelGap: CGFloat = 5
+        static let attachmentChipPaddingX: CGFloat = 8
+        static let attachmentChipSpacing: CGFloat = 6
+        static let attachmentChipFontSize: CGFloat = 11
+
+        static func expandedBottomPadding(hasAttachments: Bool) -> CGFloat {
+            hasAttachments
+                ? suggestionBottomPaddingExpanded + attachmentChipHeight + attachmentChipGap
+                : suggestionBottomPaddingExpanded
+        }
         static let enterHintWidth: CGFloat = 140
         static let enterHintHeight: CGFloat = 18
         static let enterHintRightInset: CGFloat = 24
@@ -223,7 +238,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         let collapsedLabelHeight: CGFloat
         let collapsedSingleLine: Bool
         let attachments: [AttachmentRef]
-        let attachmentBadge: NSTextField?
+        let attachmentChips: NSStackView?
     }
 
     private var panel: SuggestionsPanel?
@@ -495,7 +510,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 collapsedHeights[offset],
                 measureHeight(detail.text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
                     + Layout.suggestionPaddingY
-                    + Layout.suggestionBottomPaddingExpanded
+                    + Layout.expandedBottomPadding(hasAttachments: !detail.attachments.isEmpty)
             )
         }
         let suggestionStackHeight = collapsedHeights.reduce(0, +)
@@ -775,7 +790,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 attachments: detail.attachments,
-                attachmentBadge: card.attachmentBadge
+                attachmentChips: card.attachmentChips
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -1119,7 +1134,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 collapsedHeights[offset],
                 measureHeight(detail.text, width: suggestionLabelWidth, font: suggestionFont, lineSpacing: Layout.suggestionLineSpacing)
                     + Layout.suggestionPaddingY
-                    + Layout.suggestionBottomPaddingExpanded
+                    + Layout.expandedBottomPadding(hasAttachments: !detail.attachments.isEmpty)
             )
         }
         let suggestionStackHeight = collapsedHeights.reduce(0, +)
@@ -1190,7 +1205,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 collapsedLabelHeight: collapsedTextHeight(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 collapsedSingleLine: collapsedTextIsSingleLine(for: detail, width: suggestionLabelWidth, font: suggestionFont),
                 attachments: detail.attachments,
-                attachmentBadge: card.attachmentBadge
+                attachmentChips: card.attachmentChips
             ))
             if offset < visibleSuggestions.count - 1 {
                 y -= Layout.suggestionGap
@@ -1544,7 +1559,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                         font: suggestionFont,
                         lineSpacing: Layout.suggestionLineSpacing
                     )
-                    labelY = Layout.suggestionBottomPaddingExpanded
+                    labelY = Layout.expandedBottomPadding(hasAttachments: !card.attachments.isEmpty)
                     card.tagIcon.alphaValue = 0
                     card.tagLabel.alphaValue = 0
                     let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
@@ -1613,6 +1628,16 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                     width: Layout.enterHintWidth,
                     height: Layout.enterHintHeight
                 )
+
+                // Attachment chips: visible only on the selected card while
+                // expanded. Positioned in card-local coords above the enter
+                // hint so they sit between the suggestion text and the bottom
+                // metadata row.
+                if let chips = card.attachmentChips {
+                    let chipFrame = attachmentChipFrame(in: targetFrame, stack: chips)
+                    chips.frame = chipFrame
+                    chips.animator().alphaValue = (isSelected && grows) ? 1 : 0
+                }
             }
 
             if let customInputCard {
@@ -1702,6 +1727,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                     width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
                     height: Layout.suggestionTagHeight
                 )
+                card.attachmentChips?.animator().alphaValue = 0
             }
 
             if let customInputCard {
@@ -2149,7 +2175,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         tagIcon: NSImageView,
         tagLabel: NSTextField,
         enterHint: NSTextField,
-        attachmentBadge: NSTextField?
+        attachmentChips: NSStackView?
     ) {
         let pane = makeGlassPane(frame: frame, cornerRadius: Layout.optionCornerRadius(for: frame.height))
         let clickTarget = SuggestionCardClickTarget(index: index - 1) { [weak self] index in
@@ -2239,6 +2265,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         )
         tagLabel.attributedStringValue = makeTagAttributedString(
             tags: renderedTags,
+            attachmentCount: detail.attachments.count,
             font: NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .semibold)
         )
         tagLabel.alphaValue = hasTags ? Layout.tagAlpha : 0
@@ -2262,27 +2289,115 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         enterHint.autoresizingMask = [.minXMargin]
         pane.content.addSubview(enterHint)
 
-        let attachmentBadge: NSTextField?
+        let attachmentChips: NSStackView?
         if !detail.attachments.isEmpty {
-            let badge = label(
-                frame: NSRect(
-                    x: Layout.suggestionTextX,
-                    y: Layout.enterHintBottomInset,
-                    width: 60,
-                    height: Layout.enterHintHeight
-                ),
-                text: "\u{1F4CE} \(detail.attachments.count)",
-                font: NSFont.systemFont(ofSize: Layout.hintFontSize),
-                color: .tertiaryLabelColor,
-                singleLine: true
-            )
-            pane.content.addSubview(badge)
-            attachmentBadge = badge
+            let stack = makeAttachmentChipStack(for: detail.attachments)
+            // Hidden in the collapsed resting state — expandSuggestion fades
+            // these in for the selected card so the metadata stays out of the
+            // way until the user commits to a choice. The collapsed hint
+            // (paperclip + "1 FILE") is baked into the tag label's attributed
+            // string instead, so it rides the same baseline + truncation
+            // behavior as the tags themselves.
+            stack.alphaValue = 0
+            stack.autoresizingMask = [.maxXMargin, .maxYMargin]
+            stack.frame = attachmentChipFrame(in: frame, stack: stack)
+            pane.content.addSubview(stack)
+            attachmentChips = stack
         } else {
-            attachmentBadge = nil
+            attachmentChips = nil
         }
 
-        return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint, attachmentBadge)
+        return (pane.outer, pane.content, tint, number, suggestionLabel, tagIcon, tagLabel, enterHint, attachmentChips)
+    }
+
+    // MARK: - Attachment chip helpers
+
+    private func makeAttachmentChipStack(for refs: [AttachmentRef]) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = Layout.attachmentChipSpacing
+        stack.alignment = .centerY
+        stack.distribution = .fill
+        for ref in refs {
+            stack.addArrangedSubview(makeAttachmentChip(for: ref))
+        }
+        return stack
+    }
+
+    private func makeAttachmentChip(for ref: AttachmentRef) -> NSView {
+        // Called from the suggestions panel-building path which always runs
+        // on the main thread; bridge isolation explicitly because
+        // SuggestionsOverlay isn't itself @MainActor.
+        let entry = MainActor.assumeIsolated {
+            AttachmentLibrary.shared.entries.first { $0.id == ref.id }
+        }
+        let displayName = entry?.displayName ?? ref.id
+        let kind = entry?.kind ?? .other
+
+        let chip = NSView()
+        chip.wantsLayer = true
+        chip.layer?.cornerRadius = 6
+        chip.layer?.borderWidth = 1
+        chip.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
+        chip.layer?.backgroundColor = NSColor.clear.cgColor
+        chip.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: Self.attachmentSymbol(for: kind), accessibilityDescription: nil)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Layout.attachmentChipFontSize, weight: .regular)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: displayName)
+        label.font = NSFont.systemFont(ofSize: Layout.attachmentChipFontSize)
+        label.textColor = .secondaryLabelColor
+        // Head-truncate so the extension stays visible (file recognition
+        // anchors on the tail, not the middle).
+        label.lineBreakMode = .byTruncatingHead
+        label.cell?.truncatesLastVisibleLine = true
+        label.maximumNumberOfLines = 1
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        chip.addSubview(icon)
+        chip.addSubview(label)
+        NSLayoutConstraint.activate([
+            chip.heightAnchor.constraint(equalToConstant: Layout.attachmentChipHeight),
+            icon.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: Layout.attachmentChipPaddingX),
+            icon.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: Layout.attachmentChipIconSize),
+            icon.heightAnchor.constraint(equalToConstant: Layout.attachmentChipIconSize),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: Layout.attachmentChipIconLabelGap),
+            label.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -Layout.attachmentChipPaddingX),
+            label.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+            label.widthAnchor.constraint(lessThanOrEqualToConstant: Layout.attachmentChipMaxLabelWidth),
+        ])
+
+        let trimmedReason = ref.reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        chip.toolTip = trimmedReason.isEmpty ? displayName : "\(displayName) — \(trimmedReason)"
+        return chip
+    }
+
+    private static func attachmentSymbol(for kind: AttachmentKind) -> String {
+        switch kind {
+        case .image: return "photo"
+        case .pdf: return "doc.richtext"
+        case .text: return "doc.plaintext"
+        case .other: return "doc"
+        }
+    }
+
+    private func attachmentChipFrame(in cardFrame: NSRect, stack: NSStackView) -> NSRect {
+        let fittingWidth = max(0, stack.fittingSize.width)
+        let availableWidth = max(0, cardFrame.width - Layout.suggestionTextX - Layout.cardPaddingX)
+        let width = min(fittingWidth, availableWidth)
+        return NSRect(
+            x: Layout.suggestionTextX,
+            y: Layout.attachmentChipBottomInset,
+            width: width,
+            height: Layout.attachmentChipHeight
+        )
     }
 
     private func makeTagIcon(frame: NSRect, color: NSColor) -> NSImageView {
@@ -2308,7 +2423,7 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         return Array(rendered)
     }
 
-    private func makeTagAttributedString(tags: [String], font: NSFont) -> NSAttributedString {
+    private func makeTagAttributedString(tags: [String], attachmentCount: Int, font: NSFont) -> NSAttributedString {
         let attributed = NSMutableAttributedString()
         for (index, tag) in tags.enumerated() {
             if index > 0 {
@@ -2328,7 +2443,57 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                 ]
             ))
         }
+        if attachmentCount > 0 {
+            if !tags.isEmpty {
+                attributed.append(NSAttributedString(
+                    string: "  \u{00B7}  ",
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                ))
+            }
+            attributed.append(makeAttachmentSuffix(count: attachmentCount, font: font))
+        }
         return attributed
+    }
+
+    /// `<paperclip> N FILE(S)` rendered inline with the tag row so the
+    /// attachment hint shares the tags' baseline + visual weight. The SF
+    /// Symbol image is marked template-tinted so it picks up the foreground
+    /// color attribute applied to its range.
+    private func makeAttachmentSuffix(count: Int, font: NSFont) -> NSAttributedString {
+        guard count > 0 else { return NSAttributedString() }
+        let result = NSMutableAttributedString()
+        let color = NSColor.secondaryLabelColor
+
+        let attachment = NSTextAttachment()
+        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .semibold)
+        if let raw = NSImage(systemSymbolName: "paperclip", accessibilityDescription: nil),
+           let image = raw.withSymbolConfiguration(config) {
+            image.isTemplate = true
+            attachment.image = image
+            attachment.bounds = NSRect(
+                x: 0,
+                y: font.descender,
+                width: image.size.width,
+                height: image.size.height
+            )
+        }
+        let glyphString = NSMutableAttributedString(attachment: attachment)
+        glyphString.addAttribute(
+            .foregroundColor,
+            value: color,
+            range: NSRange(location: 0, length: glyphString.length)
+        )
+        result.append(glyphString)
+
+        let label = count == 1 ? " 1 FILE" : " \(count) FILES"
+        result.append(NSAttributedString(
+            string: label,
+            attributes: [.font: font, .foregroundColor: color]
+        ))
+        return result
     }
 
     private func tagColor(for tag: String?) -> NSColor {
@@ -2560,17 +2725,11 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         let inactiveColor = NSColor.clear.cgColor
         let buttonFont = NSFont.systemFont(ofSize: 11, weight: .medium)
         let hasTypedText = customInputEditorText.isEmpty == false
-        let cardWidth = customInputBaseFrame.width
-        let modeX = cardWidth - Layout.cardPaddingX - Layout.customModeWidth
-        let modeRight = modeX + Layout.customModeWidth
-        let buttons: [(NSButton?, CustomInputMode, CGFloat)] = [
-            (customFollowUpButton, .followUp, modeX),
-            (customWriteButton, .write, modeX + Layout.customModeFollowUpWidth),
-        ]
-        for (button, mode, _) in buttons {
+        for (button, mode) in [(customFollowUpButton, CustomInputMode.followUp), (customWriteButton, CustomInputMode.write)] {
             guard let button else { continue }
             let isActive = customInputMode == mode
             button.layer?.backgroundColor = isActive ? activeColor : inactiveColor
+            button.alphaValue = isActive || !hasTypedText ? 1 : 0
             button.attributedTitle = NSAttributedString(
                 string: button.title,
                 attributes: [
@@ -2578,20 +2737,6 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                     .font: buttonFont,
                 ]
             )
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Layout.animationDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for (button, mode, defaultX) in buttons {
-                guard let button else { continue }
-                let isActive = customInputMode == mode
-                let targetAlpha: CGFloat = (isActive || !hasTypedText) ? 1 : 0
-                let targetX = hasTypedText ? (modeRight - button.frame.width) : defaultX
-                var targetFrame = button.frame
-                targetFrame.origin.x = targetX
-                button.animator().alphaValue = targetAlpha
-                button.animator().frame = targetFrame
-            }
         }
         guard let field = customInputField, let hint = customInputHintLabel else { return }
         let placeholder = customInputMode == .followUp

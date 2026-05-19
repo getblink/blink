@@ -139,11 +139,21 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(backdrop)
 
+        // Single source of truth for the content gutter so the strip's
+        // explicit leading/trailing pins below stay in lockstep with the
+        // stack's edgeInsets (which is what every other arranged subview
+        // implicitly inherits). Changing this in one place re-flows the
+        // whole window.
+        let contentInset: CGFloat = 24
+
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
+        stack.edgeInsets = NSEdgeInsets(
+            top: contentInset, left: contentInset,
+            bottom: contentInset, right: contentInset
+        )
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let status = NSTextField(labelWithString: coordinator.statusSubject.value)
@@ -185,13 +195,34 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         stack.addArrangedSubview(hotkeyBlock)
 
         // Attachment library strip — horizontally-scrolling file pill row.
+        // Small section caption so the strip reads as a discrete area rather
+        // than a free-floating tray.
+        let stripHeader = NSTextField(labelWithString: "Attachments")
+        stripHeader.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        stripHeader.textColor = .secondaryLabelColor
+        stripHeader.toolTip = "Files Blink can pull into replies. Drag in PDFs, images, or text."
+
         let strip = LibraryStripView()
         strip.delegate = self
         libraryStrip = strip
-        stack.addArrangedSubview(strip)
+
+        let stripBlock = NSStackView(views: [stripHeader, strip])
+        stripBlock.orientation = .vertical
+        stripBlock.alignment = .leading
+        stripBlock.spacing = 6
+        stripBlock.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(stripBlock)
+        // The strip needs to span the full inset content width — without
+        // these pins, NSStackView's `.leading` alignment lets it shrink to
+        // its hugging width. Pinning to `stack.leading` would bypass the
+        // stack's edgeInsets and push the pills flush against the window
+        // edge, so we add the same `contentInset` the stack applies to
+        // every other arranged subview.
         NSLayoutConstraint.activate([
-            strip.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 0),
-            strip.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 0),
+            stripBlock.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: contentInset),
+            stripBlock.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -contentInset),
+            strip.leadingAnchor.constraint(equalTo: stripBlock.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: stripBlock.trailingAnchor),
         ])
         // Sync current library state
         strip.update(

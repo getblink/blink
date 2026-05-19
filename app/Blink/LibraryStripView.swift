@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Quartz
 
 @MainActor
 protocol LibraryStripDelegate: AnyObject {
@@ -11,7 +12,8 @@ protocol LibraryStripDelegate: AnyObject {
 }
 
 /// Horizontally-scrolling strip that lives below the keycap row in ControlWindow.
-/// Accepts file drops and renders staged attachment pills.
+/// Accepts file drops and renders staged attachment pills. Clicking a pill opens
+/// a QuickLook preview; hovering reveals an inline remove button.
 final class LibraryStripView: NSView {
     weak var delegate: LibraryStripDelegate?
 
@@ -19,17 +21,25 @@ final class LibraryStripView: NSView {
     /// to skip NSApp.activate when a drag is in flight.
     private(set) var lastDragEnteredAt: Date = .distantPast
 
-    private let emptyHintLabel = NSTextField(labelWithString: "Drag files here to stage attachments")
+    // Empty state
+    private let emptyContainer = NSStackView()
+    private let emptyIcon = NSImageView()
+    private let emptyTitle = NSTextField(labelWithString: "Drop files to stage attachments")
+    private let emptySubtitle = NSTextField(labelWithString: "PDFs, images, text — Blink attaches them when relevant")
+
+    // Populated state
     private let scrollView = NSScrollView()
     private let pillStack = NSStackView()
     private var entries: [AttachmentEntry] = []
     private var unavailableIDs: Set<String> = []
 
-    private static let stripHeight: CGFloat = 56
-    private static let pillHeight: CGFloat = 40
-    private static let pillCornerRadius: CGFloat = 10
-    private static let pillPaddingX: CGFloat = 10
-    private static let pillSpacing: CGFloat = 8
+    // QuickLook
+    private var previewURLs: [URL] = []
+    private var previewIndex: Int = 0
+
+    static let preferredHeight: CGFloat = 84
+    private static let pillHeight: CGFloat = 60
+    private static let pillCornerRadius: CGFloat = 12
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -42,41 +52,24 @@ final class LibraryStripView: NSView {
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.borderWidth = 1.5
-        layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
-        layer?.cornerRadius = 12
-        layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.3).cgColor
+        layer?.cornerRadius = 14
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.35).cgColor
 
-        // Dashed border for the empty state
         applyDashedBorder(active: false)
 
-        // Empty hint
-        emptyHintLabel.font = NSFont.systemFont(ofSize: 12)
-        emptyHintLabel.textColor = .tertiaryLabelColor
-        emptyHintLabel.alignment = .center
-        emptyHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(emptyHintLabel)
+        setupEmptyState()
+        setupPillStack()
 
-        // Scroll view + pill stack (hidden when empty)
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = false
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        pillStack.orientation = .horizontal
-        pillStack.spacing = Self.pillSpacing
-        pillStack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        pillStack.alignment = .centerY
-        pillStack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = pillStack
-
+        addSubview(emptyContainer)
         addSubview(scrollView)
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Self.stripHeight),
 
-            emptyHintLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            emptyHintLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.preferredHeight),
+
+            emptyContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            emptyContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            emptyContainer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
 
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -88,8 +81,57 @@ final class LibraryStripView: NSView {
         ])
 
         scrollView.isHidden = true
-
         registerForDraggedTypes([.fileURL])
+    }
+
+    private func setupEmptyState() {
+        emptyContainer.orientation = .vertical
+        emptyContainer.alignment = .centerX
+        emptyContainer.spacing = 6
+        emptyContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImage(systemSymbolName: "tray.and.arrow.down", accessibilityDescription: "Drop files")
+        let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+        emptyIcon.image = icon?.withSymbolConfiguration(config)
+        emptyIcon.contentTintColor = NSColor.tertiaryLabelColor
+        emptyIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyTitle.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        emptyTitle.textColor = .secondaryLabelColor
+        emptyTitle.alignment = .center
+
+        emptySubtitle.font = NSFont.systemFont(ofSize: 11)
+        emptySubtitle.textColor = .tertiaryLabelColor
+        emptySubtitle.alignment = .center
+
+        emptyContainer.addArrangedSubview(emptyIcon)
+        emptyContainer.addArrangedSubview(emptyTitle)
+        emptyContainer.addArrangedSubview(emptySubtitle)
+        emptyContainer.setCustomSpacing(4, after: emptyIcon)
+        emptyContainer.setCustomSpacing(2, after: emptyTitle)
+    }
+
+    private func setupPillStack() {
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.horizontalScrollElasticity = .allowed
+        scrollView.verticalScrollElasticity = .none
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        pillStack.orientation = .horizontal
+        pillStack.spacing = 8
+        // No internal horizontal inset — the strip sits inside ControlWindow's
+        // 24pt content gutter, and any extra padding here makes the pills
+        // visibly indent past the "Attachments" header and status label above.
+        pillStack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        pillStack.alignment = .centerY
+        // NSScrollView wants its documentView sized by frame, not auto-layout —
+        // otherwise the horizontally-overflowing stack collapses to the
+        // clip-view width and scrolling no-ops.
+        pillStack.translatesAutoresizingMaskIntoConstraints = true
+        scrollView.documentView = pillStack
     }
 
     // MARK: - Content update
@@ -101,7 +143,6 @@ final class LibraryStripView: NSView {
     }
 
     private func rebuildPills() {
-        // Remove old pills
         for sub in pillStack.arrangedSubviews {
             pillStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
@@ -109,126 +150,47 @@ final class LibraryStripView: NSView {
 
         if entries.isEmpty {
             scrollView.isHidden = true
-            emptyHintLabel.isHidden = false
+            emptyContainer.isHidden = false
             applyDashedBorder(active: false)
             return
         }
 
         scrollView.isHidden = false
-        emptyHintLabel.isHidden = true
-        applyDashedBorder(active: false)
+        emptyContainer.isHidden = true
+        // Hide the dashed border when content fills the strip — it competes
+        // with the pill borders and clutters the eye.
+        clearDashedBorder()
 
         for entry in entries {
-            let pill = makePill(for: entry)
+            let pill = PillView(
+                entry: entry,
+                isUnavailable: unavailableIDs.contains(entry.id),
+                thumbnail: AttachmentLibrary.shared.thumbnail(for: entry.id),
+                onClick: { [weak self] id in self?.previewEntry(id: id) },
+                onRemove: { [weak self] id in self?.delegate?.libraryStripDidRequestRemove(id: id) }
+            )
+            pill.menu = makeContextMenu(for: entry)
             pillStack.addArrangedSubview(pill)
         }
 
-        // Let the stack know its intrinsic size so the scroll view works correctly
         pillStack.frame = CGRect(
             x: 0,
-            y: (Self.stripHeight - Self.pillHeight) / 2,
+            y: 0,
             width: pillStack.fittingSize.width,
             height: Self.pillHeight
         )
-    }
-
-    private func makePill(for entry: AttachmentEntry) -> NSView {
-        let outer = NSView()
-        outer.wantsLayer = true
-        outer.layer?.cornerRadius = Self.pillCornerRadius
-        outer.layer?.masksToBounds = true
-        outer.translatesAutoresizingMaskIntoConstraints = false
-
-        let isUnavailable = unavailableIDs.contains(entry.id)
-        outer.layer?.backgroundColor = (isUnavailable
-            ? NSColor.secondaryLabelColor.withAlphaComponent(0.12)
-            : NSColor.controlBackgroundColor.withAlphaComponent(0.8)).cgColor
-        outer.layer?.borderWidth = 0.5
-        outer.layer?.borderColor = NSColor.separatorColor.cgColor
-
-        // Thumbnail (if available)
-        var thumbnailView: NSView?
-        let thumbSize: CGFloat = 28
-        if entry.kind == .image, let thumb = AttachmentLibrary.shared.thumbnail(for: entry.id) {
-            let iv = NSImageView(image: thumb)
-            iv.imageScaling = .scaleProportionallyUpOrDown
-            iv.imageAlignment = .alignCenter
-            iv.wantsLayer = true
-            iv.layer?.cornerRadius = 4
-            iv.layer?.masksToBounds = true
-            iv.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                iv.widthAnchor.constraint(equalToConstant: thumbSize),
-                iv.heightAnchor.constraint(equalToConstant: thumbSize),
-            ])
-            thumbnailView = iv
-        } else {
-            // File-type icon
-            let icon = NSImageView()
-            icon.image = NSWorkspace.shared.icon(forFileType: URL(fileURLWithPath: entry.displayName).pathExtension)
-            icon.imageScaling = .scaleProportionallyUpOrDown
-            icon.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                icon.widthAnchor.constraint(equalToConstant: thumbSize),
-                icon.heightAnchor.constraint(equalToConstant: thumbSize),
-            ])
-            thumbnailView = icon
-        }
-
-        let nameLabel = NSTextField(labelWithString: entry.displayName)
-        nameLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        nameLabel.textColor = isUnavailable ? .secondaryLabelColor : .labelColor
-        nameLabel.lineBreakMode = .byTruncatingMiddle
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([nameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 100)])
-
-        // Status dot
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = 4
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        let dotColor: NSColor
-        switch entry.descriptionStatus {
-        case .ready: dotColor = isUnavailable ? .secondaryLabelColor : .systemGreen
-        case .pending: dotColor = .systemYellow
-        case .failed: dotColor = .systemOrange
-        }
-        dot.layer?.backgroundColor = dotColor.cgColor
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 6),
-            dot.heightAnchor.constraint(equalToConstant: 6),
-        ])
-        dot.toolTip = isUnavailable ? "File unavailable (volume not mounted?)" :
-            entry.descriptionStatus == .ready ? "Description ready" :
-            entry.descriptionStatus == .pending ? "Generating description…" : "Description failed — right-click to retry or remove"
-
-        let hStack = NSStackView()
-        hStack.orientation = .horizontal
-        hStack.alignment = .centerY
-        hStack.spacing = 6
-        hStack.edgeInsets = NSEdgeInsets(top: 0, left: Self.pillPaddingX, bottom: 0, right: Self.pillPaddingX)
-        if let tv = thumbnailView { hStack.addArrangedSubview(tv) }
-        hStack.addArrangedSubview(nameLabel)
-        hStack.addArrangedSubview(dot)
-        hStack.translatesAutoresizingMaskIntoConstraints = false
-
-        outer.addSubview(hStack)
-        NSLayoutConstraint.activate([
-            hStack.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
-            hStack.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
-            hStack.centerYAnchor.constraint(equalTo: outer.centerYAnchor),
-            outer.heightAnchor.constraint(equalToConstant: Self.pillHeight),
-        ])
-
-        outer.toolTip = isUnavailable ? "File unavailable" : entry.description.isEmpty ? entry.displayName : entry.description
-        outer.menu = makeContextMenu(for: entry)
-        return outer
     }
 
     // MARK: - Context menu
 
     private func makeContextMenu(for entry: AttachmentEntry) -> NSMenu {
         let menu = NSMenu()
+        let preview = NSMenuItem(title: "Quick Look", action: #selector(handlePreview(_:)), keyEquivalent: " ")
+        preview.target = self
+        preview.representedObject = entry.id
+        menu.addItem(preview)
+        menu.addItem(.separator())
+
         if entry.descriptionStatus == .failed {
             let retry = NSMenuItem(title: "Retry description", action: #selector(handleRetry(_:)), keyEquivalent: "")
             retry.target = self
@@ -263,25 +225,82 @@ final class LibraryStripView: NSView {
         delegate?.libraryStripDidRequestRetry(id: id)
     }
 
+    @objc private func handlePreview(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        previewEntry(id: id)
+    }
+
+    // MARK: - QuickLook preview
+
+    fileprivate func previewEntry(id: String) {
+        // Resolve every entry's URL up-front so the panel can navigate
+        // between pills with the arrow keys without us hopping back through
+        // the bookmark resolver on each step.
+        var urls: [URL] = []
+        var targetIndex = 0
+        for entry in entries {
+            guard let url = AttachmentLibrary.shared.resolveURLSync(for: entry) else { continue }
+            if entry.id == id { targetIndex = urls.count }
+            urls.append(url)
+        }
+        guard !urls.isEmpty else { return }
+        previewURLs = urls
+        previewIndex = targetIndex
+        guard let panel = QLPreviewPanel.shared() else { return }
+        // QuickLook drives the controller through the responder chain, so the
+        // window has to make us first responder for panel callbacks to land.
+        window?.makeFirstResponder(self)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - QLPreviewPanel controller hooks
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+        panel.currentPreviewItemIndex = previewIndex
+        panel.reloadData()
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        previewURLs.removeAll()
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    // MARK: - Dashed border
+
     private func applyDashedBorder(active: Bool) {
         guard let layer else { return }
-        // Remove existing dash layer
         layer.sublayers?.filter { $0.name == "dashBorder" }.forEach { $0.removeFromSuperlayer() }
         guard entries.isEmpty else { return }
 
         let dashLayer = CAShapeLayer()
         dashLayer.name = "dashBorder"
-        dashLayer.strokeColor = NSColor.systemBlue.withAlphaComponent(active ? 0.7 : 0.3).cgColor
+        dashLayer.strokeColor = (active
+            ? NSColor.controlAccentColor.withAlphaComponent(0.7)
+            : NSColor.separatorColor.withAlphaComponent(0.35)
+        ).cgColor
         dashLayer.fillColor = NSColor.clear.cgColor
-        dashLayer.lineWidth = 1.5
-        dashLayer.lineDashPattern = [6, 4]
-        dashLayer.path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerWidth: 12, cornerHeight: 12, transform: nil)
+        dashLayer.lineWidth = 1.0
+        dashLayer.lineDashPattern = [4, 5]
+        dashLayer.path = CGPath(
+            roundedRect: bounds.insetBy(dx: 1, dy: 1),
+            cornerWidth: 14, cornerHeight: 14, transform: nil
+        )
         layer.addSublayer(dashLayer)
+    }
+
+    private func clearDashedBorder() {
+        layer?.sublayers?.filter { $0.name == "dashBorder" }.forEach { $0.removeFromSuperlayer() }
     }
 
     override func layout() {
         super.layout()
-        // Refresh dash border path when bounds change
         if entries.isEmpty { applyDashedBorder(active: false) }
     }
 
@@ -291,7 +310,9 @@ final class LibraryStripView: NSView {
         lastDragEnteredAt = Date()
         delegate?.libraryStripDragEntered()
         guard containsFileURLs(sender) else { return [] }
-        applyDashedBorder(active: true)
+        // Highlight even when populated — falls back to a glowing background
+        // since dashed border is hidden once pills are present.
+        applyDragHighlight(active: true)
         return .copy
     }
 
@@ -301,19 +322,31 @@ final class LibraryStripView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        applyDashedBorder(active: false)
+        applyDragHighlight(active: false)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = fileURLs(from: sender)
         guard !urls.isEmpty else { return false }
-        applyDashedBorder(active: false)
+        applyDragHighlight(active: false)
         delegate?.libraryStripDidDrop(urls: urls)
         return true
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
-        applyDashedBorder(active: false)
+        applyDragHighlight(active: false)
+    }
+
+    private func applyDragHighlight(active: Bool) {
+        if entries.isEmpty {
+            applyDashedBorder(active: active)
+        } else {
+            // Subtle accent background wash when a drag is over the populated strip
+            layer?.backgroundColor = (active
+                ? NSColor.controlAccentColor.withAlphaComponent(0.12)
+                : NSColor.controlBackgroundColor.withAlphaComponent(0.35)
+            ).cgColor
+        }
     }
 
     // MARK: - Drag helpers
@@ -326,4 +359,291 @@ final class LibraryStripView: NSView {
         let pb = info.draggingPasteboard
         return (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
     }
+}
+
+// MARK: - QLPreviewPanelDataSource / Delegate
+
+extension LibraryStripView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewURLs[index] as NSURL
+    }
+}
+
+// MARK: - Pill view
+
+/// A single attachment pill: thumbnail/icon, name, status line, and an
+/// inline remove button that fades in on hover. Click to QuickLook.
+private final class PillView: NSView {
+    private let entryID: String
+    private let onClick: (String) -> Void
+    private let onRemove: (String) -> Void
+    private let isUnavailable: Bool
+
+    private let thumbView = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private let statusDot = NSView()
+    private let removeButton = NSButton()
+    private var trackingArea: NSTrackingArea?
+    private var hovered: Bool = false
+
+    private static let height: CGFloat = 60
+    private static let radius: CGFloat = 12
+    private static let thumbSize: CGFloat = 40
+    private static let paddingX: CGFloat = 10
+    private static let nameMaxWidth: CGFloat = 168
+
+    init(
+        entry: AttachmentEntry,
+        isUnavailable: Bool,
+        thumbnail: NSImage?,
+        onClick: @escaping (String) -> Void,
+        onRemove: @escaping (String) -> Void
+    ) {
+        self.entryID = entry.id
+        self.onClick = onClick
+        self.onRemove = onRemove
+        self.isUnavailable = isUnavailable
+        super.init(frame: .zero)
+        configure(entry: entry, thumbnail: thumbnail)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func configure(entry: AttachmentEntry, thumbnail: NSImage?) {
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = Self.radius
+        layer?.masksToBounds = false
+        // AX: announce the pill as a clickable button so VO users can preview
+        // / activate it the same way sighted users do via click.
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(entry.displayName)
+        setAccessibilityHelp("Click to preview, or press Delete to remove")
+        applyBackground(hovered: false)
+
+        // Thumbnail
+        thumbView.translatesAutoresizingMaskIntoConstraints = false
+        thumbView.imageScaling = .scaleProportionallyUpOrDown
+        thumbView.imageAlignment = .alignCenter
+        thumbView.wantsLayer = true
+        thumbView.layer?.cornerRadius = 6
+        thumbView.layer?.masksToBounds = true
+        thumbView.layer?.borderWidth = 0.5
+        thumbView.layer?.borderColor = NSColor.separatorColor.cgColor
+        if let thumb = thumbnail, entry.kind == .image || entry.kind == .pdf {
+            thumbView.image = thumb
+        } else {
+            let icon = NSWorkspace.shared.icon(forFileType: URL(fileURLWithPath: entry.displayName).pathExtension)
+            icon.size = NSSize(width: Self.thumbSize, height: Self.thumbSize)
+            thumbView.image = icon
+            // Don't outline the system file-type icons — they already render
+            // their own card / drop-shadow.
+            thumbView.layer?.borderWidth = 0
+        }
+        thumbView.alphaValue = isUnavailable ? 0.5 : 1.0
+
+        // Name
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.stringValue = entry.displayName
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        nameLabel.textColor = isUnavailable ? .secondaryLabelColor : .labelColor
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+        nameLabel.cell?.truncatesLastVisibleLine = true
+        nameLabel.maximumNumberOfLines = 1
+
+        // Subtitle (status + size)
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        let (statusText, statusColor) = statusInfo(for: entry, isUnavailable: isUnavailable)
+        subtitleLabel.stringValue = subtitleText(for: entry, statusText: statusText, isUnavailable: isUnavailable)
+        subtitleLabel.font = NSFont.systemFont(ofSize: 10.5)
+        subtitleLabel.textColor = .tertiaryLabelColor
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.maximumNumberOfLines = 1
+
+        // Status dot (only when not ready — ready entries don't need the noise)
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3
+        statusDot.layer?.backgroundColor = statusColor.cgColor
+        statusDot.isHidden = (entry.descriptionStatus == .ready && !isUnavailable)
+
+        // Remove button (hover-only)
+        configureRemoveButton()
+
+        // Layout
+        let textStack = NSStackView(views: [nameLabel, subtitleRow()])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(thumbView)
+        addSubview(textStack)
+        addSubview(removeButton)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            // Floor on the pill width — without this, when the name+subtitle
+            // both fit in well under nameMaxWidth, the trailing `≤` lets the
+            // pill collapse to a thumbnail-only stub.
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
+
+            thumbView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.paddingX),
+            thumbView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            thumbView.widthAnchor.constraint(equalToConstant: Self.thumbSize),
+            thumbView.heightAnchor.constraint(equalToConstant: Self.thumbSize),
+
+            textStack.leadingAnchor.constraint(equalTo: thumbView.trailingAnchor, constant: 10),
+            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.paddingX),
+
+            nameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.nameMaxWidth),
+
+            removeButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            removeButton.widthAnchor.constraint(equalToConstant: 18),
+            removeButton.heightAnchor.constraint(equalToConstant: 18),
+        ])
+
+        toolTip = isUnavailable
+            ? "File unavailable — volume may not be mounted"
+            : (entry.description.isEmpty ? entry.displayName : entry.description)
+    }
+
+    private func subtitleRow() -> NSView {
+        let row = NSStackView(views: [statusDot, subtitleLabel])
+        row.orientation = .horizontal
+        row.spacing = 5
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            statusDot.widthAnchor.constraint(equalToConstant: 6),
+            statusDot.heightAnchor.constraint(equalToConstant: 6),
+        ])
+        return row
+    }
+
+    private func subtitleText(for entry: AttachmentEntry, statusText: String, isUnavailable: Bool) -> String {
+        if isUnavailable { return "File unavailable" }
+        let size = byteSizeString(entry.byteSize)
+        if let statusText = statusText.nonEmpty {
+            return "\(statusText) · \(size)"
+        }
+        return size
+    }
+
+    private func statusInfo(for entry: AttachmentEntry, isUnavailable: Bool) -> (String, NSColor) {
+        if isUnavailable { return ("", .secondaryLabelColor) }
+        switch entry.descriptionStatus {
+        case .ready: return ("", .systemGreen)
+        case .pending: return ("Describing…", .systemYellow)
+        case .failed: return ("Description failed", .systemOrange)
+        }
+    }
+
+    private func byteSizeString(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return String(format: "%.0f KB", Double(bytes) / 1024) }
+        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+    }
+
+    private func configureRemoveButton() {
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.bezelStyle = .circular
+        removeButton.isBordered = false
+        removeButton.title = ""
+        let symbol = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove")
+        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        removeButton.image = symbol?.withSymbolConfiguration(cfg)
+        removeButton.imageScaling = .scaleProportionallyUpOrDown
+        removeButton.contentTintColor = NSColor.labelColor.withAlphaComponent(0.7)
+        removeButton.target = self
+        removeButton.action = #selector(handleRemoveTap)
+        removeButton.toolTip = "Remove"
+        // Hidden (not just alpha=0) so the button doesn't swallow clicks in
+        // its 18×18 corner footprint while invisible.
+        removeButton.isHidden = true
+    }
+
+    private func applyBackground(hovered: Bool) {
+        let baseColor: NSColor = isUnavailable
+            ? NSColor.secondaryLabelColor.withAlphaComponent(0.10)
+            : NSColor.controlBackgroundColor.withAlphaComponent(hovered ? 0.95 : 0.75)
+        layer?.backgroundColor = baseColor.cgColor
+        layer?.borderWidth = 0.5
+        layer?.borderColor = (hovered
+            ? NSColor.controlAccentColor.withAlphaComponent(0.55)
+            : NSColor.separatorColor
+        ).cgColor
+        if hovered {
+            layer?.shadowColor = NSColor.black.cgColor
+            layer?.shadowOpacity = 0.18
+            layer?.shadowRadius = 4
+            layer?.shadowOffset = CGSize(width: 0, height: -1)
+        } else {
+            layer?.shadowOpacity = 0
+        }
+    }
+
+    @objc private func handleRemoveTap() {
+        onRemove(entryID)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // NSButton hit-tests first when visible, so this only fires for clicks
+        // outside the (hover-revealed) remove button.
+        onClick(entryID)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovered = true
+        removeButton.isHidden = false
+        removeButton.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.allowsImplicitAnimation = true
+            applyBackground(hovered: true)
+            removeButton.animator().alphaValue = 1
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = false
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.allowsImplicitAnimation = true
+            applyBackground(hovered: false)
+            removeButton.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            // Re-hide only if we didn't get a fresh mouseEntered in the meantime.
+            guard let self, !self.hovered else { return }
+            self.removeButton.isHidden = true
+        }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }
