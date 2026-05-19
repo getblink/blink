@@ -9,6 +9,7 @@ protocol LibraryStripDelegate: AnyObject {
     func libraryStripDidRequestRemove(id: String)
     func libraryStripDidRequestShowInFinder(id: String)
     func libraryStripDidRequestRetry(id: String)
+    func libraryStripDidRequestPickFiles()
 }
 
 /// Horizontally-scrolling strip that lives below the keycap row in ControlWindow.
@@ -24,7 +25,7 @@ final class LibraryStripView: NSView {
     // Empty state
     private let emptyContainer = NSStackView()
     private let emptyIcon = NSImageView()
-    private let emptyTitle = NSTextField(labelWithString: "Drop files to stage attachments")
+    private let emptyTitle = NSTextField(labelWithString: "Click or drop files to stage attachments")
     private let emptySubtitle = NSTextField(labelWithString: "PDFs, images, text — Blink attaches them when relevant")
 
     // Populated state
@@ -173,6 +174,11 @@ final class LibraryStripView: NSView {
             pillStack.addArrangedSubview(pill)
         }
 
+        let addPill = AddFilesPillView { [weak self] in
+            self?.delegate?.libraryStripDidRequestPickFiles()
+        }
+        pillStack.addArrangedSubview(addPill)
+
         pillStack.frame = CGRect(
             x: 0,
             y: 0,
@@ -302,6 +308,24 @@ final class LibraryStripView: NSView {
     override func layout() {
         super.layout()
         if entries.isEmpty { applyDashedBorder(active: false) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // Click anywhere in the empty state opens a file picker.
+        // When populated, clicks land on the AddFilesPillView at the end
+        // of the strip — let those events flow through to the pill.
+        if entries.isEmpty {
+            delegate?.libraryStripDidRequestPickFiles()
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if entries.isEmpty {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
     }
 
     // MARK: - NSDraggingDestination
@@ -646,4 +670,100 @@ private final class PillView: NSView {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - Add files pill
+
+/// Trailing pill in the populated strip — a "+" affordance that opens a file
+/// picker. Mirrors PillView's height/corner radius for visual consistency.
+private final class AddFilesPillView: NSView {
+    private let onClick: () -> Void
+    private let iconView = NSImageView()
+    private var trackingArea: NSTrackingArea?
+
+    private static let height: CGFloat = 60
+    private static let width: CGFloat = 60
+    private static let radius: CGFloat = 12
+
+    init(onClick: @escaping () -> Void) {
+        self.onClick = onClick
+        super.init(frame: .zero)
+        configure()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func configure() {
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = Self.radius
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Add files")
+        toolTip = "Add files…"
+        applyBackground(hovered: false)
+
+        let symbol = NSImage(systemSymbolName: "plus", accessibilityDescription: "Add files")
+        let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+        iconView.image = symbol?.withSymbolConfiguration(cfg)
+        iconView.contentTintColor = NSColor.secondaryLabelColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            widthAnchor.constraint(equalToConstant: Self.width),
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    private func applyBackground(hovered: Bool) {
+        layer?.backgroundColor = NSColor.controlBackgroundColor
+            .withAlphaComponent(hovered ? 0.6 : 0.4).cgColor
+        layer?.borderWidth = 0.5
+        layer?.borderColor = (hovered
+            ? NSColor.controlAccentColor.withAlphaComponent(0.55)
+            : NSColor.separatorColor.withAlphaComponent(0.6)
+        ).cgColor
+        iconView.contentTintColor = hovered ? .labelColor : .secondaryLabelColor
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.allowsImplicitAnimation = true
+            applyBackground(hovered: true)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            ctx.allowsImplicitAnimation = true
+            applyBackground(hovered: false)
+        }
+    }
 }

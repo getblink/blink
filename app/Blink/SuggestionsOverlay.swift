@@ -2725,11 +2725,17 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
         let inactiveColor = NSColor.clear.cgColor
         let buttonFont = NSFont.systemFont(ofSize: 11, weight: .medium)
         let hasTypedText = customInputEditorText.isEmpty == false
-        for (button, mode) in [(customFollowUpButton, CustomInputMode.followUp), (customWriteButton, CustomInputMode.write)] {
+        let cardWidth = customInputBaseFrame.width
+        let modeX = cardWidth - Layout.cardPaddingX - Layout.customModeWidth
+        let modeRight = modeX + Layout.customModeWidth
+        let buttons: [(NSButton?, CustomInputMode, CGFloat)] = [
+            (customFollowUpButton, .followUp, modeX),
+            (customWriteButton, .write, modeX + Layout.customModeFollowUpWidth),
+        ]
+        for (button, mode, _) in buttons {
             guard let button else { continue }
             let isActive = customInputMode == mode
             button.layer?.backgroundColor = isActive ? activeColor : inactiveColor
-            button.alphaValue = isActive || !hasTypedText ? 1 : 0
             button.attributedTitle = NSAttributedString(
                 string: button.title,
                 attributes: [
@@ -2737,6 +2743,24 @@ final class SuggestionsOverlay: NSObject, NSTextFieldDelegate {
                     .font: buttonFont,
                 ]
             )
+        }
+        // Slide both pills' alpha + x through a single animation block so the
+        // active pill drifts to the right edge while the inactive one fades
+        // at the same anchor. Without this the inactive pill snaps to alpha 0
+        // synchronously while only the active one slides — visible flicker.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for (button, mode, defaultX) in buttons {
+                guard let button else { continue }
+                let isActive = customInputMode == mode
+                let targetAlpha: CGFloat = (isActive || !hasTypedText) ? 1 : 0
+                let targetX = hasTypedText ? (modeRight - button.frame.width) : defaultX
+                var targetFrame = button.frame
+                targetFrame.origin.x = targetX
+                button.animator().alphaValue = targetAlpha
+                button.animator().frame = targetFrame
+            }
         }
         guard let field = customInputField, let hint = customInputHintLabel else { return }
         let placeholder = customInputMode == .followUp
