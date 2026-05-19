@@ -235,6 +235,10 @@ final class MenubarController: NSObject {
     }
 
     @objc private func checkForUpdates(_ sender: NSMenuItem) {
+        // Activate Blink before invoking Sparkle so the update modal floats
+        // above the frontmost app. Without this, the window can land behind
+        // whatever the user was looking at when they opened the status menu.
+        NSApp.activate(ignoringOtherApps: true)
         updaterController?.checkForUpdates(sender)
     }
 

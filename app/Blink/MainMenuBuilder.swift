@@ -110,8 +110,15 @@ final class MainMenuController: NSObject {
 
     func setUpdater(_ controller: SPUStandardUpdaterController?) {
         self.updaterController = controller
-        checkForUpdatesItem?.isHidden = (controller == nil)
+        // Keep the menu item visible even when Sparkle isn't configured (e.g.
+        // local dev builds with an http:// feed URL) so the menu shape is
+        // predictable across builds. Disabled state + tooltip explains why it
+        // can't be invoked.
+        checkForUpdatesItem?.isHidden = false
         checkForUpdatesItem?.isEnabled = (controller != nil)
+        checkForUpdatesItem?.toolTip = controller == nil
+            ? "Update channel not configured in this build."
+            : nil
     }
 
     // MARK: - Actions
@@ -124,6 +131,10 @@ final class MainMenuController: NSObject {
     @objc fileprivate func openHelp() { onShowHelp() }
 
     @objc fileprivate func checkForUpdates(_ sender: Any?) {
+        // Sparkle's update window inherits frontmost-app context — activate
+        // Blink first so the modal floats above whatever the user was looking
+        // at when they clicked.
+        NSApp.activate(ignoringOtherApps: true)
         updaterController?.checkForUpdates(sender)
     }
 
@@ -245,8 +256,13 @@ enum MainMenuBuilder {
             keyEquivalent: ""
         )
         checkForUpdates.target = controller
-        checkForUpdates.isHidden = (controller.updaterController == nil)
+        // Always visible — Sparkle config may arrive after the menu builds,
+        // and a stable menu shape is worth more than hiding a disabled row.
+        checkForUpdates.isHidden = false
         checkForUpdates.isEnabled = (controller.updaterController != nil)
+        if controller.updaterController == nil {
+            checkForUpdates.toolTip = "Update channel not configured in this build."
+        }
         controller.checkForUpdatesItem = checkForUpdates
         menu.addItem(checkForUpdates)
 
