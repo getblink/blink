@@ -1,7 +1,7 @@
 struct SuggestionChoiceState {
     enum NumberAction: Equatable {
         case expand(Int)
-        case copy(Int)
+        case commit(Int)
         case focusInput
         case ignored
     }
@@ -35,7 +35,7 @@ struct SuggestionChoiceState {
         guard index >= 0 && index < suggestionCount else { return .ignored }
         customInputActive = false
         if expandedIndex == index {
-            return .copy(index)
+            return .commit(index)
         }
         expandedIndex = index
         return .expand(index)

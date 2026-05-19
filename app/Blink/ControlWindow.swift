@@ -499,6 +499,21 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
         AttachmentLibrary.shared.retryDescription(entryID: id, proxyConfig: cfg)
     }
 
+    func libraryStripDidRequestPickFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Choose files to stage"
+        panel.prompt = "Add"
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            let urls = panel.urls
+            guard !urls.isEmpty else { return }
+            self?.libraryStripDidDrop(urls: urls)
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func summarize() {

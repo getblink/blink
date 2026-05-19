@@ -1790,8 +1790,8 @@ final class BlinkCoordinator: @unchecked Sendable {
             return
         case .expand(let index):
             expandSuggestion(index: index)
-        case .copy(let index):
-            copySuggestion(index: index)
+        case .commit(let index):
+            insertSuggestion(index: index)
         case .focusInput:
             overlay.focusCustomInput()
             status("type your own reply")
@@ -1862,58 +1862,6 @@ final class BlinkCoordinator: @unchecked Sendable {
                 clientMetadata: Self.clientMetadata(),
                 details: ["chosen_index": index + 1]
             )
-        }
-    }
-
-    @MainActor
-    private func copySuggestion(index: Int) {
-        let text = currentSuggestions[index]
-        let requestID = currentRequestID
-        let clientMetadata = Self.clientMetadata()
-        if let requestID {
-            terminalEmittedRequestID = requestID
-        }
-        overlay.close()
-
-        if let requestID {
-            emitEvent(
-                requestID: requestID,
-                type: "suggestion_copied",
-                allowLogging: runtimeStore.allowEventLogging,
-                clientMetadata: clientMetadata,
-                details: ["chosen_index": index + 1]
-            )
-        }
-
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        status("copied suggestion \(index + 1)")
-        soundEffects.play(.copy)
-        if let requestID {
-            emitEvent(
-                requestID: requestID,
-                type: "run_completed",
-                allowLogging: runtimeStore.allowEventLogging,
-                clientMetadata: clientMetadata,
-                details: ["outcome": "copied", "chosen_index": index + 1]
-            )
-            PendingRunStore.finish(requestID: requestID)
-        }
-
-        recordChoice(index: index, text: text, action: "copied")
-        currentBundleDir = nil
-        resetChoiceState(suggestionCount: 0)
-        let finishingRequestID = requestID
-        overlay.confirmCopy { [weak self] in
-            guard let self else { return }
-            if let finishingRequestID {
-                guard self.currentRequestID == finishingRequestID else { return }
-            } else {
-                guard self.currentRequestID == nil else { return }
-            }
-            self.overlay.dismissAnimated { [weak self] in
-                self?.resetCurrentRun()
-            }
         }
     }
 

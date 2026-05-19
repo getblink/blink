@@ -43,12 +43,12 @@ final class SuggestionChoiceStateTests: XCTestCase {
         )
     }
 
-    func testNumberPressExpandsBeforeCopyingSameSuggestion() {
+    func testNumberPressExpandsBeforeCommittingSameSuggestion() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
         XCTAssertEqual(state.pressNumber(index: 0), .expand(0))
         XCTAssertEqual(state.expandedIndex, 0)
-        XCTAssertEqual(state.pressNumber(index: 0), .copy(0))
+        XCTAssertEqual(state.pressNumber(index: 0), .commit(0))
     }
 
     func testDifferentNumberSwitchesExpandedSuggestion() {
@@ -57,7 +57,7 @@ final class SuggestionChoiceStateTests: XCTestCase {
         XCTAssertEqual(state.pressNumber(index: 0), .expand(0))
         XCTAssertEqual(state.pressNumber(index: 1), .expand(1))
         XCTAssertEqual(state.expandedIndex, 1)
-        XCTAssertEqual(state.pressNumber(index: 1), .copy(1))
+        XCTAssertEqual(state.pressNumber(index: 1), .commit(1))
     }
 
     func testReturnPropagatesUntilSuggestionIsExpanded() {
