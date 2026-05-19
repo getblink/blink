@@ -1234,6 +1234,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 guard self.currentRequestID == requestID else { return }
                 self.currentSuggestionDetails = self.normalizedSuggestionDetails(
                     result.suggestionDetails,
+                    fallbackSuggestions: result.suggestions,
                     draft: focusedSnapshot.meaningfulDraftText ?? ""
                 )
                 self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
@@ -1558,6 +1559,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard self.currentRequestID == requestID else { return }
                     self.currentSuggestionDetails = self.normalizedSuggestionDetails(
                         result.suggestionDetails,
+                        fallbackSuggestions: result.suggestions,
                         draft: ""
                     )
                     self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
@@ -1665,9 +1667,11 @@ final class BlinkCoordinator: @unchecked Sendable {
 
     private func normalizedSuggestionDetails(
         _ details: [SuggestionDetail],
+        fallbackSuggestions: [String],
         draft: String
     ) -> [SuggestionDetail] {
-        return Array(details.prefix(3)).enumerated().map { offset, detail in
+        let source = details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
+        return Array(source.prefix(3)).enumerated().map { offset, detail in
             let text = SuggestionPrefixStripper.stripDuplicatedDraftPrefix(
                 from: detail.text,
                 draft: draft

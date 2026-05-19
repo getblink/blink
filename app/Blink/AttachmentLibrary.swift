@@ -165,7 +165,7 @@ final class AttachmentLibrary: ObservableObject {
             throw AttachmentError.bookmarkCreationFailed
         }
 
-        let id = Self.makeID(from: url)
+        let id = makeID()
         let kind = AttachmentKind.detect(for: url)
         // Local-describe for text and opaque-binary at add time; image/pdf go
         // out to the server's /v1/describe-file and stay pending until then.
@@ -398,18 +398,18 @@ final class AttachmentLibrary: ObservableObject {
 
     // MARK: - ID generation
 
-    private static func makeID(from url: URL) -> String {
-        let name = url.deletingPathExtension().lastPathComponent
-        var slug = name.lowercased()
-            .unicodeScalars
-            .map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }
-            .joined()
-        while slug.contains("--") { slug = slug.replacingOccurrences(of: "--", with: "-") }
-        slug = slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        if slug.count > 40 { slug = String(slug.prefix(40)) }
-        if slug.isEmpty { slug = "file" }
-        let suffix = UUID().uuidString.prefix(4).lowercased()
-        return "\(slug)-\(suffix)"
+    /// Mints a short opaque handle (`att-N`) where N is monotonic across the
+    /// library's lifetime. The model gets the human-readable filename from the
+    /// `name` attribute in the catalog block, so the id only needs to be a
+    /// stable echo token. N is `max(existing) + 1` rather than `count + 1` so
+    /// deleting entries never recycles a number that an in-flight suggestion
+    /// might still reference.
+    private func makeID() -> String {
+        let next = (entries.compactMap { entry -> Int? in
+            guard entry.id.hasPrefix("att-") else { return nil }
+            return Int(entry.id.dropFirst(4))
+        }.max() ?? 0) + 1
+        return "att-\(next)"
     }
 
     // MARK: - Volume notifications

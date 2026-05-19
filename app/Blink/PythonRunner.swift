@@ -5,14 +5,13 @@ enum PythonRunner {
         let status: String
         let bundleDir: String
         let tldr: String
+        let suggestions: [String]
         let suggestionDetails: [SuggestionDetail]
         let requestID: String?
         let durationMS: Int?
         let warnings: [String]
         let model: String?
         let stderr: String
-
-        var suggestions: [String] { suggestionDetails.map(\.text) }
     }
 
     enum RunError: LocalizedError {
@@ -166,15 +165,17 @@ enum PythonRunner {
         guard let object = try JSONSerialization.jsonObject(with: outData) as? [String: Any],
               let status = object["status"] as? String,
               let bundleDir = object["bundle_dir"] as? String,
-              let tldr = object["tldr"] as? String else {
+              let tldr = object["tldr"] as? String,
+              let suggestions = object["suggestions"] as? [String] else {
             throw RunError.invalidJSONOutput(stdoutText)
         }
-        let suggestionDetails = decodeSuggestionDetails(from: object)
+        let suggestionDetails = decodeSuggestionDetails(from: object, fallbackSuggestions: suggestions)
 
         return ResultPayload(
             status: status,
             bundleDir: bundleDir,
             tldr: tldr,
+            suggestions: suggestions,
             suggestionDetails: suggestionDetails,
             requestID: object["request_id"] as? String,
             durationMS: object["duration_ms"] as? Int,
@@ -280,16 +281,18 @@ enum PythonRunner {
             case "final":
                 guard let status = object["status"] as? String,
                       let bundleDir = object["bundle_dir"] as? String,
-                      let tldr = object["tldr"] as? String else {
+                      let tldr = object["tldr"] as? String,
+                      let suggestions = object["suggestions"] as? [String] else {
                     streamError = RunError.invalidStreamEvent(line)
                     return
                 }
-                let suggestionDetails = decodeSuggestionDetails(from: object)
+                let suggestionDetails = decodeSuggestionDetails(from: object, fallbackSuggestions: suggestions)
                 streamingRun.markFinalReceived()
                 finalPayload = ResultPayload(
                     status: status,
                     bundleDir: bundleDir,
                     tldr: tldr,
+                    suggestions: suggestions,
                     suggestionDetails: suggestionDetails,
                     requestID: object["request_id"] as? String,
                     durationMS: object["duration_ms"] as? Int,
@@ -368,6 +371,7 @@ enum PythonRunner {
             status: finalPayload.status,
             bundleDir: finalPayload.bundleDir,
             tldr: finalPayload.tldr,
+            suggestions: finalPayload.suggestions,
             suggestionDetails: finalPayload.suggestionDetails,
             requestID: finalPayload.requestID,
             durationMS: finalPayload.durationMS,
@@ -377,9 +381,12 @@ enum PythonRunner {
         )
     }
 
-    private static func decodeSuggestionDetails(from object: [String: Any]) -> [SuggestionDetail] {
+    private static func decodeSuggestionDetails(
+        from object: [String: Any],
+        fallbackSuggestions: [String]
+    ) -> [SuggestionDetail] {
         guard let rawDetails = object["suggestion_details"] as? [[String: Any]] else {
-            return []
+            return fallbackSuggestions.map(SuggestionDetail.plain)
         }
         let details = rawDetails.compactMap { item -> SuggestionDetail? in
             guard let text = item["text"] as? String,
@@ -396,7 +403,7 @@ enum PythonRunner {
             }
             return SuggestionDetail(text: text, tags: Array(tags.prefix(2)), attachments: attachments)
         }
-        return details
+        return details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
     }
 
     private static func buildEnvironment(config: Config) -> [String: String] {

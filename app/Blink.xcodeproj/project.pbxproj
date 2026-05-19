@@ -36,6 +36,7 @@
 		773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = 71B7439E5F2E382C7BB997BB /* PermissionFlow */; };
 		7A67FB3C16E6F5FA23C06607 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */; };
 		7CF606DC505B6CA2775CB68A /* ApplicationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 40A3234FC54834D91492DCC2 /* ApplicationServices.framework */; };
+		7EF91A37D94AB43F2497F3FD /* Quartz.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6936322431A6B58771E79D13 /* Quartz.framework */; };
 		82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */; };
 		8550B2497B8E60C5C41CC218 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7907A5FA8563D8D62D8A0538 /* IOKit.framework */; };
 		85F2AEEC97F66C7399E832C0 /* FocusedContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040D699C80AB14DC7CA7180F /* FocusedContextCaptureTests.swift */; };
@@ -118,6 +119,7 @@
 		63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeCoordinator.swift; sourceTree = "<group>"; };
 		642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClient.swift; sourceTree = "<group>"; };
 		66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkCoordinator.swift; sourceTree = "<group>"; };
+		6936322431A6B58771E79D13 /* Quartz.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Quartz.framework; path = System/Library/Frameworks/Quartz.framework; sourceTree = SDKROOT; };
 		69F2731FA7A6D053A6388EA8 /* ScreenAnnotatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAnnotatorTests.swift; sourceTree = "<group>"; };
 		71B0F9AAF9A7972C08DC337C /* Inserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Inserter.swift; sourceTree = "<group>"; };
 		733316E4538EF5998654016C /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
@@ -161,6 +163,7 @@
 				057DEA137FBCB5D08BFC72E5 /* ScreenCaptureKit.framework in Frameworks */,
 				0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */,
 				8550B2497B8E60C5C41CC218 /* IOKit.framework in Frameworks */,
+				7EF91A37D94AB43F2497F3FD /* Quartz.framework in Frameworks */,
 				6236E723BC574777D616DE37 /* Sparkle in Frameworks */,
 				773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */,
 				C864ED9CE85231178F12B9F1 /* PermissionFlowExtendedStatus in Frameworks */,
@@ -190,6 +193,7 @@
 				40A3234FC54834D91492DCC2 /* ApplicationServices.framework */,
 				733316E4538EF5998654016C /* Carbon.framework */,
 				7907A5FA8563D8D62D8A0538 /* IOKit.framework */,
+				6936322431A6B58771E79D13 /* Quartz.framework */,
 				5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */,
 			);
 			name = Frameworks;
