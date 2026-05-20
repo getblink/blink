@@ -846,6 +846,7 @@ class BlinkOnceTests(unittest.TestCase):
     def test_max_output_tokens_for_model(self) -> None:
         self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3.1-pro-preview"), 2048)
         self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3-flash-preview"), 2048)
+        self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3.5-flash"), 2048)
         self.assertIsNone(blink_once.max_output_tokens_for_model("gemini-3.1-flash-lite-preview"))
         self.assertIsNone(blink_once.max_output_tokens_for_model("gemma-4-26b-a4b-it"))
         self.assertIsNone(blink_once.max_output_tokens_for_model(""))
@@ -854,6 +855,7 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(blink_once.thinking_level_for_model("gemini-3.1-pro-preview"), "high")
         self.assertEqual(blink_once.thinking_level_for_model("Gemini-3-Pro"), "high")
         self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "high")
+        self.assertEqual(blink_once.thinking_level_for_model("gemini-3.5-flash"), "high")
         self.assertIsNone(blink_once.thinking_level_for_model("gemini-3.1-flash-lite-preview"))
         self.assertIsNone(blink_once.thinking_level_for_model("gemma-4-26b-a4b-it"))
         self.assertIsNone(blink_once.thinking_level_for_model("gemini-2.5-flash"))
@@ -866,6 +868,15 @@ class BlinkOnceTests(unittest.TestCase):
                 "MEDIA_RESOLUTION_LOW",
             ),
             "MEDIA_RESOLUTION_MEDIUM",
+        )
+
+    def test_media_resolution_guard_passthrough_for_gemini_35_flash(self) -> None:
+        self.assertEqual(
+            blink_once.media_resolution_for_model(
+                "gemini-3.5-flash",
+                "MEDIA_RESOLUTION_LOW",
+            ),
+            "MEDIA_RESOLUTION_LOW",
         )
 
     def test_media_resolution_guard_passthrough_for_lite(self) -> None:

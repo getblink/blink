@@ -739,6 +739,35 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_MEDIUM")
 
+    def test_gemini_config_passthrough_media_resolution_for_gemini_35_flash(self) -> None:
+        captured_config: dict[str, Any] = {}
+
+        class FakeThinkingConfig:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_config.update(kwargs)
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        with mock.patch.object(gemini, "_schema", return_value={"schema": True}):
+            gemini._generate_config(
+                FakeTypes,
+                {
+                    "model": "gemini-3.5-flash",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                    "media_resolution": "MEDIA_RESOLUTION_LOW",
+                },
+                "PROMPT",
+            )
+
+        self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_LOW")
+
     def test_response_schema_contract_is_v2_suggestion_objects_with_tags(self) -> None:
         schema = gemini.response_schema_contract()
 
