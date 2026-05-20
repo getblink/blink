@@ -10,7 +10,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from server import gemini
-from server.main import _selected_settings, app
+from server.main import _build_selection_block, _selected_settings, app
 from server.storage import TelemetryStore
 
 
@@ -1901,6 +1901,98 @@ class MainTests(unittest.TestCase):
             "https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent",
         )
         self.assertEqual(captured["body"], b'{"contents":[{"parts":[{"text":"hi"}]}]}')
+
+    def test_build_selection_block_emits_text_when_retention_allowed(self) -> None:
+        block = _build_selection_block(
+            {
+                "source": "ax",
+                "text": "the highlighted text",
+                "char_count": 20,
+                "truncated": False,
+            }
+        )
+        self.assertIn('source="ax"', block)
+        self.assertIn('char_count="20"', block)
+        self.assertIn('truncated="false"', block)
+        self.assertIn("the highlighted text", block)
+        self.assertIn("<selection ", block)
+        self.assertIn("</selection>", block)
+        self.assertNotIn("text_redacted", block)
+
+    def test_build_selection_block_emits_self_closing_when_redacted(self) -> None:
+        block = _build_selection_block(
+            {
+                "source": "synthetic_copy",
+                "text_redacted": True,
+                "char_count": 42,
+                "truncated": True,
+            }
+        )
+        self.assertIn('source="synthetic_copy"', block)
+        self.assertIn('text_redacted="true"', block)
+        self.assertIn('truncated="true"', block)
+        self.assertTrue(block.rstrip().endswith("/>"))
+        self.assertNotIn("</selection>", block)
+
+    def test_build_selection_block_returns_empty_for_invalid_inputs(self) -> None:
+        self.assertEqual(_build_selection_block(None), "")
+        self.assertEqual(_build_selection_block({}), "")
+        # Empty / whitespace-only text without redaction flag drops to empty.
+        self.assertEqual(
+            _build_selection_block({"source": "ax", "text": "   "}),
+            "",
+        )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_injects_selection_block_into_prompt(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            prompt_text = kwargs["prompt_text"]
+            self.assertIn("<selection ", prompt_text)
+            self.assertIn("the user's highlighted paragraph", prompt_text)
+            self.assertIn('source="ax"', prompt_text)
+            return {
+                "status": "ok",
+                "tldr": "Selection-aware reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 12,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        with mock.patch("server.main._telemetry_store", return_value=mock.Mock()):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-selection",
+                            "input_mode": "screenshot",
+                            "preferences": {"model": "gemini-3.1-flash-lite-preview"},
+                            "selection": {
+                                "source": "ax",
+                                "text": "the user's highlighted paragraph",
+                                "char_count": 31,
+                                "truncated": False,
+                            },
+                            "consent": {
+                                "allow_event_logging": True,
+                                "allow_content_retention": True,
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("s.png", b"png-bytes", "image/png")},
+            )
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

@@ -62,11 +62,13 @@
 		C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */; };
 		CD09576539039F9AE8E7F933 /* BlinkEventClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */; };
 		D0104C9D64B43780F862BA88 /* CaptureModeDeriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */; };
+		D104FE490D8660B2C0C81706 /* SelectionCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */; };
 		D480D4B8BC8F46752EE261B6 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBFD0424E841D9B578986EF2 /* AppKit.framework */; };
 		D760D941705366FB3ED8B5FC /* BlinkEventClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */; };
 		DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B0F9AAF9A7972C08DC337C /* Inserter.swift */; };
 		E26600A22917C3ADD360B2E0 /* Hotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EF34A50A57C1CF8722B81A /* Hotkey.swift */; };
 		E2841BBE26D8D2E57611B2C8 /* PendingRunStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B1FFD588F30CF37132F363 /* PendingRunStoreTests.swift */; };
+		E3717144A411C67F8EFFA185 /* SelectionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */; };
 		E41C2B60366AF0F2E7DFDB87 /* AdvancedSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */; };
 		E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */; };
 		F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009080B616A8506A5210AC26 /* MenubarController.swift */; };
@@ -91,6 +93,7 @@
 		0B47EB8B7273BB95141192DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		111C775580802A86D963BB01 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
 		154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
+		194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCapture.swift; sourceTree = "<group>"; };
 		1B874CA83CFFA290563A148F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
 		1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClientTests.swift; sourceTree = "<group>"; };
 		260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibrary.swift; sourceTree = "<group>"; };
@@ -127,6 +130,7 @@
 		7907A5FA8563D8D62D8A0538 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		79FD4897B5E37052B916E3C6 /* PermissionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsSettingsView.swift; sourceTree = "<group>"; };
 		83CABA226B77C41C6ED8BE26 /* BlinkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BlinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCaptureTests.swift; sourceTree = "<group>"; };
 		8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Blink.entitlements; sourceTree = "<group>"; };
 		8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -246,6 +250,7 @@
 				F508C4F9E4A91770F8CAB40E /* RuntimeEnvironment.swift */,
 				01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */,
 				BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */,
+				194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */,
 				41BACCF164226F25B851C687 /* SettingsWindow.swift */,
 				3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */,
 				9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */,
@@ -296,6 +301,7 @@
 				6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */,
 				69F2731FA7A6D053A6388EA8 /* ScreenAnnotatorTests.swift */,
 				8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */,
+				8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */,
 				AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */,
 			);
 			path = BlinkTests;
@@ -442,6 +448,7 @@
 				50308AE5E3F7FADD8F91C786 /* ScreenAnnotator.swift in Sources */,
 				E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */,
 				126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */,
+				E3717144A411C67F8EFFA185 /* SelectionCapture.swift in Sources */,
 				C555231889A49F9834BC5D16 /* SettingsWindow.swift in Sources */,
 				379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */,
 				5DB3E531F79B3772D84B7949 /* StyleSettingsView.swift in Sources */,
@@ -464,6 +471,7 @@
 				06D5F20E2A2C8DE388596F7B /* RuntimeEnvironmentTests.swift in Sources */,
 				B82573088A91D3E3C93A0DBC /* ScreenAnnotatorTests.swift in Sources */,
 				614EF5D57340907D29C96DC0 /* ScreenCaptureTests.swift in Sources */,
+				D104FE490D8660B2C0C81706 /* SelectionCaptureTests.swift in Sources */,
 				C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

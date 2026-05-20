@@ -343,6 +343,40 @@ def _slice_pdf(raw_bytes: bytes, max_pages: int = 3, max_bytes: int = 2 * 1024 *
         return raw_bytes[:max_bytes]
 
 
+def _build_selection_block(selection: Any) -> str:
+    """Build the <selection> block for injection into the prompt.
+
+    Selection text is the user's explicitly-highlighted input at the
+    moment of capture (AX `kAXSelectedTextAttribute` or a gated synthetic
+    Cmd+C fallback). When content retention is off the payload carries
+    `text_redacted=True` instead of `text`; emit a self-closing tag so
+    the model sees the signal without inventing contents.
+    """
+    if not isinstance(selection, dict):
+        return ""
+    source = str(selection.get("source") or "").strip()
+    char_count = selection.get("char_count")
+    truncated = bool(selection.get("truncated"))
+    attrs: list[str] = []
+    if source:
+        attrs.append(f"source={_xml_attr(source)}")
+    if isinstance(char_count, int) and char_count >= 0:
+        attrs.append(f"char_count={_xml_attr(str(char_count))}")
+    attrs.append(f"truncated={_xml_attr('true' if truncated else 'false')}")
+    if selection.get("text_redacted"):
+        attrs.append(f"text_redacted={_xml_attr('true')}")
+        return f"<selection {' '.join(attrs)}/>\n"
+    text = selection.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    lines = [
+        f"<selection {' '.join(attrs)}>",
+        text.rstrip(),
+        "</selection>",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
     """Build the attachments catalog block for injection into the prompt.
 
@@ -555,6 +589,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "image_diagnostics": _dict_or_none(payload.get("image_diagnostics")),
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
+        "selection": _dict_or_none(payload.get("selection")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
         "style": _dict_or_none(payload.get("style")),
@@ -603,6 +638,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "image_diagnostics": None,
         "ocr_packet": None,
         "focused_context": None,
+        "selection": None,
         "stateful_context": None,
         "reroll_context": None,
         "style": None,
@@ -660,6 +696,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "frontmost_app": envelope.get("frontmost_app"),
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
+        "selection": envelope.get("selection"),
         "stateful_context": envelope.get("stateful_context"),
         "reroll_context": envelope.get("reroll_context"),
         "style": envelope.get("style"),
@@ -1256,6 +1293,9 @@ async def _run_tldr_request(
     catalog_block = _build_catalog_block(settings.get("attachments_catalog") or [])
     if catalog_block:
         base_prompt = base_prompt.rstrip() + "\n\n" + catalog_block
+    selection_block = _build_selection_block(envelope.get("selection"))
+    if selection_block:
+        base_prompt = base_prompt.rstrip() + "\n\n" + selection_block
     prompt_text = gemini.prompt_with_context(
         base_prompt,
         model_envelope.get("stateful_context"),

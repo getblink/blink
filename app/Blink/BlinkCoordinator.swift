@@ -24,6 +24,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         /// struct that produced the PNG bytes — so the rect can't
         /// drift from the image (a separate AX query could).
         let captureRectPoints: CGRect
+        /// Selection text harvested at the same instant as this frame,
+        /// when the source app exposed one. Captured on the capture
+        /// queue *before* Blink's overlay activates so the AX query
+        /// (and any synthesized Cmd+C) targets the source app.
+        let selection: SelectionCapture.Selection?
     }
 
     private struct CaptureSession {
@@ -119,6 +124,27 @@ final class BlinkCoordinator: @unchecked Sendable {
     private let doubleTapWindowMS = 400
     private let collectingTimeoutSeconds = 8
     private let maxCapturedFrames = 8
+
+    /// Snapshot of the most recently dismissed (but not picked-or-pinned)
+    /// run. Persisted in-memory between dismiss and the next hotkey press
+    /// so an accidental Esc + immediate retry restores the prior chat
+    /// without re-capturing. All access is on the main thread (mutated
+    /// from `dismissOverlay` (@MainActor) and `summarizeFrontmostWindow`
+    /// (invoked from `DispatchQueue.main.async` in HotkeyManager)).
+    private var lastDismissedSession: LastDismissedSession?
+    private var lastDismissedSessionExpiry: DispatchSourceTimer?
+    private let resumeWindowSeconds: TimeInterval = 60
+
+    private struct LastDismissedSession {
+        let dismissedAt: Date
+        let bundleDir: URL?
+        let suggestions: [String]
+        let suggestionDetails: [SuggestionDetail]
+        let tldr: String
+        let customInputText: String
+        let frontmostApp: [String: Any]
+        let priorRequestID: String?
+    }
     private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
@@ -298,6 +324,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         return accessibility && screenRecording && inputMonitoring
     }
 
+    @MainActor
     func summarizeFrontmostWindow(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
         guard Self.requiredPermissionsGranted(caller: "BlinkCoordinator.summarizeFrontmostWindow") else {
             status("permissions needed")
@@ -306,12 +333,123 @@ final class BlinkCoordinator: @unchecked Sendable {
             onPermissionsNeeded?()
             return
         }
+        // Accident-recovery: if the user dismissed within the last
+        // `resumeWindowSeconds` and the overlay isn't already up, restore
+        // the prior run instead of starting a fresh capture.
+        if let resumeSnapshot = takeResumeSnapshotIfFresh() {
+            acknowledgeCaptureHotkey(
+                pressedAt: pressedAt,
+                summarizeEnteredAt: summarizeEnteredAt,
+                statusText: "resumed last chat"
+            )
+            restoreLastDismissedSession(resumeSnapshot)
+            return
+        }
         acknowledgeCaptureHotkey(
             pressedAt: pressedAt,
             summarizeEnteredAt: summarizeEnteredAt,
             statusText: "capturing window..."
         )
         enqueueSummarize()
+    }
+
+    private func takeResumeSnapshotIfFresh() -> LastDismissedSession? {
+        guard let snapshot = lastDismissedSession else { return nil }
+        guard !overlay.isVisible else { return nil }
+        let age = Date().timeIntervalSince(snapshot.dismissedAt)
+        guard age <= resumeWindowSeconds else {
+            clearLastDismissedSession()
+            return nil
+        }
+        // Consume — a second hotkey on the restored overlay should append
+        // (chunk 4) or open fresh (after expiry), not resume the same
+        // snapshot twice.
+        lastDismissedSession = nil
+        lastDismissedSessionExpiry?.cancel()
+        lastDismissedSessionExpiry = nil
+        return snapshot
+    }
+
+    private func armResumeExpiryTimer() {
+        lastDismissedSessionExpiry?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + resumeWindowSeconds)
+        timer.setEventHandler { [weak self] in
+            self?.clearLastDismissedSession()
+        }
+        lastDismissedSessionExpiry = timer
+        timer.resume()
+    }
+
+    private func clearLastDismissedSession() {
+        lastDismissedSession = nil
+        lastDismissedSessionExpiry?.cancel()
+        lastDismissedSessionExpiry = nil
+    }
+
+    @MainActor
+    private func restoreLastDismissedSession(_ snapshot: LastDismissedSession) {
+        let resumedRequestID = "resumed-" + UUID().uuidString.lowercased()
+        currentRequestID = resumedRequestID
+        currentSuggestions = snapshot.suggestions
+        currentSuggestionDetails = snapshot.suggestionDetails
+        currentBundleDir = snapshot.bundleDir
+        terminalEmittedRequestID = nil
+        resetChoiceState(suggestionCount: snapshot.suggestions.count)
+
+        overlay.onCustomInputFocusChanged = { [weak self] active in
+            self?.setCustomInputActive(active)
+        }
+        overlay.onCustomInsert = { [weak self] text in
+            self?.insertCustomReply(text: text)
+        }
+        overlay.onCustomFollowUp = { [weak self] text in
+            self?.rerollCurrentSuggestions(followUpInstruction: text)
+        }
+        overlay.onChoiceKey = { [weak self] index in
+            self?.chooseSuggestion(index: index)
+        }
+        overlay.onInsertKey = { [weak self] in
+            self?.insertExpandedSuggestion() ?? false
+        }
+        overlay.onCustomInsertKey = { [weak self] in
+            _ = self?.submitCustomInputFromInput()
+            return true
+        }
+        overlay.onLeaveCustomInputKey = { [weak self] in
+            self?.leaveCustomInput()
+        }
+        overlay.onTextEditingKey = { [weak self] shortcut in
+            self?.performCustomInputShortcut(shortcut) ?? false
+        }
+        overlay.onRerollKey = { [weak self] in
+            self?.rerollCurrentSuggestions()
+        }
+        overlay.onTogglePinKey = { [weak self] in
+            guard let self else { return }
+            self.overlay.setPinned(!self.overlay.isPinned)
+        }
+        overlay.onDismissKey = { [weak self] in
+            self?.dismissOverlay()
+        }
+        overlay.show(
+            tldr: snapshot.tldr,
+            suggestionDetails: snapshot.suggestionDetails
+        )
+        if !snapshot.customInputText.isEmpty {
+            overlay.restoreCustomInputText(snapshot.customInputText)
+        }
+        soundEffects.play(.resultReady)
+        emitEvent(
+            requestID: resumedRequestID,
+            type: "run_resumed",
+            allowLogging: runtimeStore.allowEventLogging,
+            clientMetadata: Self.clientMetadata(),
+            details: [
+                "prior_request_id": snapshot.priorRequestID as Any,
+                "resume_age_seconds": Int(Date().timeIntervalSince(snapshot.dismissedAt)),
+            ]
+        )
     }
 
     func acknowledgeSummaryHotkeyForReroll(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
@@ -618,7 +756,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                     sha256: frame.sha256,
                     thumbnail: frame.thumbnail,
                     frontmostApp: frame.frontmostApp,
-                    captureRectPoints: frame.captureRectPoints
+                    captureRectPoints: frame.captureRectPoints,
+                    selection: frame.selection
                 )
                 status("no new content — scroll first")
                 isDuplicate = true
@@ -732,7 +871,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                     sha256: frame.sha256,
                     thumbnail: frame.thumbnail,
                     frontmostApp: frame.frontmostApp,
-                    captureRectPoints: frame.captureRectPoints
+                    captureRectPoints: frame.captureRectPoints,
+                    selection: frame.selection
                 )
                 status("no new content — scroll first")
                 isDuplicate = true
@@ -839,6 +979,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         // `CaptureConfirmationOverlay.flash` (ScreenCapture.swift:571-576)
         // which does the same conversion for its overlay window.
         let captureRectScreen = captureRectInAppKitScreen(capture.windowFramePoints)
+        // Selection harvest runs here — on the capture queue, after the
+        // PNG has landed and before any main-thread overlay dispatch —
+        // so AX (and any synthesized Cmd+C) targets the still-frontmost
+        // source app rather than Blink's overlay panel.
+        let selection = SelectionCapture.captureSync()
         return CapturedFrameResult(
             frame: CapturedFrame(
                 index: index,
@@ -851,7 +996,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 sha256: sha256Hex(capture.pngData),
                 thumbnail: Self.makeThumbnail(from: capture.pngData),
                 frontmostApp: frontmostApp,
-                captureRectPoints: captureRectScreen
+                captureRectPoints: captureRectScreen,
+                selection: selection
             ),
             shareableContent: capture.shareableContent
         )
@@ -1269,6 +1415,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onRerollKey = { [weak self] in
                     self?.rerollCurrentSuggestions()
                 }
+                self.overlay.onTogglePinKey = { [weak self] in
+                    guard let self else { return }
+                    self.overlay.setPinned(!self.overlay.isPinned)
+                }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
@@ -1593,6 +1743,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self.overlay.onRerollKey = { [weak self] in
                         self?.rerollCurrentSuggestions()
                     }
+                    self.overlay.onTogglePinKey = { [weak self] in
+                        guard let self else { return }
+                        self.overlay.setPinned(!self.overlay.isPinned)
+                    }
                     self.overlay.onDismissKey = { [weak self] in
                         self?.dismissOverlay()
                     }
@@ -1833,6 +1987,12 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     @MainActor
+    func toggleOverlayPin() {
+        guard overlay.isVisible else { return }
+        overlay.setPinned(!overlay.isPinned)
+    }
+
+    @MainActor
     func leaveCustomInput() {
         guard choiceState.customInputActive else { return }
         setCustomInputActive(false)
@@ -1900,7 +2060,9 @@ final class BlinkCoordinator: @unchecked Sendable {
             } else {
                 guard self.currentRequestID == nil else { return }
             }
-            self.overlay.dismissAnimated { [weak self] in
+            let pinned = self.overlay.isPinned
+            let previousApp = self.overlay.previousFrontmost
+            let runInsert: () -> Void = { [weak self] in
                 guard let self else { return }
                 let fileURLs = AttachmentLibrary.shared.resolveURLs(for: attachmentRefs) { [weak self] count in
                     self?.status("\(count) attachment(s) couldn't be found — skipped")
@@ -1908,7 +2070,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 // Give NSRunningApplication.activate time to land on the previous
                 // frontmost app before we synthesize Cmd+V — otherwise the paste
                 // sometimes hits Blink's still-active panel context instead.
-                Inserter.insert(text: text, fileURLs: fileURLs, activationDelay: 0.15) { [weak self] result in
+                Inserter.insert(text: text, fileURLs: fileURLs, activationDelay: 0.15, previousApp: previousApp) { [weak self] result in
                     guard let self else { return }
                     switch result {
                     case .success(let outcome):
@@ -1987,6 +2149,14 @@ final class BlinkCoordinator: @unchecked Sendable {
                 }
                 self.resetCurrentRun()
             }
+            if pinned {
+                self.overlay.resetAfterInsertKeepOpen()
+                runInsert()
+            } else {
+                self.overlay.dismissAnimated {
+                    runInsert()
+                }
+            }
         }
     }
 
@@ -2016,7 +2186,9 @@ final class BlinkCoordinator: @unchecked Sendable {
 
         let pasteRequestID = requestID
         let modalCaret = overlay.customInputCaretScreenPoint()
-        overlay.dismissAnimated { [weak self] in
+        let pinned = overlay.isPinned
+        let previousApp = overlay.previousFrontmost
+        let runInsert: () -> Void = { [weak self] in
             guard let self else { return }
             if let pasteRequestID, self.currentRequestID != pasteRequestID {
                 return
@@ -2024,7 +2196,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             if pasteRequestID == nil, self.currentRequestID != nil {
                 return
             }
-            Inserter.insert(text: trimmed, activationDelay: 0.15) { [weak self] result in
+            Inserter.insert(text: trimmed, activationDelay: 0.15, previousApp: previousApp) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .success(let outcome):
@@ -2097,6 +2269,14 @@ final class BlinkCoordinator: @unchecked Sendable {
             }
             self.resetCurrentRun()
         }
+        if pinned {
+            overlay.resetAfterInsertKeepOpen()
+            runInsert()
+        } else {
+            overlay.dismissAnimated {
+                runInsert()
+            }
+        }
     }
 
     @MainActor
@@ -2115,6 +2295,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onLeaveCustomInputKey = nil
         overlay.onTextEditingKey = nil
         overlay.onRerollKey = nil
+        overlay.onTogglePinKey = nil
         overlay.onChoiceKey = nil
         overlay.onInsertKey = nil
         overlay.onDismissKey = nil
@@ -2150,6 +2331,28 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard overlayWasVisible || pendingRequestID != nil else { return }
         let resolvedRequestID = currentRequestID ?? pendingRequestID
         let alreadyTerminal = (resolvedRequestID != nil && resolvedRequestID == terminalEmittedRequestID)
+
+        // Accident-recovery snapshot: a dismiss that wasn't from a pick
+        // (`alreadyTerminal`) and that had real suggestions on screen is
+        // exactly the "Esc fat-finger" case. Keep the run alive in memory
+        // for `resumeWindowSeconds` so the next hotkey press brings it
+        // straight back instead of starting a fresh capture.
+        if overlayWasVisible,
+           !alreadyTerminal,
+           !currentSuggestions.isEmpty {
+            let snapshot = LastDismissedSession(
+                dismissedAt: Date(),
+                bundleDir: currentBundleDir,
+                suggestions: currentSuggestions,
+                suggestionDetails: currentSuggestionDetails,
+                tldr: overlay.summaryFullText,
+                customInputText: overlay.customInputText,
+                frontmostApp: frontmostAppMetadata(),
+                priorRequestID: currentRequestID
+            )
+            lastDismissedSession = snapshot
+            armResumeExpiryTimer()
+        }
         let streamingRun = currentStreamingRun
         let cancelledBundleDir = streamingRun?.bundleDir
         let cancelledFirstTokenAt = streamingRun?.firstTokenAt
@@ -2303,6 +2506,21 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "y": mouseScreenPoint.y,
                 "coordinate_space": "appkit_screen",
             ]
+        }
+        let allowRetention = runtime.allowContentRetention
+        let selectionPayloads = frames.compactMap { frame in
+            frame.selection?.uploadPayload(allowContentRetention: allowRetention)
+        }
+        if !selectionPayloads.isEmpty {
+            envelope["selections"] = selectionPayloads
+            // Convenience: the most recent non-nil selection. Lets the
+            // server treat "selection" as the single primary text input
+            // without iterating the per-frame list.
+            if let latest = frames.reversed().lazy.compactMap(\.selection).first {
+                envelope["selection"] = latest.uploadPayload(
+                    allowContentRetention: allowRetention
+                )
+            }
         }
         return envelope
     }

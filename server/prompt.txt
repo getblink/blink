@@ -193,6 +193,10 @@ How to read the screenshot below:
 - `focused_context.source_confidence` is one of `native_ax`, `chromium_input`, `chromium_contenteditable`, `electron_partial`, `terminal_none`, `unknown`. Trust `caret_prefix` / `caret_suffix` fully on `native_ax` and `chromium_input`. On the others the AX values are often stale or fabricated (Electron apps pin selection at `{0,0}`, contentEditable lags the displayed cursor); fall back to the screenshot for caret position and don't over-anchor a suggestion to a prefix that may not match what the user actually typed.
 </focus_signal>
 
+<selection_signal>
+When a `<selection>` block appears in the request envelope below, the user explicitly highlighted that text at the moment of capture as the thing they want you to act on. Treat it as primary context for the suggestions — referring to it directly when the surface implies the user wants to respond *about* the selection (quote, summarize, edit, translate, react to). The screenshot still provides surrounding context. When the block carries `text_redacted="true"`, the user opted out of content retention; do not invent the selection's contents beyond what the screenshot already shows.
+</selection_signal>
+
 <attachment_rules>
 Applies only when an `<available_attachments>` block appears in the request envelope below.
 
