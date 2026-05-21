@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onTogglePin: { [weak coordinator] in coordinator?.toggleOverlayPin() },
+            onArrowNav: { [weak coordinator] direction in coordinator?.handleArrowNav(direction) },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

@@ -80,6 +80,7 @@ final class HotkeyManager {
     private let onTextEditing: (TextEditingShortcut) -> Void
     private let onReroll: () -> Void
     private let onTogglePin: () -> Void
+    private let onArrowNav: (OverlayArrowDirection) -> Void
     private let onDismiss: () -> Void
     private let tapStateLock = NSLock()
     private var eventTap: CFMachPort?
@@ -116,6 +117,7 @@ final class HotkeyManager {
         onTextEditing: @escaping (TextEditingShortcut) -> Void,
         onReroll: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
+        onArrowNav: @escaping (OverlayArrowDirection) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summaryKeyCode = summaryHotkey.keyCode
@@ -136,6 +138,7 @@ final class HotkeyManager {
         self.onTextEditing = onTextEditing
         self.onReroll = onReroll
         self.onTogglePin = onTogglePin
+        self.onArrowNav = onArrowNav
         self.onDismiss = onDismiss
     }
 
@@ -356,6 +359,12 @@ final class HotkeyManager {
                 return nil
             case .togglePin:
                 DispatchQueue.main.async { manager.onTogglePin() }
+                return nil
+            case .moveSelectionUp:
+                DispatchQueue.main.async { manager.onArrowNav(.up) }
+                return nil
+            case .moveSelectionDown:
+                DispatchQueue.main.async { manager.onArrowNav(.down) }
                 return nil
             case .textEditing(let shortcut):
                 DispatchQueue.main.async { manager.onTextEditing(shortcut) }

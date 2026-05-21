@@ -1973,7 +1973,7 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     @MainActor
-    private func handleArrowNav(_ direction: OverlayArrowDirection) {
+    func handleArrowNav(_ direction: OverlayArrowDirection) {
         guard currentBundleDir != nil, !currentSuggestions.isEmpty else { return }
         let navigableCount = min(currentSuggestions.count, 3)
         let stateDirection: SuggestionChoiceState.Direction = direction == .up ? .up : .down
