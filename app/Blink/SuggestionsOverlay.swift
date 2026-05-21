@@ -1384,24 +1384,18 @@ final class SuggestionsOverlay: NSObject {
         let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
         if summaryDelta > 0 {
             let newPanelHeight = basePanelHeight + summaryDelta
-            // First transition out of loading: re-center, because the
-            // loading panel was tiny and a "grow from current top" would
-            // leave the full panel hanging well below screen midpoint.
-            // Subsequent mid-stream token growth: anchor against current
-            // top so the panel doesn't walk down as tokens arrive and so
-            // any user drag is preserved.
-            let originY: CGFloat
-            if wasLoading {
-                let screenFrame = panel.screen?.frame
-                    ?? NSScreen.main?.frame
-                    ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-                originY = screenFrame.midY - newPanelHeight / 2
-            } else {
-                originY = panel.frame.maxY - newPanelHeight
-            }
+            // Recenter on each growth: origin shifts by half the delta
+            // while height grows by the full delta, so the panel
+            // expands smoothly outward from its visual center rather
+            // than hanging from a fixed top. (User drags during
+            // streaming are vanishingly rare; this matches the
+            // pre-PR behavior the user expects.)
+            let screenFrame = panel.screen?.frame
+                ?? NSScreen.main?.frame
+                ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             let newFrame = NSRect(
                 x: panel.frame.origin.x,
-                y: originY,
+                y: screenFrame.midY - newPanelHeight / 2,
                 width: panel.frame.width,
                 height: newPanelHeight
             )
@@ -1464,10 +1458,6 @@ final class SuggestionsOverlay: NSObject {
             endSuggestionRefresh()
         }
 
-        // Snapshot "was this the first time suggestions land?" before
-        // clearing — used below to recenter only on the initial render,
-        // not on subsequent mid-stream/reroll updates.
-        let wasFirstRender = suggestionCards.isEmpty
         for card in suggestionCards {
             card.outer.removeFromSuperview()
         }
@@ -1515,24 +1505,16 @@ final class SuggestionsOverlay: NSObject {
         let newPanelWidth = panel.frame.width
         let newPanelHeight = contentHeight + Layout.shadowBleed * 2
 
-        // First render: recenter, because the pre-suggestion panel was
-        // just the tldr card and anchoring against its top would leave
-        // the suggestions-included panel hanging well below screen
-        // midpoint. Subsequent re-renders (reroll, mid-stream growth):
-        // anchor against current top so we don't walk down and don't
-        // undo any user drag.
-        let originY: CGFloat
-        if wasFirstRender {
-            let screenFrame = panel.screen?.frame
-                ?? NSScreen.main?.frame
-                ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            originY = screenFrame.midY - newPanelHeight / 2
-        } else {
-            originY = panel.frame.maxY - newPanelHeight
-        }
+        // Recenter on each suggestion-render. The pre-PR behavior; the
+        // attempted "anchor current top to preserve user drag" was
+        // wrong because the streaming-driven first render then walked
+        // the panel down per-token instead of expanding from center.
+        let screenFrame = panel.screen?.frame
+            ?? NSScreen.main?.frame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let newFrame = NSRect(
             x: panel.frame.origin.x,
-            y: originY,
+            y: screenFrame.midY - newPanelHeight / 2,
             width: newPanelWidth,
             height: newPanelHeight
         )
