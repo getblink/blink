@@ -8,6 +8,8 @@ enum OverlayKeyCommand: Equatable {
     case insertCustomInput
     case leaveCustomInput
     case reroll
+    case moveSelectionUp
+    case moveSelectionDown
     case togglePin
     case textEditing(TextEditingShortcut)
 }
@@ -21,6 +23,10 @@ enum TextEditingShortcut: Equatable {
 
 struct OverlayKeyRouter {
     private static let choiceKeyCodes: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3]
+    private static let arrowKeyCodes: [UInt16: OverlayKeyCommand] = [
+        126: .moveSelectionUp,
+        125: .moveSelectionDown,
+    ]
     private static let textEditingKeyCodes: [UInt16: TextEditingShortcut] = [
         0: .selectAll,
         8: .copy,
@@ -85,6 +91,9 @@ struct OverlayKeyRouter {
 
         guard !hasBlockingModifier else { return nil }
 
+        if let arrowCommand = arrowKeyCodes[keyCode] {
+            return arrowCommand
+        }
         if let index = choiceKeyCodes[keyCode] {
             return .choice(index)
         }

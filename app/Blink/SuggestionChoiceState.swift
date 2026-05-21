@@ -11,6 +11,11 @@ struct SuggestionChoiceState {
         case propagate
     }
 
+    enum Direction {
+        case up
+        case down
+    }
+
     private let suggestionCount: Int
     private let customInputIndex: Int
     private let allowsCustomInput: Bool
@@ -41,10 +46,38 @@ struct SuggestionChoiceState {
         return .expand(index)
     }
 
-    func pressReturn() -> ReturnAction {
+    func pressReturn(insertsFirstIfNone: Bool = false) -> ReturnAction {
         if customInputActive { return .propagate }
-        guard let expandedIndex else { return .propagate }
-        return .insert(expandedIndex)
+        if let expandedIndex {
+            return .insert(expandedIndex)
+        }
+        if insertsFirstIfNone, suggestionCount > 0 {
+            return .insert(0)
+        }
+        return .propagate
+    }
+
+    mutating func moveSelection(_ direction: Direction, navigableCount: Int) -> Int? {
+        guard navigableCount > 0 else { return nil }
+        if customInputActive { return nil }
+        let next: Int
+        if let current = expandedIndex {
+            switch direction {
+            case .down:
+                next = (current + 1) % navigableCount
+            case .up:
+                next = (current - 1 + navigableCount) % navigableCount
+            }
+        } else {
+            switch direction {
+            case .down:
+                next = 0
+            case .up:
+                next = navigableCount - 1
+            }
+        }
+        expandedIndex = next
+        return next
     }
 
     mutating func setCustomInputActive(_ active: Bool) {

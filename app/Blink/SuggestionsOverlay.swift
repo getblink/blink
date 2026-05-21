@@ -1,5 +1,10 @@
 import AppKit
 
+enum OverlayArrowDirection {
+    case up
+    case down
+}
+
 final class SuggestionsPanel: NSPanel {
     var onLocalKeyDown: ((NSEvent) -> Bool)?
     weak var customReplyField: CustomReplyField?
@@ -453,6 +458,7 @@ final class SuggestionsOverlay: NSObject {
     var onCustomInsert: ((String) -> Void)?
     var onCustomFollowUp: ((String) -> Void)?
     var onChoiceKey: ((Int) -> Void)?
+    var onArrowKey: ((OverlayArrowDirection) -> Void)?
     var onInsertKey: (() -> Bool)?
     var onCustomInsertKey: (() -> Bool)?
     var onLeaveCustomInputKey: (() -> Void)?
@@ -3200,6 +3206,12 @@ final class SuggestionsOverlay: NSObject {
             return true
         case .reroll:
             onRerollKey?()
+            return true
+        case .moveSelectionUp:
+            onArrowKey?(.up)
+            return true
+        case .moveSelectionDown:
+            onArrowKey?(.down)
             return true
         case .togglePin:
             onTogglePinKey?()
