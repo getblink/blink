@@ -2542,7 +2542,19 @@ final class BlinkCoordinator: @unchecked Sendable {
         if overlayWasVisible,
            !alreadyTerminal,
            !currentSuggestions.isEmpty {
+            // For the bundle/title fingerprint, use the app Blink was
+            // summoned over (`previousFrontmost`), not the live
+            // frontmost at dismiss time. An outside-click dismiss moves
+            // focus to whatever the click landed on first; if that's
+            // another app (Chrome behind the panel), `frontmostAppMetadata()`
+            // here would return Chrome and the next hotkey-in-Chrome
+            // would wrongly auto-resume the Conductor chat. The
+            // `previousFrontmost` reference was captured when the panel
+            // opened, so it's stable across the dismiss path.
             let meta = frontmostAppMetadata()
+            let previousFrontmostBundle = overlay.previousFrontmost?.bundleIdentifier
+            let previousFrontmostTitle = overlay.previousFrontmost
+                .flatMap { focusedWindowTitle(pid: $0.processIdentifier) }
             let snapshot = LastDismissedSession(
                 dismissedAt: Date(),
                 bundleDir: currentBundleDir,
@@ -2553,8 +2565,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 frontmostApp: meta,
                 priorRequestID: currentRequestID,
                 dismissedExplicitly: !implicit,
-                frontmostBundleID: meta["bundle_id"] as? String,
-                frontmostWindowTitle: meta["window_title"] as? String
+                frontmostBundleID: previousFrontmostBundle,
+                frontmostWindowTitle: previousFrontmostTitle
             )
             lastDismissedSession = snapshot
             armResumeExpiryTimer()

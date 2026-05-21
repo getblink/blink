@@ -1357,9 +1357,15 @@ final class SuggestionsOverlay: NSObject {
             // promote the panel to key so its local handler intercepts stray
             // keystrokes. Mirrors the immediate-show path in `show(...)`.
             panel.makeKey()
-            // `showLoading` skipped the bottom hint (hintText: nil), so the
-            // hint label was never created. Install it now — same string
-            // the non-streaming `show(tldr:suggestionDetails:)` uses.
+            // `showLoading` passed `hintText: nil`, so `summaryTextY` was
+            // computed with `hintBlockHeight = 0` — i.e. no reserved space
+            // above the bottom inset for the hint label we're about to
+            // install. Without this adjustment, `requiredSummaryHeight`
+            // below would size the card to the text alone, and the
+            // installed hint would overlap the bottom line of the tldr.
+            summaryTextY = Layout.summaryBottomInset
+                + Layout.summaryHintHeight
+                + Layout.summaryHintGap
             installSuggestionHintIfNeeded(Self.suggestionHintText)
         }
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
