@@ -343,6 +343,40 @@ def _slice_pdf(raw_bytes: bytes, max_pages: int = 3, max_bytes: int = 2 * 1024 *
         return raw_bytes[:max_bytes]
 
 
+def _build_selection_block(selection: Any) -> str:
+    """Build the <selection> block for injection into the prompt.
+
+    Selection text is the user's explicitly-highlighted input at the
+    moment of capture (AX `kAXSelectedTextAttribute` or a gated synthetic
+    Cmd+C fallback). When content retention is off the payload carries
+    `text_redacted=True` instead of `text`; emit a self-closing tag so
+    the model sees the signal without inventing contents.
+    """
+    if not isinstance(selection, dict):
+        return ""
+    source = str(selection.get("source") or "").strip()
+    char_count = selection.get("char_count")
+    truncated = bool(selection.get("truncated"))
+    attrs: list[str] = []
+    if source:
+        attrs.append(f"source={_xml_attr(source)}")
+    if isinstance(char_count, int) and char_count >= 0:
+        attrs.append(f"char_count={_xml_attr(str(char_count))}")
+    attrs.append(f"truncated={_xml_attr('true' if truncated else 'false')}")
+    if selection.get("text_redacted"):
+        attrs.append(f"text_redacted={_xml_attr('true')}")
+        return f"<selection {' '.join(attrs)}/>\n"
+    text = selection.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    lines = [
+        f"<selection {' '.join(attrs)}>",
+        text.rstrip(),
+        "</selection>",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
     """Build the attachments catalog block for injection into the prompt.
 
@@ -490,6 +524,25 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope.get("focused_context"),
         allow_content_retention=allow_content_retention,
     )
+    # The selection text is the user's *explicit* input — it's always sent
+    # to the model. Only redact from telemetry storage when retention is
+    # off, mirroring how focused_context.value is handled.
+    selection = envelope.get("selection")
+    if isinstance(selection, dict) and "text" in selection:
+        redacted_selection = dict(selection)
+        redacted_selection.pop("text", None)
+        redacted_selection["text_redacted"] = True
+        sanitized["selection"] = redacted_selection
+    selections = envelope.get("selections")
+    if isinstance(selections, list):
+        sanitized["selections"] = [
+            (
+                {**{k: v for k, v in item.items() if k != "text"}, "text_redacted": True}
+                if isinstance(item, dict) and "text" in item
+                else item
+            )
+            for item in selections
+        ]
     sanitized["preferences"] = _sanitize_content_payload(
         envelope.get("preferences"),
         allow_content_retention=allow_content_retention,
@@ -555,6 +608,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "image_diagnostics": _dict_or_none(payload.get("image_diagnostics")),
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
+        "selection": _dict_or_none(payload.get("selection")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
         "style": _dict_or_none(payload.get("style")),
@@ -603,6 +657,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "image_diagnostics": None,
         "ocr_packet": None,
         "focused_context": None,
+        "selection": None,
         "stateful_context": None,
         "reroll_context": None,
         "style": None,
@@ -660,6 +715,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "frontmost_app": envelope.get("frontmost_app"),
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
+        "selection": envelope.get("selection"),
         "stateful_context": envelope.get("stateful_context"),
         "reroll_context": envelope.get("reroll_context"),
         "style": envelope.get("style"),
@@ -1256,6 +1312,11 @@ async def _run_tldr_request(
     catalog_block = _build_catalog_block(settings.get("attachments_catalog") or [])
     if catalog_block:
         base_prompt = base_prompt.rstrip() + "\n\n" + catalog_block
+    # The <selection> block carries the user's explicit, per-request
+    # input — it belongs in the user-role turn alongside the screenshot,
+    # not in the stable system instruction. The <selection_signal> rules
+    # in prompt.txt teach the model how to interpret it.
+    selection_block = _build_selection_block(envelope.get("selection")).rstrip()
     prompt_text = gemini.prompt_with_context(
         base_prompt,
         model_envelope.get("stateful_context"),
@@ -1271,6 +1332,7 @@ async def _run_tldr_request(
                     prompt_text=prompt_text,
                     images=images,
                     conversation_turns=conversation_turns,
+                    user_message_suffix=selection_block,
                 ):
                     event_name = str(event.get("event") or "message")
                     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -1415,6 +1477,7 @@ async def _run_tldr_request(
             images=images,
             conversation_turns=conversation_turns,
             supports_attachments=settings.get("supports_attachments", False),
+            user_message_suffix=selection_block,
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"
