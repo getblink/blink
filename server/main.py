@@ -1312,9 +1312,11 @@ async def _run_tldr_request(
     catalog_block = _build_catalog_block(settings.get("attachments_catalog") or [])
     if catalog_block:
         base_prompt = base_prompt.rstrip() + "\n\n" + catalog_block
-    selection_block = _build_selection_block(envelope.get("selection"))
-    if selection_block:
-        base_prompt = base_prompt.rstrip() + "\n\n" + selection_block
+    # The <selection> block carries the user's explicit, per-request
+    # input — it belongs in the user-role turn alongside the screenshot,
+    # not in the stable system instruction. The <selection_signal> rules
+    # in prompt.txt teach the model how to interpret it.
+    selection_block = _build_selection_block(envelope.get("selection")).rstrip()
     prompt_text = gemini.prompt_with_context(
         base_prompt,
         model_envelope.get("stateful_context"),
@@ -1330,6 +1332,7 @@ async def _run_tldr_request(
                     prompt_text=prompt_text,
                     images=images,
                     conversation_turns=conversation_turns,
+                    user_message_suffix=selection_block,
                 ):
                     event_name = str(event.get("event") or "message")
                     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -1474,6 +1477,7 @@ async def _run_tldr_request(
             images=images,
             conversation_turns=conversation_turns,
             supports_attachments=settings.get("supports_attachments", False),
+            user_message_suffix=selection_block,
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"

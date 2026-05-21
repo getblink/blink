@@ -914,6 +914,60 @@ class MainTests(unittest.TestCase):
         self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
         self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
 
+    def test_gemini_conversation_contents_appends_user_message_suffix_to_capture_turn(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        suffix = '<selection source="ax" char_count="11" truncated="false">\nhello world\n</selection>'
+
+        # Single-turn (initial gen) — suffix lands in the capture text.
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            None,
+            user_message_suffix=suffix,
+        )
+        self.assertEqual(len(contents), 1)
+        capture_text = contents[0].parts[1]["text"]
+        self.assertTrue(capture_text.startswith(gemini.MODEL_CONTENT_TEXT))
+        self.assertIn(suffix, capture_text)
+
+        # Multi-turn (reroll) — suffix still lands in the capture turn, not
+        # in the reroll-instruction turn that follows.
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {"role": "model", "tldr": "x", "suggestions": ["a", "b", "c"]},
+                {"role": "user", "kind": "reroll"},
+            ],
+            user_message_suffix=suffix,
+        )
+        capture_text = contents[0].parts[1]["text"]
+        self.assertIn(suffix, capture_text)
+        # The reroll turn text doesn't carry the suffix.
+        self.assertNotIn(suffix, contents[2].parts[0]["text"])
+
     def test_gemini_conversation_contents_reroll_default_text_is_reroll_content_text(self) -> None:
         class FakePart:
             @staticmethod
@@ -2000,10 +2054,14 @@ class MainTests(unittest.TestCase):
         create_client.return_value = object()
 
         def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            # Selection lives in the user-role turn (per-request input),
+            # not the system instruction (stable rules).
             prompt_text = kwargs["prompt_text"]
-            self.assertIn("<selection ", prompt_text)
-            self.assertIn("the user's highlighted paragraph", prompt_text)
-            self.assertIn('source="ax"', prompt_text)
+            self.assertNotIn("<selection ", prompt_text)
+            suffix = kwargs["user_message_suffix"]
+            self.assertIn("<selection ", suffix)
+            self.assertIn("the user's highlighted paragraph", suffix)
+            self.assertIn('source="ax"', suffix)
             return {
                 "status": "ok",
                 "tldr": "Selection-aware reply.",

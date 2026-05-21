@@ -842,21 +842,33 @@ def _model_turn_text(turn: dict[str, Any]) -> str | None:
     )
 
 
+def _capture_text(user_message_suffix: str = "") -> str:
+    """Text part that accompanies the screenshot in the user-role capture
+    turn. The selection block (when present) lives here, not in the system
+    instruction, because it's ephemeral per-request input — the user's
+    explicit "act on this" payload — not stable rules."""
+    if user_message_suffix:
+        return MODEL_CONTENT_TEXT + "\n\n" + user_message_suffix
+    return MODEL_CONTENT_TEXT
+
+
 def _conversation_contents(
     types: Any,
     images: list[tuple[bytes, str]] | None,
     image_bytes: bytes | None,
     mime_type: str,
     conversation_turns: list[dict[str, Any]] | None,
+    user_message_suffix: str = "",
 ) -> list[Any]:
     image_parts = _image_contents(types, images, image_bytes, mime_type)
     if not image_parts:
         return []
+    capture_text = _capture_text(user_message_suffix)
     if not conversation_turns:
         return [
             types.Content(
                 role="user",
-                parts=image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+                parts=image_parts + [_text_part(types, capture_text)],
             )
         ]
 
@@ -880,7 +892,7 @@ def _conversation_contents(
             if kind == "capture" and not used_capture_images:
                 append_content(
                     "user",
-                    image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+                    image_parts + [_text_part(types, capture_text)],
                 )
                 used_capture_images = True
                 continue
@@ -899,7 +911,7 @@ def _conversation_contents(
             0,
             types.Content(
                 role="user",
-                parts=image_parts + [_text_part(types, MODEL_CONTENT_TEXT)],
+                parts=image_parts + [_text_part(types, capture_text)],
             ),
         )
     return contents
@@ -936,10 +948,18 @@ def generate_tldr_and_suggestions(
     mime_type: str = "image/png",
     conversation_turns: list[dict[str, Any]] | None = None,
     supports_attachments: bool = False,
+    user_message_suffix: str = "",
 ) -> dict[str, Any]:
     from google.genai import types
 
-    contents = _conversation_contents(types, images, image_bytes, mime_type, conversation_turns)
+    contents = _conversation_contents(
+        types,
+        images,
+        image_bytes,
+        mime_type,
+        conversation_turns,
+        user_message_suffix=user_message_suffix,
+    )
     if not contents:
         raise ValueError("No screenshot was provided.")
 
@@ -1042,10 +1062,18 @@ def generate_tldr_and_suggestions_streaming(
     image_bytes: bytes | None = None,
     mime_type: str = "image/png",
     conversation_turns: list[dict[str, Any]] | None = None,
+    user_message_suffix: str = "",
 ) -> Iterator[dict[str, Any]]:
     from google.genai import types
 
-    contents = _conversation_contents(types, images, image_bytes, mime_type, conversation_turns)
+    contents = _conversation_contents(
+        types,
+        images,
+        image_bytes,
+        mime_type,
+        conversation_turns,
+        user_message_suffix=user_message_suffix,
+    )
     if not contents:
         raise ValueError("No screenshot was provided.")
 

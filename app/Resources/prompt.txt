@@ -194,7 +194,7 @@ How to read the screenshot below:
 </focus_signal>
 
 <selection_signal>
-When a `<selection>` block appears in the request envelope below, the user explicitly highlighted that text at the moment of capture as the thing they want you to act on. Treat it as primary context for the suggestions — referring to it directly when the surface implies the user wants to respond *about* the selection (quote, summarize, edit, translate, react to). The screenshot still provides surrounding context. When the block carries `text_redacted="true"`, the user opted out of content retention; do not invent the selection's contents beyond what the screenshot already shows.
+When a `<selection>` block appears in the user message alongside the screenshot, the user explicitly highlighted that text at the moment of capture as the thing they want you to act on. Treat it as primary context for the suggestions — referring to it directly when the surface implies the user wants to respond *about* the selection (quote, summarize, edit, translate, react to). The screenshot still provides surrounding context. When the block carries `text_redacted="true"`, the user opted out of content retention; do not invent the selection's contents beyond what the screenshot already shows.
 </selection_signal>
 
 <attachment_rules>
