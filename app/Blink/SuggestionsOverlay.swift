@@ -1336,13 +1336,6 @@ final class SuggestionsOverlay: NSObject {
         }
     }
 
-    private func centeredOriginY(for panel: NSPanel, height: CGFloat) -> CGFloat {
-        let screenFrame = panel.screen?.frame
-            ?? NSScreen.main?.frame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        return screenFrame.midY - height / 2
-    }
-
     func updateSummary(_ text: String) {
         guard let panel,
               let contentView,
@@ -1385,15 +1378,19 @@ final class SuggestionsOverlay: NSObject {
         let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
         if summaryDelta > 0 {
             let newPanelHeight = basePanelHeight + summaryDelta
+            // Anchor growth against the panel's *current* top edge.
+            // Using `centeredOriginY` here would snap the panel back to
+            // screen midpoint on every streamed token, which (a) walks
+            // the panel down visibly as the tldr grows and (b) undoes
+            // any drag the user did via `isMovableByWindowBackground`.
+            let anchorTopY = panel.frame.maxY
             let newFrame = NSRect(
                 x: panel.frame.origin.x,
-                y: centeredOriginY(for: panel, height: newPanelHeight),
+                y: anchorTopY - newPanelHeight,
                 width: panel.frame.width,
                 height: newPanelHeight
             )
             panel.setFrame(newFrame, display: true, animate: false)
-            // Re-anchor basePanelTopY to the actual post-clamp top edge so any
-            // later expand/collapse uses the recentered top.
             basePanelTopY = panel.frame.maxY
             contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
             summaryCard.frame = NSRect(
@@ -1499,13 +1496,18 @@ final class SuggestionsOverlay: NSObject {
         let newPanelWidth = panel.frame.width
         let newPanelHeight = contentHeight + Layout.shadowBleed * 2
 
+        // Grow from the panel's current top, not screen midpoint —
+        // otherwise streaming suggestions repeatedly snap the panel
+        // back to center as each card lands.
+        let anchorTopY = panel.frame.maxY
         let newFrame = NSRect(
             x: panel.frame.origin.x,
-            y: centeredOriginY(for: panel, height: newPanelHeight),
+            y: anchorTopY - newPanelHeight,
             width: newPanelWidth,
             height: newPanelHeight
         )
         panel.setFrame(newFrame, display: true, animate: false)
+        basePanelTopY = panel.frame.maxY
         contentView.frame = NSRect(x: 0, y: 0, width: newPanelWidth, height: newPanelHeight)
 
         let contentX = Layout.shadowBleed
