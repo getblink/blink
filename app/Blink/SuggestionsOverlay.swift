@@ -21,6 +21,19 @@ final class SuggestionsPanel: NSPanel {
         return super.performKeyEquivalent(with: event)
     }
 
+    override func sendEvent(_ event: NSEvent) {
+        // Selectable suggestion text means the window's field editor can be
+        // first responder while the overlay is up — give the overlay router
+        // first crack at keyDowns so 1-4/Enter/Esc keep steering the panel
+        // even when text is selected. Router already handles the
+        // customInputActive case, so this is a no-op for typing into the
+        // custom reply field.
+        if event.type == .keyDown, onLocalKeyDown?(event) == true {
+            return
+        }
+        super.sendEvent(event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if onLocalKeyDown?(event) == true {
             return
@@ -33,6 +46,50 @@ final class SuggestionsPanel: NSPanel {
             return
         }
         super.keyDown(with: event)
+    }
+}
+
+/// Body text of a suggestion card. Selectable so users can copy out a
+/// suggestion, but with click-vs-drag detection so a plain click still
+/// behaves like the card click (insert) and only an actual drag enters
+/// native text selection.
+private final class SelectableSuggestionTextField: NSTextField {
+    var onClick: (() -> Void)?
+    private static let dragThreshold: CGFloat = 4.0
+
+    override func mouseDown(with event: NSEvent) {
+        // Double / triple click flips to word / line selection; let AppKit
+        // own that path so users keep the standard selection gestures.
+        if event.clickCount > 1 {
+            super.mouseDown(with: event)
+            return
+        }
+        guard let window else {
+            super.mouseDown(with: event)
+            return
+        }
+        let startPoint = event.locationInWindow
+        let mask: NSEvent.EventTypeMask = [.leftMouseUp, .leftMouseDragged]
+        let thresholdSquared = Self.dragThreshold * Self.dragThreshold
+        while let next = window.nextEvent(matching: mask) {
+            switch next.type {
+            case .leftMouseDragged:
+                let dx = next.locationInWindow.x - startPoint.x
+                let dy = next.locationInWindow.y - startPoint.y
+                if dx * dx + dy * dy >= thresholdSquared {
+                    // Hand off to native drag-selection from the original
+                    // mouseDown so AppKit's tracking loop anchors at the
+                    // initial click location.
+                    super.mouseDown(with: event)
+                    return
+                }
+            case .leftMouseUp:
+                onClick?()
+                return
+            default:
+                break
+            }
+        }
     }
 }
 
@@ -2460,13 +2517,20 @@ final class SuggestionsOverlay: NSObject {
         let textBlockY = hasTags
             ? (frame.height - collapsedLabelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
             : (frame.height - collapsedLabelHeight) / 2
-        let suggestionLabel = label(
-            frame: NSRect(
-                x: Layout.suggestionTextX,
-                y: hasTags ? textBlockY + Layout.suggestionTagHeight + Layout.suggestionTagGap : textBlockY,
-                width: textWidth,
-                height: collapsedLabelHeight
-            ),
+        let suggestionLabel = SelectableSuggestionTextField(labelWithString: "")
+        suggestionLabel.frame = NSRect(
+            x: Layout.suggestionTextX,
+            y: hasTags ? textBlockY + Layout.suggestionTagHeight + Layout.suggestionTagGap : textBlockY,
+            width: textWidth,
+            height: collapsedLabelHeight
+        )
+        suggestionLabel.isEditable = false
+        suggestionLabel.isSelectable = true
+        suggestionLabel.isBordered = false
+        suggestionLabel.drawsBackground = false
+        suggestionLabel.allowsEditingTextAttributes = false
+        setLabelText(
+            suggestionLabel,
             text: collapsedText,
             font: font,
             color: .labelColor,
@@ -2476,6 +2540,14 @@ final class SuggestionsOverlay: NSObject {
         suggestionLabel.maximumNumberOfLines = collapsedSingleLine ? 1 : 2
         suggestionLabel.lineBreakMode = .byTruncatingTail
         suggestionLabel.cell?.wraps = !collapsedSingleLine
+        // Click without drag = insert (matches the card's click-to-insert
+        // gesture). The gesture recognizer on the parent pane never fires
+        // for clicks on this label because mouseDown is consumed here, so
+        // we re-route the click directly to the same handler.
+        let cardChoiceIndex = index - 1
+        suggestionLabel.onClick = { [weak self] in
+            self?.onChoiceKey?(cardChoiceIndex)
+        }
         pane.content.addSubview(suggestionLabel)
 
         let tagIcon = makeTagIcon(frame: NSRect(
