@@ -1654,6 +1654,11 @@ final class SuggestionsOverlay: NSObject {
         summaryIsExpanded = willExpand
         summaryHeightDelta = willExpand ? (summaryExpandedHeight - summaryCollapsedHeight) : 0
 
+        // Anchor against the panel's *current* top edge (the user may
+        // have dragged it via `isMovableByWindowBackground` since the
+        // show-time anchor was captured). Otherwise the resize snaps
+        // y back to the original centered position.
+        basePanelTopY = panel.frame.maxY
         let newPanelHeight = basePanelHeight + summaryHeightDelta + customInputHeightDelta
         let newPanelFrame = NSRect(
             x: panel.frame.origin.x,
@@ -1823,6 +1828,9 @@ final class SuggestionsOverlay: NSObject {
         // preserved across the resize, then let the animator transition to
         // the final target frames.
         let panelDrop = heightDelta - currentHeightDelta
+        // Anchor against the panel's *current* top edge — user may have
+        // dragged the panel after show().
+        basePanelTopY = panel.frame.maxY
         let newPanelHeight = basePanelHeight + heightDelta + customInputHeightDelta
         let newFrame = NSRect(
             x: panel.frame.origin.x,
@@ -2001,6 +2009,9 @@ final class SuggestionsOverlay: NSObject {
             return
         }
 
+        // Re-anchor against the panel's current top so user drags
+        // don't snap the panel back to its show-time origin.
+        basePanelTopY = panel.frame.maxY
         let collapseHeight = basePanelHeight + customInputHeightDelta
         let newFrame = NSRect(
             x: panel.frame.origin.x,
@@ -3090,6 +3101,9 @@ final class SuggestionsOverlay: NSObject {
 
         field.scrollView.hasVerticalScroller = newCardHeight >= Layout.customInputMaxHeight
 
+        // Re-anchor against the panel's current top so user drags
+        // don't snap the panel back to its show-time origin.
+        basePanelTopY = panel.frame.maxY
         let totalHeight = basePanelHeight + summaryHeightDelta + currentHeightDelta + customInputHeightDelta
         let newPanelFrame = NSRect(
             x: panel.frame.origin.x,
