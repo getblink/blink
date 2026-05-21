@@ -5,6 +5,7 @@ import Foundation
 /// can share the list without one importing the other.
 enum ModelChoices {
     static let allowed: [String] = [
+        "gemini-3.5-flash",
         "gemini-3-flash-preview",
         "gemini-3.1-flash-lite-preview",
         "gemini-3.1-pro-preview",
