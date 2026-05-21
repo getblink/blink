@@ -1028,15 +1028,19 @@ final class SuggestionsOverlay: NSObject {
             textView.drawsBackground = false
             textView.textContainerInset = .zero
             textView.textContainer?.lineFragmentPadding = 0
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = Layout.summaryLineSpacing
-            let attributed = NSMutableAttributedString(
-                string: tldr,
-                attributes: [
-                    .font: summaryFont,
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: paragraph,
-                ]
+            // Route through `makeBodyAttributedString` so the "tl;dr"
+            // bold header gets applied when `showsTldrHeader` is true.
+            // The previous inline NSAttributedString skipped the prefix,
+            // so any tldr long enough to trigger the expandable mode
+            // rendered without the header — visually different from
+            // short tldrs that go through the else-branch below.
+            let attributed = makeBodyAttributedString(
+                text: tldr,
+                font: summaryFont,
+                color: .labelColor,
+                lineSpacing: Layout.summaryLineSpacing,
+                singleLine: false,
+                boldPrefix: bodyBoldPrefix
             )
             textView.textStorage?.setAttributedString(attributed)
             scrollView.documentView = textView
