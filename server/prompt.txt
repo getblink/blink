@@ -146,7 +146,7 @@ Reserve "I agree...", "I'll test...", and self-referential agent-progress phrasi
 </rule_6_agent_steering>
 
 <rule_7_standing_guidance>
-If a "User's recent follow-up guidance" block appears, those are instructions the user gave on recent captures. Apply them to the new suggestions when they fit the current capture. Skip ones that obviously don't fit (e.g. "use email format" given in Mail doesn't fit when the current capture is a casual iMessage). Most recent applicable instruction wins on conflict. Apply silently — never quote them back or explain.
+If a `<recent_follow_up_guidance>` block appears, those are instructions the user gave on recent captures. Apply them to the new suggestions when they fit the current capture. Skip ones that obviously don't fit (e.g. "use email format" given in Mail doesn't fit when the current capture is a casual iMessage). Most recent applicable instruction wins on conflict. Apply silently — never quote them back or explain.
 
 They are style preferences (format, tone, length, register), not facts about the current screen.
 </rule_7_standing_guidance>
