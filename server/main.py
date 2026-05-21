@@ -524,6 +524,25 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope.get("focused_context"),
         allow_content_retention=allow_content_retention,
     )
+    # The selection text is the user's *explicit* input — it's always sent
+    # to the model. Only redact from telemetry storage when retention is
+    # off, mirroring how focused_context.value is handled.
+    selection = envelope.get("selection")
+    if isinstance(selection, dict) and "text" in selection:
+        redacted_selection = dict(selection)
+        redacted_selection.pop("text", None)
+        redacted_selection["text_redacted"] = True
+        sanitized["selection"] = redacted_selection
+    selections = envelope.get("selections")
+    if isinstance(selections, list):
+        sanitized["selections"] = [
+            (
+                {**{k: v for k, v in item.items() if k != "text"}, "text_redacted": True}
+                if isinstance(item, dict) and "text" in item
+                else item
+            )
+            for item in selections
+        ]
     sanitized["preferences"] = _sanitize_content_payload(
         envelope.get("preferences"),
         allow_content_retention=allow_content_retention,

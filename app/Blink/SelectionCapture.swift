@@ -236,19 +236,18 @@ enum SelectionCapture {
 }
 
 extension SelectionCapture.Selection {
-    /// Envelope payload. Honors content-retention consent: when retention
-    /// is disabled, `text` is dropped and replaced with `text_redacted=true`.
-    func uploadPayload(allowContentRetention: Bool) -> [String: Any] {
-        var payload: [String: Any] = [
+    /// Envelope payload. Always includes the text, regardless of the
+    /// content-retention consent: the selection is the user's *explicit*
+    /// input for this request (they highlighted it and pressed the
+    /// hotkey on purpose), so the model needs to see it to respond.
+    /// The server redacts this field from telemetry storage when
+    /// retention is off — see `_privacy_safe_envelope` in server/main.py.
+    func uploadPayload() -> [String: Any] {
+        [
             "source": source.rawValue,
             "char_count": originalCharCount,
             "truncated": truncated,
+            "text": text,
         ]
-        if allowContentRetention {
-            payload["text"] = text
-        } else {
-            payload["text_redacted"] = true
-        }
-        return payload
     }
 }

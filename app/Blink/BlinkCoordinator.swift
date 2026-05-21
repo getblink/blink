@@ -2507,9 +2507,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "coordinate_space": "appkit_screen",
             ]
         }
-        let allowRetention = runtime.allowContentRetention
         let selectionPayloads = frames.compactMap { frame in
-            frame.selection?.uploadPayload(allowContentRetention: allowRetention)
+            frame.selection?.uploadPayload()
         }
         if !selectionPayloads.isEmpty {
             envelope["selections"] = selectionPayloads
@@ -2517,9 +2516,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             // server treat "selection" as the single primary text input
             // without iterating the per-frame list.
             if let latest = frames.reversed().lazy.compactMap(\.selection).first {
-                envelope["selection"] = latest.uploadPayload(
-                    allowContentRetention: allowRetention
-                )
+                envelope["selection"] = latest.uploadPayload()
             }
         }
         return envelope

@@ -10,7 +10,12 @@ import httpx
 from fastapi.testclient import TestClient
 
 from server import gemini
-from server.main import _build_selection_block, _selected_settings, app
+from server.main import (
+    _build_selection_block,
+    _privacy_safe_envelope,
+    _selected_settings,
+    app,
+)
 from server.storage import TelemetryStore
 
 
@@ -1933,6 +1938,48 @@ class MainTests(unittest.TestCase):
         self.assertIn('truncated="true"', block)
         self.assertTrue(block.rstrip().endswith("/>"))
         self.assertNotIn("</selection>", block)
+
+    def test_privacy_safe_envelope_redacts_selection_text_without_retention(self) -> None:
+        envelope = {
+            "consent": {"allow_content_retention": False},
+            "selection": {
+                "source": "ax",
+                "text": "highlighted secret",
+                "char_count": 18,
+                "truncated": False,
+            },
+            "selections": [
+                {
+                    "source": "ax",
+                    "text": "highlighted secret",
+                    "char_count": 18,
+                    "truncated": False,
+                }
+            ],
+        }
+        sanitized = _privacy_safe_envelope(envelope)
+        self.assertNotIn("text", sanitized["selection"])
+        self.assertTrue(sanitized["selection"]["text_redacted"])
+        self.assertEqual(sanitized["selection"]["char_count"], 18)
+        # The plural per-frame array is also redacted.
+        self.assertNotIn("text", sanitized["selections"][0])
+        self.assertTrue(sanitized["selections"][0]["text_redacted"])
+        # The live envelope (what the model sees) is unchanged.
+        self.assertEqual(envelope["selection"]["text"], "highlighted secret")
+
+    def test_privacy_safe_envelope_keeps_selection_text_with_retention(self) -> None:
+        envelope = {
+            "consent": {"allow_content_retention": True},
+            "selection": {
+                "source": "ax",
+                "text": "highlighted",
+                "char_count": 11,
+                "truncated": False,
+            },
+        }
+        sanitized = _privacy_safe_envelope(envelope)
+        self.assertEqual(sanitized["selection"]["text"], "highlighted")
+        self.assertNotIn("text_redacted", sanitized["selection"])
 
     def test_build_selection_block_returns_empty_for_invalid_inputs(self) -> None:
         self.assertEqual(_build_selection_block(None), "")
