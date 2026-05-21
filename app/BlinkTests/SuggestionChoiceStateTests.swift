@@ -216,4 +216,117 @@ final class SuggestionChoiceStateTests: XCTestCase {
             OverlayKeyRouter.command(forCGKeyCode: 15, flags: [], customInputActive: true)
         )
     }
+
+    func testOverlayRouterAcceptsArrowKeysOutsideCustomInput() {
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 126, flags: [], customInputActive: false),
+            .moveSelectionUp
+        )
+        XCTAssertEqual(
+            OverlayKeyRouter.command(forCGKeyCode: 125, flags: [], customInputActive: false),
+            .moveSelectionDown
+        )
+    }
+
+    func testOverlayRouterIgnoresArrowKeysWhileCustomInputIsActive() {
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 126, flags: [], customInputActive: true)
+        )
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 125, flags: [], customInputActive: true)
+        )
+    }
+
+    func testOverlayRouterIgnoresArrowKeysWithModifiers() {
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 126, flags: [.maskCommand], customInputActive: false)
+        )
+        XCTAssertNil(
+            OverlayKeyRouter.command(forCGKeyCode: 125, flags: [.maskShift], customInputActive: false)
+        )
+    }
+
+    func testMoveSelectionDownFromNoneSelectsFirst() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.expandedIndex, 0)
+    }
+
+    func testMoveSelectionUpFromNoneSelectsLast() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.moveSelection(.up, navigableCount: 3), 2)
+        XCTAssertEqual(state.expandedIndex, 2)
+    }
+
+    func testMoveSelectionDownWrapsAtEnd() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        _ = state.pressNumber(index: 2)
+        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.expandedIndex, 0)
+    }
+
+    func testMoveSelectionUpWrapsAtStart() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        _ = state.pressNumber(index: 0)
+        XCTAssertEqual(state.moveSelection(.up, navigableCount: 3), 2)
+        XCTAssertEqual(state.expandedIndex, 2)
+    }
+
+    func testMoveSelectionDoesNothingWhileCustomInputActive() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        _ = state.pressNumber(index: 3)
+        XCTAssertNil(state.moveSelection(.down, navigableCount: 3))
+        XCTAssertTrue(state.customInputActive)
+        XCTAssertNil(state.expandedIndex)
+    }
+
+    func testMoveSelectionDoesNothingWithZeroNavigableCount() {
+        var state = SuggestionChoiceState(suggestionCount: 0)
+
+        XCTAssertNil(state.moveSelection(.down, navigableCount: 0))
+        XCTAssertNil(state.expandedIndex)
+    }
+
+    func testPressReturnInsertsFirstIfNoneRespectsCustomInputActive() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        _ = state.pressNumber(index: 3)
+        XCTAssertEqual(state.pressReturn(insertsFirstIfNone: true), .propagate)
+    }
+
+    func testPressReturnInsertsFirstIfNoneFallbackToZero() {
+        let state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.pressReturn(insertsFirstIfNone: true), .insert(0))
+        XCTAssertEqual(state.pressReturn(), .propagate)
+    }
+
+    func testPressReturnInsertsFirstIfNoneNoSuggestions() {
+        let state = SuggestionChoiceState(suggestionCount: 0)
+
+        XCTAssertEqual(state.pressReturn(insertsFirstIfNone: true), .propagate)
+    }
+
+    func testReturnAfterMoveSelectionInsertsHighlighted() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.pressReturn(), .insert(0))
+
+        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 1)
+        XCTAssertEqual(state.pressReturn(), .insert(1))
+    }
+
+    func testPressReturnDefaultBehaviorUnchanged() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.pressReturn(), .propagate)
+        _ = state.pressNumber(index: 1)
+        XCTAssertEqual(state.pressReturn(), .insert(1))
+    }
 }

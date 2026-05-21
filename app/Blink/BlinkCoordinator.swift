@@ -1132,6 +1132,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onTextEditingKey = nil
                 self.overlay.onRerollKey = nil
                 self.overlay.onChoiceKey = { _ in }
+                self.overlay.onArrowKey = nil
                 self.overlay.onInsertKey = { true }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
@@ -1252,6 +1253,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 }
                 self.overlay.onChoiceKey = { [weak self] index in
                     self?.chooseSuggestion(index: index)
+                }
+                self.overlay.onArrowKey = { [weak self] direction in
+                    self?.handleArrowNav(direction)
                 }
                 self.overlay.onInsertKey = { [weak self] in
                     self?.insertExpandedSuggestion() ?? false
@@ -1446,6 +1450,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             consumesReturnWhileLoading: true
         )
         overlay.onChoiceKey = { _ in }
+        overlay.onArrowKey = nil
         overlay.onInsertKey = { true }
         overlay.onCustomInputFocusChanged = nil
         overlay.onCustomInsert = nil
@@ -1576,6 +1581,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                     }
                     self.overlay.onChoiceKey = { [weak self] index in
                         self?.chooseSuggestion(index: index)
+                    }
+                    self.overlay.onArrowKey = { [weak self] direction in
+                        self?.handleArrowNav(direction)
                     }
                     self.overlay.onInsertKey = { [weak self] in
                         self?.insertExpandedSuggestion() ?? false
@@ -1801,13 +1809,24 @@ final class BlinkCoordinator: @unchecked Sendable {
     @MainActor
     func insertExpandedSuggestion() -> Bool {
         guard currentBundleDir != nil else { return true }
-        switch choiceState.pressReturn() {
+        switch choiceState.pressReturn(insertsFirstIfNone: true) {
         case .propagate:
             return false
         case .insert(let index):
             insertSuggestion(index: index)
             return true
         }
+    }
+
+    @MainActor
+    private func handleArrowNav(_ direction: OverlayArrowDirection) {
+        guard currentBundleDir != nil, !currentSuggestions.isEmpty else { return }
+        let navigableCount = min(currentSuggestions.count, 3)
+        let stateDirection: SuggestionChoiceState.Direction = direction == .up ? .up : .down
+        guard let index = choiceState.moveSelection(stateDirection, navigableCount: navigableCount) else { return }
+        setCustomInputActiveMirror(choiceState.customInputActive)
+        setOverlayInsertConsumesReturn(choiceState.pressReturn() != .propagate)
+        expandSuggestion(index: index)
     }
 
     @MainActor
@@ -2116,6 +2135,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTextEditingKey = nil
         overlay.onRerollKey = nil
         overlay.onChoiceKey = nil
+        overlay.onArrowKey = nil
         overlay.onInsertKey = nil
         overlay.onDismissKey = nil
     }
