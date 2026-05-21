@@ -130,10 +130,13 @@ class PromptParityTests(unittest.TestCase):
                 reroll_context,
             ),
         )
-        self.assertIn("User follow-up instruction:", rendered)
-        self.assertIn("make this warmer and ask for friday", rendered)
+        self.assertIn(
+            "<follow_up_instruction>make this warmer and ask for friday</follow_up_instruction>",
+            rendered,
+        )
+        self.assertIn("<reroll_instructions>", rendered)
         self.assertIn("avoid repeating these previous suggestions", rendered)
-        self.assertNotIn("Stateful Blink context:", rendered)
+        self.assertNotIn("<stateful_context>", rendered)
 
     def test_follow_up_instruction_is_truncated(self) -> None:
         long_text = "x" * (blink_once.FOLLOW_UP_INSTRUCTION_MAX_CHARS + 50)
@@ -161,7 +164,8 @@ class PromptParityTests(unittest.TestCase):
             rendered,
             gemini.prompt_with_context("BASE PROMPT", None, None, style),
         )
-        self.assertIn("Style preferences:", rendered)
+        self.assertIn("<style_preferences>", rendered)
+        self.assertIn("</style_preferences>", rendered)
         self.assertIn("Initiative: take the lead", rendered)
         self.assertIn("Length: keep each suggestion", rendered)
         self.assertIn("Directness: be direct", rendered)
@@ -190,12 +194,12 @@ class PromptParityTests(unittest.TestCase):
             rendered,
             gemini.prompt_with_context("BASE PROMPT", stateful, None, style),
         )
-        self.assertIn("Style preferences:", rendered)
-        self.assertIn("Stateful Blink context:", rendered)
+        self.assertIn("<style_preferences>", rendered)
+        self.assertIn("<stateful_context>", rendered)
         # Style block should appear before the stateful context block.
         self.assertLess(
-            rendered.index("Style preferences:"),
-            rendered.index("Stateful Blink context:"),
+            rendered.index("<style_preferences>"),
+            rendered.index("<stateful_context>"),
         )
 
     def test_follow_up_history_renders_standing_guidance_block(self) -> None:
@@ -225,15 +229,16 @@ class PromptParityTests(unittest.TestCase):
             rendered,
             gemini.prompt_with_context("BASE PROMPT", stateful),
         )
-        self.assertIn("User's recent follow-up guidance", rendered)
+        self.assertIn("<recent_follow_up_guidance>", rendered)
+        self.assertIn("</recent_follow_up_guidance>", rendered)
         self.assertIn(
             '- 5m ago, in Mail: "use proper email format with a greeting and sign-off"',
             rendered,
         )
         self.assertIn('- 1h ago, in Mail: "keep it under 3 sentences"', rendered)
-        # The block must not introduce a Stateful Blink context heading when
+        # The block must not introduce a <stateful_context> heading when
         # there is no voice/preference/surface signal alongside it.
-        self.assertNotIn("Stateful Blink context:", rendered)
+        self.assertNotIn("<stateful_context>", rendered)
 
     def test_follow_up_history_empty_keeps_prompt_unchanged(self) -> None:
         for value in (
@@ -310,11 +315,11 @@ class PromptParityTests(unittest.TestCase):
             blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
         self.assertIn(
-            "Reroll instructions:",
+            "<reroll_instructions>",
             blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
         self.assertNotIn(
-            "Stateful Blink context:",
+            "<stateful_context>",
             blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
 

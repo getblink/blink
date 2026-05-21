@@ -10,7 +10,12 @@ import httpx
 from fastapi.testclient import TestClient
 
 from server import gemini
-from server.main import _selected_settings, app
+from server.main import (
+    _build_selection_block,
+    _privacy_safe_envelope,
+    _selected_settings,
+    app,
+)
 from server.storage import TelemetryStore
 
 
@@ -908,6 +913,60 @@ class MainTests(unittest.TestCase):
         self.assertEqual(contents[0].role, "user")
         self.assertEqual(contents[0].parts[0], {"bytes": b"png-bytes", "mime_type": "image/png"})
         self.assertEqual(contents[0].parts[1], {"text": gemini.MODEL_CONTENT_TEXT})
+
+    def test_gemini_conversation_contents_appends_user_message_suffix_to_capture_turn(self) -> None:
+        class FakePart:
+            @staticmethod
+            def from_bytes(*, data: bytes, mime_type: str) -> dict[str, Any]:
+                return {"bytes": data, "mime_type": mime_type}
+
+            @staticmethod
+            def from_text(*, text: str) -> dict[str, Any]:
+                return {"text": text}
+
+        class FakeContent:
+            def __init__(self, *, role: str, parts: list[Any]) -> None:
+                self.role = role
+                self.parts = parts
+
+        class FakeTypes:
+            Part = FakePart
+            Content = FakeContent
+
+        suffix = '<selection source="ax" char_count="11" truncated="false">\nhello world\n</selection>'
+
+        # Single-turn (initial gen) — suffix lands in the capture text.
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            None,
+            user_message_suffix=suffix,
+        )
+        self.assertEqual(len(contents), 1)
+        capture_text = contents[0].parts[1]["text"]
+        self.assertTrue(capture_text.startswith(gemini.MODEL_CONTENT_TEXT))
+        self.assertIn(suffix, capture_text)
+
+        # Multi-turn (reroll) — suffix still lands in the capture turn, not
+        # in the reroll-instruction turn that follows.
+        contents = gemini._conversation_contents(
+            FakeTypes,
+            [(b"png-bytes", "image/png")],
+            None,
+            "image/png",
+            [
+                {"role": "user", "kind": "capture", "request_id": "root"},
+                {"role": "model", "tldr": "x", "suggestions": ["a", "b", "c"]},
+                {"role": "user", "kind": "reroll"},
+            ],
+            user_message_suffix=suffix,
+        )
+        capture_text = contents[0].parts[1]["text"]
+        self.assertIn(suffix, capture_text)
+        # The reroll turn text doesn't carry the suffix.
+        self.assertNotIn(suffix, contents[2].parts[0]["text"])
 
     def test_gemini_conversation_contents_reroll_default_text_is_reroll_content_text(self) -> None:
         class FakePart:
@@ -1901,6 +1960,144 @@ class MainTests(unittest.TestCase):
             "https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent",
         )
         self.assertEqual(captured["body"], b'{"contents":[{"parts":[{"text":"hi"}]}]}')
+
+    def test_build_selection_block_emits_text_when_retention_allowed(self) -> None:
+        block = _build_selection_block(
+            {
+                "source": "ax",
+                "text": "the highlighted text",
+                "char_count": 20,
+                "truncated": False,
+            }
+        )
+        self.assertIn('source="ax"', block)
+        self.assertIn('char_count="20"', block)
+        self.assertIn('truncated="false"', block)
+        self.assertIn("the highlighted text", block)
+        self.assertIn("<selection ", block)
+        self.assertIn("</selection>", block)
+        self.assertNotIn("text_redacted", block)
+
+    def test_build_selection_block_emits_self_closing_when_redacted(self) -> None:
+        block = _build_selection_block(
+            {
+                "source": "synthetic_copy",
+                "text_redacted": True,
+                "char_count": 42,
+                "truncated": True,
+            }
+        )
+        self.assertIn('source="synthetic_copy"', block)
+        self.assertIn('text_redacted="true"', block)
+        self.assertIn('truncated="true"', block)
+        self.assertTrue(block.rstrip().endswith("/>"))
+        self.assertNotIn("</selection>", block)
+
+    def test_privacy_safe_envelope_redacts_selection_text_without_retention(self) -> None:
+        envelope = {
+            "consent": {"allow_content_retention": False},
+            "selection": {
+                "source": "ax",
+                "text": "highlighted secret",
+                "char_count": 18,
+                "truncated": False,
+            },
+            "selections": [
+                {
+                    "source": "ax",
+                    "text": "highlighted secret",
+                    "char_count": 18,
+                    "truncated": False,
+                }
+            ],
+        }
+        sanitized = _privacy_safe_envelope(envelope)
+        self.assertNotIn("text", sanitized["selection"])
+        self.assertTrue(sanitized["selection"]["text_redacted"])
+        self.assertEqual(sanitized["selection"]["char_count"], 18)
+        # The plural per-frame array is also redacted.
+        self.assertNotIn("text", sanitized["selections"][0])
+        self.assertTrue(sanitized["selections"][0]["text_redacted"])
+        # The live envelope (what the model sees) is unchanged.
+        self.assertEqual(envelope["selection"]["text"], "highlighted secret")
+
+    def test_privacy_safe_envelope_keeps_selection_text_with_retention(self) -> None:
+        envelope = {
+            "consent": {"allow_content_retention": True},
+            "selection": {
+                "source": "ax",
+                "text": "highlighted",
+                "char_count": 11,
+                "truncated": False,
+            },
+        }
+        sanitized = _privacy_safe_envelope(envelope)
+        self.assertEqual(sanitized["selection"]["text"], "highlighted")
+        self.assertNotIn("text_redacted", sanitized["selection"])
+
+    def test_build_selection_block_returns_empty_for_invalid_inputs(self) -> None:
+        self.assertEqual(_build_selection_block(None), "")
+        self.assertEqual(_build_selection_block({}), "")
+        # Empty / whitespace-only text without redaction flag drops to empty.
+        self.assertEqual(
+            _build_selection_block({"source": "ax", "text": "   "}),
+            "",
+        )
+
+    @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
+    @mock.patch("server.main.gemini.create_client")
+    def test_v1_tldr_injects_selection_block_into_prompt(
+        self,
+        create_client: mock.Mock,
+        generate: mock.Mock,
+    ) -> None:
+        create_client.return_value = object()
+
+        def fake_generate(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            # Selection lives in the user-role turn (per-request input),
+            # not the system instruction (stable rules).
+            prompt_text = kwargs["prompt_text"]
+            self.assertNotIn("<selection ", prompt_text)
+            suffix = kwargs["user_message_suffix"]
+            self.assertIn("<selection ", suffix)
+            self.assertIn("the user's highlighted paragraph", suffix)
+            self.assertIn('source="ax"', suffix)
+            return {
+                "status": "ok",
+                "tldr": "Selection-aware reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "duration_ms": 12,
+                "usage": None,
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+
+        generate.side_effect = fake_generate
+        with mock.patch("server.main._telemetry_store", return_value=mock.Mock()):
+            response = self.client.post(
+                "/v1/tldr",
+                headers={"Authorization": "Bearer dev-token"},
+                data={
+                    "request": json.dumps(
+                        {
+                            "request_id": "req-selection",
+                            "input_mode": "screenshot",
+                            "preferences": {"model": "gemini-3.1-flash-lite-preview"},
+                            "selection": {
+                                "source": "ax",
+                                "text": "the user's highlighted paragraph",
+                                "char_count": 31,
+                                "truncated": False,
+                            },
+                            "consent": {
+                                "allow_event_logging": True,
+                                "allow_content_retention": True,
+                            },
+                        }
+                    )
+                },
+                files={"screenshot": ("s.png", b"png-bytes", "image/png")},
+            )
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":

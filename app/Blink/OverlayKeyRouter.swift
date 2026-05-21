@@ -10,6 +10,7 @@ enum OverlayKeyCommand: Equatable {
     case reroll
     case moveSelectionUp
     case moveSelectionDown
+    case togglePin
     case textEditing(TextEditingShortcut)
 }
 
@@ -35,6 +36,7 @@ struct OverlayKeyRouter {
     private static let returnKeyCodes: Set<UInt16> = [36, 76]
     private static let escapeKeyCode: UInt16 = 53
     private static let rerollKeyCode: UInt16 = 15
+    private static let pinKeyCode: UInt16 = 35
     private static let blockingCGFlags: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift,
     ]
@@ -68,6 +70,9 @@ struct OverlayKeyRouter {
     ) -> OverlayKeyCommand? {
         if keyCode == rerollKeyCode, hasCommandOnlyModifier {
             return .reroll
+        }
+        if keyCode == pinKeyCode, hasCommandOnlyModifier {
+            return .togglePin
         }
 
         if customInputActive {

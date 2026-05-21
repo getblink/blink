@@ -52,8 +52,16 @@ enum Inserter {
         text: String,
         fileURLs: [URL] = [],
         activationDelay: TimeInterval = 0,
+        previousApp: NSRunningApplication? = nil,
         completion: @escaping (Result<InsertOutcome, Error>) -> Void
     ) {
+        // When the overlay is pinned (or otherwise stays key during the
+        // paste), the synthesized Cmd+V would land in Blink itself. Force
+        // focus back to the prior frontmost app before the activation
+        // delay so the paste reaches its intended destination.
+        if let previousApp, !previousApp.isActive {
+            previousApp.activate(options: [])
+        }
         if fileURLs.isEmpty {
             insertTextOnly(text: text, activationDelay: activationDelay, completion: completion)
         } else if text.isEmpty {

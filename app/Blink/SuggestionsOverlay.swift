@@ -434,7 +434,7 @@ final class SuggestionsOverlay: NSObject {
     private var lastOutsideClickAt: TimeInterval = 0
     private var currentHeightDelta: CGFloat = 0
     private var customInputHeightDelta: CGFloat = 0
-    private var summaryFullText: String = ""
+    private(set) var summaryFullText: String = ""
     private var summaryIsExpandable: Bool = false
     private var summaryIsExpanded: Bool = false
     private var summaryExpandButton: NSButton?
@@ -443,10 +443,16 @@ final class SuggestionsOverlay: NSObject {
     private var summaryCollapsedHeight: CGFloat = 0
     private var summaryExpandedHeight: CGFloat = 0
     private var summaryHeightDelta: CGFloat = 0
-    private var previousFrontmost: NSRunningApplication?
+    private(set) var previousFrontmost: NSRunningApplication?
     private var hasPlayedSuggestionArrival = false
     private var isDismissing = false
     private(set) var expandedSuggestionIndex: Int?
+    /// When true, picking a suggestion (or custom-reply submit) pastes into
+    /// the previous app *without* dismissing the overlay. Esc still dismisses.
+    /// Toggled via Cmd+P.
+    private(set) var isPinned: Bool = false
+    private var summaryHintLabel: NSTextField?
+    private var summaryHintBaseText: String?
 
     var onCustomInputFocusChanged: ((Bool) -> Void)?
     var onCustomInsert: ((String) -> Void)?
@@ -458,8 +464,10 @@ final class SuggestionsOverlay: NSObject {
     var onLeaveCustomInputKey: (() -> Void)?
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onRerollKey: (() -> Void)?
+    var onTogglePinKey: (() -> Void)?
     var onDismissKey: (() -> Void)?
     var onVisibilityChange: ((Bool) -> Void)?
+    var onPinnedChanged: ((Bool) -> Void)?
     private var lastEmittedVisible = false
 
     var isVisible: Bool {
@@ -543,9 +551,53 @@ final class SuggestionsOverlay: NSObject {
             tldr: tldr,
             suggestionDetails: suggestionDetails,
             showsCustomInput: true,
-            hintText: "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R to reroll \u{00B7} Esc to dismiss",
+            hintText: "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R reroll \u{00B7} \u{2318}P pin \u{00B7} Esc dismiss",
             showsTldrHeader: true
         )
+    }
+
+    /// Toggle whether picking a suggestion (or submitting a custom reply)
+    /// dismisses the overlay. When pinned, the insert lands in the prior
+    /// app but the overlay stays open, ready for the next interaction.
+    /// Esc still dismisses unconditionally.
+    func setPinned(_ pinned: Bool) {
+        guard pinned != isPinned else { return }
+        isPinned = pinned
+        refreshHintLabel()
+        onPinnedChanged?(pinned)
+    }
+
+    /// Clear the rendered suggestion stack and reset choice state, but
+    /// leave the panel visible. Used by the pinned-insert path: the
+    /// previous suggestions are no longer relevant once one was inserted,
+    /// but the user wants the overlay to stay alive for the next capture.
+    @MainActor
+    func resetAfterInsertKeepOpen() {
+        expandedSuggestionIndex = nil
+        suggestionCards = []
+        suggestionClickTargets = []
+        hasPlayedSuggestionArrival = false
+        show(
+            tldr: "Pinned — press the hotkey to add a new capture.",
+            suggestionDetails: [],
+            showsCustomInput: false,
+            hintText: "\u{2318}P unpin \u{00B7} Esc dismiss",
+            showsTldrHeader: true
+        )
+    }
+
+    private func composedHintText(base: String) -> String {
+        if isPinned {
+            return "\u{1F4CC} pinned \u{00B7} " + base
+        }
+        return base
+    }
+
+    private func refreshHintLabel() {
+        guard let label = summaryHintLabel, let base = summaryHintBaseText else {
+            return
+        }
+        label.stringValue = composedHintText(base: base)
     }
 
     func showLoading(tldr: String) {
@@ -711,6 +763,11 @@ final class SuggestionsOverlay: NSObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        // The borderless panel has no titlebar to grab; with the background
+        // clear, AppKit treats the transparent shadow-bleed perimeter as a
+        // drag region. Combined with `Cmd+P` (toggle pin), it gives the user
+        // a way to reposition the overlay without rearranging the chrome.
+        panel.isMovableByWindowBackground = true
         if Self.useLegacyGlass {
             // Force dark appearance so `.labelColor` stays white and the
             // `.popover` material renders its dark frosted variant. Without
@@ -734,6 +791,7 @@ final class SuggestionsOverlay: NSObject {
         let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
 
         if let hintText {
+            self.summaryHintBaseText = hintText
             let hint = label(
                 frame: NSRect(
                     x: 24,
@@ -741,13 +799,17 @@ final class SuggestionsOverlay: NSObject {
                     width: contentWidth - 48,
                     height: Layout.summaryHintHeight
                 ),
-                text: hintText,
+                text: composedHintText(base: hintText),
                 font: hintFont,
                 color: .tertiaryLabelColor,
                 singleLine: true
             )
             hint.alignment = .center
             summary.content.addSubview(hint)
+            self.summaryHintLabel = hint
+        } else {
+            self.summaryHintBaseText = nil
+            self.summaryHintLabel = nil
         }
 
         if !thumbnails.isEmpty {
@@ -1596,6 +1658,14 @@ final class SuggestionsOverlay: NSObject {
         customInputField?.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    /// Restore a custom-input draft from a prior session (resume path).
+    /// No-op when the field isn't visible.
+    @MainActor
+    func restoreCustomInputText(_ text: String) {
+        guard let field = customInputField else { return }
+        field.stringValue = text
+    }
+
     private var customInputEditorText: String {
         customInputText
     }
@@ -1962,6 +2032,13 @@ final class SuggestionsOverlay: NSObject {
         guard let panel, let contentView, !isDismissing else {
             completion?()
             return
+        }
+        // Pin state belongs to the active panel session. A real dismissal
+        // (Esc, or the unpinned insert path) ends that session, so reset.
+        // Don't reset inside `close()` — `show()` calls `close()` on every
+        // rebuild and that would clobber a user's pin mid-session.
+        if isPinned {
+            setPinned(false)
         }
         isDismissing = true
         softErrorPanel?.close()
@@ -3135,6 +3212,9 @@ final class SuggestionsOverlay: NSObject {
             return true
         case .moveSelectionDown:
             onArrowKey?(.down)
+            return true
+        case .togglePin:
+            onTogglePinKey?()
             return true
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false

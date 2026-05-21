@@ -1415,7 +1415,9 @@ class BlinkOnceTests(unittest.TestCase):
         # is iterated on (see SURFACE_HISTORY_ENABLED). The build still records
         # the data; only the prompt rendering ignores it.
         self.assertNotIn("Prior outcome:", prompt)
-        self.assertNotIn("User voice examples:", prompt)
+        # The `<stateful_context>` prose references the `<voice_examples>` tag
+        # name; match on the closing tag to assert no actual block rendered.
+        self.assertNotIn("</voice_examples>", prompt)
         self.assertIn("Imitate their style closely in the suggestions", prompt)
 
     def test_prompt_with_stateful_context_does_not_render_surface_history(self) -> None:
@@ -2178,7 +2180,7 @@ class BlinkOnceTests(unittest.TestCase):
                     "client_proxy_payload_with_server_rendering_preview",
                 )
                 self.assertIn("stateful_context", model_context["submitted_request"])
-                self.assertIn("Stateful Blink context:", model_context["proxy_server_preview"]["system_instruction"])
+                self.assertIn("<stateful_context>", model_context["proxy_server_preview"]["system_instruction"])
                 self.assertEqual(model_context["proxy_server_preview"]["contents"], [blink_once.MODEL_CONTENT_TEXT])
         finally:
             if old_proxy_url is None:
