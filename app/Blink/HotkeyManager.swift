@@ -80,6 +80,8 @@ final class HotkeyManager {
     private let onTextEditing: (TextEditingShortcut) -> Void
     private let onReroll: () -> Void
     private let onTogglePin: () -> Void
+    private let onArrowNav: (OverlayArrowDirection) -> Void
+    private let onResumeLastChat: () -> Void
     private let onDismiss: () -> Void
     private let tapStateLock = NSLock()
     private var eventTap: CFMachPort?
@@ -116,6 +118,8 @@ final class HotkeyManager {
         onTextEditing: @escaping (TextEditingShortcut) -> Void,
         onReroll: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
+        onArrowNav: @escaping (OverlayArrowDirection) -> Void,
+        onResumeLastChat: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summaryKeyCode = summaryHotkey.keyCode
@@ -136,6 +140,8 @@ final class HotkeyManager {
         self.onTextEditing = onTextEditing
         self.onReroll = onReroll
         self.onTogglePin = onTogglePin
+        self.onArrowNav = onArrowNav
+        self.onResumeLastChat = onResumeLastChat
         self.onDismiss = onDismiss
     }
 
@@ -316,11 +322,13 @@ final class HotkeyManager {
         if manager.isOverlayActive(),
            keyCode == manager.summaryKeyCode,
            flags == manager.summaryFlags {
-            // While the overlay is visible, the configured summary hotkey intentionally rerolls instead of starting a fresh capture; Cmd-R maps here too.
+            // Hotkey-while-overlay no longer rerolls. The coordinator's
+            // state-aware handler decides: collecting → add frame,
+            // suggestions → enter modal multi-frame, streaming → refuse.
+            // Reroll stays available via the in-panel button and ⌘R.
             let pressedAt = DispatchTime.now()
             DispatchQueue.main.async {
                 manager.onSummaryHotkeyWhileOverlay(pressedAt)
-                manager.onReroll()
             }
             return nil
         }
@@ -356,6 +364,22 @@ final class HotkeyManager {
                 return nil
             case .togglePin:
                 DispatchQueue.main.async { manager.onTogglePin() }
+                return nil
+            case .moveSelectionUp:
+                DispatchQueue.main.async { manager.onArrowNav(.up) }
+                return nil
+            case .moveSelectionDown:
+                DispatchQueue.main.async { manager.onArrowNav(.down) }
+                return nil
+            case .resumeLastChat:
+                // Cmd+Z only undoes the in-flight hotkey press during the
+                // collecting / reading-screen state. Once suggestions are
+                // visible (or no overlay state needs undoing), let the key
+                // fall through to the focused app for native undo.
+                guard manager.isCollectingActive() else {
+                    return Unmanaged.passUnretained(event)
+                }
+                DispatchQueue.main.async { manager.onResumeLastChat() }
                 return nil
             case .textEditing(let shortcut):
                 DispatchQueue.main.async { manager.onTextEditing(shortcut) }

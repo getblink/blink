@@ -145,6 +145,27 @@ final class BlinkCoordinator: @unchecked Sendable {
         let frontmostApp: [String: Any]
         let priorRequestID: String?
     }
+
+    /// Snapshot of the just-submitted capture so that a hotkey press
+    /// while suggestions are visible can rebuild a `CaptureSession` from
+    /// the prior frames (added to, not replaced) and enter the collecting
+    /// overlay for a multi-frame follow-up. Populated by `submitSession`
+    /// before the active session is cleared, replaced by each new submit,
+    /// and dropped on dismiss.
+    private struct SubmittedRunContext {
+        let staging: URL
+        let frames: [CapturedFrame]
+        let runtime: RuntimeConfigFile
+        let clientMetadata: [String: Any]
+        let frontmostApp: [String: Any]
+    }
+    private var lastSubmittedRun: SubmittedRunContext?
+
+    /// While the modal multi-frame mode is open from suggestions, this
+    /// holds the chat to restore on Esc. Cleared on successful submit
+    /// (the new run replaces it) or on intentional dismiss.
+    private var modalChatSnapshot: LastDismissedSession?
+
     private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
@@ -333,18 +354,9 @@ final class BlinkCoordinator: @unchecked Sendable {
             onPermissionsNeeded?()
             return
         }
-        // Accident-recovery: if the user dismissed within the last
-        // `resumeWindowSeconds` and the overlay isn't already up, restore
-        // the prior run instead of starting a fresh capture.
-        if let resumeSnapshot = takeResumeSnapshotIfFresh() {
-            acknowledgeCaptureHotkey(
-                pressedAt: pressedAt,
-                summarizeEnteredAt: summarizeEnteredAt,
-                statusText: "resumed last chat"
-            )
-            restoreLastDismissedSession(resumeSnapshot)
-            return
-        }
+        // The hotkey is always a fresh capture. To recover an
+        // accidentally-dismissed chat, press Cmd+Z during the collecting
+        // overlay — see `resumeLastChatIfCollecting()`.
         acknowledgeCaptureHotkey(
             pressedAt: pressedAt,
             summarizeEnteredAt: summarizeEnteredAt,
@@ -355,19 +367,34 @@ final class BlinkCoordinator: @unchecked Sendable {
 
     private func takeResumeSnapshotIfFresh() -> LastDismissedSession? {
         guard let snapshot = lastDismissedSession else { return nil }
-        guard !overlay.isVisible else { return nil }
         let age = Date().timeIntervalSince(snapshot.dismissedAt)
         guard age <= resumeWindowSeconds else {
             clearLastDismissedSession()
             return nil
         }
-        // Consume — a second hotkey on the restored overlay should append
-        // (chunk 4) or open fresh (after expiry), not resume the same
-        // snapshot twice.
+        // Consume — Cmd+Z should restore once. A second press during the
+        // restored overlay falls through to the focused app's undo.
         lastDismissedSession = nil
         lastDismissedSessionExpiry?.cancel()
         lastDismissedSessionExpiry = nil
         return snapshot
+    }
+
+    /// Cmd+Z entry point during the collecting / "reading the screen"
+    /// overlay. Cancels the in-flight capture and restores the previously
+    /// dismissed chat if one is still within the resume window. No-op
+    /// (and falls through to native undo at the event-tap layer) when no
+    /// snapshot is available.
+    @MainActor
+    func resumeLastChatIfAvailable() {
+        guard let snapshot = takeResumeSnapshotIfFresh() else {
+            status("nothing to undo")
+            return
+        }
+        if isCollectingActive {
+            cancelCollectingSession()
+        }
+        restoreLastDismissedSession(snapshot)
     }
 
     private func armResumeExpiryTimer() {
@@ -452,12 +479,96 @@ final class BlinkCoordinator: @unchecked Sendable {
         )
     }
 
-    func acknowledgeSummaryHotkeyForReroll(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
+    @MainActor
+    func handleSummaryHotkeyWhileOverlay(pressedAt: DispatchTime, summarizeEnteredAt: DispatchTime) {
+        // Already in the collecting overlay: existing append-a-frame path.
+        if isCollectingActive {
+            acknowledgeCaptureHotkey(
+                pressedAt: pressedAt,
+                summarizeEnteredAt: summarizeEnteredAt,
+                statusText: nil
+            )
+            queue.async { [self] in appendFrameToSession() }
+            return
+        }
+        // Streaming / model thinking: refuse until the run lands. Avoids
+        // racing the in-flight stream against a brand-new submission.
+        if currentStreamingRun?.isRunning == true {
+            status("still thinking — try again in a moment")
+            return
+        }
+        // Suggestions visible with a prior run on record: enter modal
+        // multi-frame. Snapshot the chat so Esc can restore it, rebuild
+        // a CaptureSession from the prior run's frames + staging, then
+        // capture a new frame appended to that list.
+        guard !currentSuggestions.isEmpty, let prior = lastSubmittedRun else {
+            status("nothing to add to")
+            return
+        }
+        modalChatSnapshot = LastDismissedSession(
+            dismissedAt: Date(),
+            bundleDir: currentBundleDir,
+            suggestions: currentSuggestions,
+            suggestionDetails: currentSuggestionDetails,
+            tldr: overlay.summaryFullText,
+            customInputText: overlay.customInputText,
+            frontmostApp: prior.frontmostApp,
+            priorRequestID: currentRequestID
+        )
+        let newRequestID = UUID().uuidString.lowercased()
+        currentRequestID = newRequestID
+        // Old streaming/submission state is already settled at this point
+        // (we guarded on `currentStreamingRun?.isRunning` above), but
+        // clear refs so the new session starts clean.
+        currentSubmission = nil
+        currentStreamingRun = nil
         acknowledgeCaptureHotkey(
             pressedAt: pressedAt,
             summarizeEnteredAt: summarizeEnteredAt,
             statusText: nil
         )
+        queue.async { [self, prior, newRequestID] in
+            guard !running else {
+                status("already working")
+                return
+            }
+            session = CaptureSession(
+                requestID: newRequestID,
+                startedAt: Date(),
+                startedPerf: monotonicNow(),
+                runtime: prior.runtime,
+                clientMetadata: prior.clientMetadata,
+                frontmostApp: prior.frontmostApp,
+                staging: prior.staging,
+                frames: prior.frames,
+                collectingTimer: nil
+            )
+            appendFrameToSession()
+        }
+    }
+
+    /// Esc inside modal multi-frame restores the chat snapshot instead
+    /// of tearing down the staging dir (which is shared with the prior
+    /// run on record). The just-captured frame becomes an orphan PNG
+    /// inside `prior.staging` — the OS will clean up /tmp.
+    @MainActor
+    func cancelCollectingFromUI() {
+        if let snapshot = modalChatSnapshot {
+            modalChatSnapshot = nil
+            queue.async { [self] in
+                if let active = session {
+                    active.collectingTimer?.cancel()
+                    session = nil
+                    setCollectingActive(false)
+                }
+                DispatchQueue.main.async {
+                    self.overlay.dismissSubmitPrompt()
+                    self.restoreLastDismissedSession(snapshot)
+                }
+            }
+            return
+        }
+        cancelCollectingSession()
     }
 
     private func enqueueSummarize() {
@@ -908,6 +1019,22 @@ final class BlinkCoordinator: @unchecked Sendable {
     private func submitSession() {
         guard let active = session else { return }
         active.collectingTimer?.cancel()
+        // Stash the just-submitted run so a follow-up hotkey while
+        // suggestions are visible can extend its frames with another
+        // capture (modal multi-frame).
+        let context = SubmittedRunContext(
+            staging: active.staging,
+            frames: active.frames,
+            runtime: active.runtime,
+            clientMetadata: active.clientMetadata,
+            frontmostApp: active.frontmostApp
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.lastSubmittedRun = context
+            // Submitting from modal multi-frame means the user wants the
+            // new run — there's no chat to revert to anymore.
+            self?.modalChatSnapshot = nil
+        }
         session = nil
         setCollectingActive(false)
         DispatchQueue.main.async { [weak self] in self?.overlay.dismissSubmitPrompt() }
@@ -1973,7 +2100,7 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     @MainActor
-    private func handleArrowNav(_ direction: OverlayArrowDirection) {
+    func handleArrowNav(_ direction: OverlayArrowDirection) {
         guard currentBundleDir != nil, !currentSuggestions.isEmpty else { return }
         let navigableCount = min(currentSuggestions.count, 3)
         let stateDirection: SuggestionChoiceState.Direction = direction == .up ? .up : .down
@@ -2391,6 +2518,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         currentBundleDir = nil
         currentSuggestions = []
         currentSuggestionDetails = []
+        // The run is going away; drop the staged context too. A
+        // subsequent modal multi-frame entry would have nothing prior to
+        // extend from, which matches the user's intent on dismissal.
+        lastSubmittedRun = nil
+        modalChatSnapshot = nil
         if cancelledMidStream,
            let requestID = resolvedRequestID,
            let bundleDirString = cancelledBundleDir {

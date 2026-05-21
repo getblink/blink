@@ -146,13 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSummaryHotkeyWhileOverlay: { [weak coordinator, weak nudges] pressedAt in
                 let summarizeEnteredAt = DispatchTime.now()
                 Task { @MainActor in nudges?.noteHotkeyInvoked() }
-                coordinator?.acknowledgeSummaryHotkeyForReroll(
+                coordinator?.handleSummaryHotkeyWhileOverlay(
                     pressedAt: pressedAt,
                     summarizeEnteredAt: summarizeEnteredAt
                 )
             },
             onSubmitCollecting: { [weak coordinator] in coordinator?.submitCollectingSession() },
-            onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingSession() },
+            onCancelCollecting: { [weak coordinator] in coordinator?.cancelCollectingFromUI() },
             onChoicePreflight: { [weak coordinator] index in coordinator?.preflightOverlayChoiceKey(index: index) },
             onChoice: { [weak coordinator] index in coordinator?.chooseSuggestion(index: index) },
             shouldConsumeInsert: { [weak coordinator] in
@@ -170,6 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onTogglePin: { [weak coordinator] in coordinator?.toggleOverlayPin() },
+            onArrowNav: { [weak coordinator] direction in coordinator?.handleArrowNav(direction) },
+            onResumeLastChat: { [weak coordinator] in coordinator?.resumeLastChatIfAvailable() },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 
