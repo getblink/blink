@@ -1349,6 +1349,14 @@ final class SuggestionsOverlay: NSObject {
               let summaryCard,
               let summaryLabel
         else { return }
+        // Keep the source-of-truth tldr in sync with what's rendered.
+        // Only `show()` was updating this before; streaming-finalize via
+        // `updateSummary` would land the rendered text into `summaryLabel`
+        // but leave `summaryFullText` stuck at the initial `showLoading`
+        // placeholder. Auto-resume reads `summaryFullText` for the LDS
+        // snapshot, so a stale value here meant the resumed panel showed
+        // "Reading the screen…" instead of the real tldr.
+        summaryFullText = text
         let wasLoading = isLoadingState
         if wasLoading {
             tearDownLoadingState()
