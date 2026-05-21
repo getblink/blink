@@ -114,6 +114,7 @@ enum ScreenCapture {
         }
 
         let candidates = candidateWindows(in: content, pid: pid)
+        logCGZOrderForPID(pid)
         guard let window = chooseWindow(
             from: candidates,
             preferredGlobalRect: preferredGlobalRect
@@ -389,6 +390,7 @@ enum ScreenCapture {
         from candidates: [SCWindow],
         preferredGlobalRect: CGRect?
     ) -> SCWindow? {
+        logCandidates(candidates, axHint: preferredGlobalRect)
         guard !candidates.isEmpty else { return nil }
         guard let preferredGlobalRect, !preferredGlobalRect.isNull, !preferredGlobalRect.isEmpty else {
             // No hint from Accessibility — prefer standard-layer windows that
@@ -399,12 +401,18 @@ enum ScreenCapture {
             // standard-layer window, then to whatever exists.
             let standardLayer = candidates.filter { $0.windowLayer == 0 }
             if let visibleStandard = standardLayer.first(where: { $0.isOnScreen }) {
+                logChooserChoice(visibleStandard, reason: "no_ax_hint_visible_standard")
                 return visibleStandard
             }
             if let firstStandard = standardLayer.first {
+                logChooserChoice(firstStandard, reason: "no_ax_hint_first_standard")
                 return firstStandard
             }
-            return candidates.first
+            if let any = candidates.first {
+                logChooserChoice(any, reason: "no_ax_hint_first_any")
+                return any
+            }
+            return nil
         }
 
         let preferredCenter = CGPoint(
@@ -427,6 +435,10 @@ enum ScreenCapture {
             let dy = frame.midY - preferredCenter.y
             let distanceSquared = dx * dx + dy * dy
 
+            TCCDiagnostics.log(
+                "window_chooser_eval index=\(index) window_id=\(window.windowID) contains_center=\(containsCenter) intersection_area=\(intersectionArea) distance_sq=\(distanceSquared)"
+            )
+
             let isBetter =
                 (containsCenter && !bestContainsCenter)
                 || (containsCenter == bestContainsCenter && intersectionArea > bestIntersectionArea)
@@ -444,7 +456,60 @@ enum ScreenCapture {
             }
         }
 
-        return candidates[bestIndex]
+        let chosen = candidates[bestIndex]
+        let reason = bestContainsCenter
+            ? "ax_hint_contains_center"
+            : (bestIntersectionArea > 0 ? "ax_hint_intersection" : "ax_hint_nearest_center")
+        logChooserChoice(chosen, reason: reason)
+        return chosen
+    }
+
+    private static func logCandidates(_ candidates: [SCWindow], axHint: CGRect?) {
+        TCCDiagnostics.log(
+            "window_chooser_start candidate_count=\(candidates.count) ax_hint=\(axHint.map { NSStringFromRect($0) } ?? "nil")"
+        )
+        for (index, window) in candidates.enumerated() {
+            // Truncate titles so a verbose Chrome tab title doesn't blow up
+            // the log line; 60 chars is enough to disambiguate by hand.
+            let title = (window.title ?? "").prefix(60)
+            TCCDiagnostics.log(
+                "window_chooser_candidate index=\(index) window_id=\(window.windowID) layer=\(window.windowLayer) on_screen=\(window.isOnScreen) frame=\(NSStringFromRect(window.frame)) title=\(title)"
+            )
+        }
+    }
+
+    private static func logChooserChoice(_ window: SCWindow, reason: String) {
+        TCCDiagnostics.log(
+            "window_chooser_choice window_id=\(window.windowID) frame=\(NSStringFromRect(window.frame)) title=\((window.title ?? "").prefix(60)) reason=\(reason)"
+        )
+    }
+
+    /// Logs Quartz's front-to-back z-order of standard-layer windows owned by
+    /// `pid` on the current Space. Used as ground truth against SCK's
+    /// `SCShareableContent.windows`, which is *not* z-ordered — when those two
+    /// disagree on which window is frontmost, we expect the multi-window
+    /// fullscreen-Chrome wrong-window bug to surface.
+    private static func logCGZOrderForPID(_ pid: pid_t) {
+        guard let infoList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            TCCDiagnostics.log("cg_zorder_snapshot pid=\(pid) result=nil")
+            return
+        }
+        let owned = infoList.filter { entry in
+            ((entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1) == pid
+        }
+        let summary = owned.enumerated().map { index, entry -> String in
+            let id = (entry[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+            let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+            let title = (entry[kCGWindowName as String] as? String) ?? ""
+            let boundsDict = entry[kCGWindowBounds as String] as? [String: Any]
+            let bounds = boundsDict.flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
+            let boundsStr = bounds.map { NSStringFromRect($0) } ?? "nil"
+            return "[\(index):id=\(id),layer=\(layer),frame=\(boundsStr),title=\(title.prefix(40))]"
+        }.joined(separator: " ")
+        TCCDiagnostics.log("cg_zorder_snapshot pid=\(pid) count=\(owned.count) windows=\(summary)")
     }
 
     private static func captureWindowImage(
