@@ -67,11 +67,6 @@ final class HotkeyManager {
     private let isOverlayActive: () -> Bool
     private let isCustomInputActive: () -> Bool
     private let isCollectingActive: () -> Bool
-    /// True while the overlay is up but no suggestions have rendered yet:
-    /// the "Reading the screen" / collecting-frames phase AND the
-    /// "Blink is thinking" / model-streaming phase. Used to gate ⌘Z
-    /// resume — once suggestions land, ⌘Z falls through to native undo.
-    private let isPreSuggestionsOverlay: () -> Bool
     private let onSummarize: (DispatchTime) -> Void
     private let onSummaryHotkeyWhileOverlay: (DispatchTime) -> Void
     private let onSubmitCollecting: () -> Void
@@ -86,7 +81,6 @@ final class HotkeyManager {
     private let onReroll: () -> Void
     private let onTogglePin: () -> Void
     private let onArrowNav: (OverlayArrowDirection) -> Void
-    private let onResumeLastChat: () -> Void
     private let onDismiss: () -> Void
     private let tapStateLock = NSLock()
     private var eventTap: CFMachPort?
@@ -110,7 +104,6 @@ final class HotkeyManager {
         isOverlayActive: @escaping () -> Bool,
         isCustomInputActive: @escaping () -> Bool,
         isCollectingActive: @escaping () -> Bool,
-        isPreSuggestionsOverlay: @escaping () -> Bool,
         onSummarize: @escaping (DispatchTime) -> Void,
         onSummaryHotkeyWhileOverlay: @escaping (DispatchTime) -> Void,
         onSubmitCollecting: @escaping () -> Void,
@@ -125,7 +118,6 @@ final class HotkeyManager {
         onReroll: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
         onArrowNav: @escaping (OverlayArrowDirection) -> Void,
-        onResumeLastChat: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summaryKeyCode = summaryHotkey.keyCode
@@ -133,7 +125,6 @@ final class HotkeyManager {
         self.isOverlayActive = isOverlayActive
         self.isCustomInputActive = isCustomInputActive
         self.isCollectingActive = isCollectingActive
-        self.isPreSuggestionsOverlay = isPreSuggestionsOverlay
         self.onSummarize = onSummarize
         self.onSummaryHotkeyWhileOverlay = onSummaryHotkeyWhileOverlay
         self.onSubmitCollecting = onSubmitCollecting
@@ -148,7 +139,6 @@ final class HotkeyManager {
         self.onReroll = onReroll
         self.onTogglePin = onTogglePin
         self.onArrowNav = onArrowNav
-        self.onResumeLastChat = onResumeLastChat
         self.onDismiss = onDismiss
     }
 
@@ -377,17 +367,6 @@ final class HotkeyManager {
                 return nil
             case .moveSelectionDown:
                 DispatchQueue.main.async { manager.onArrowNav(.down) }
-                return nil
-            case .resumeLastChat:
-                // Cmd+Z undoes the in-flight hotkey press during both the
-                // collecting / "reading the screen" phase and the
-                // "Blink is thinking" / streaming phase. Once suggestions
-                // are visible, the key falls through to the focused app
-                // for native undo (the panel just becomes another sink).
-                guard manager.isPreSuggestionsOverlay() else {
-                    return Unmanaged.passUnretained(event)
-                }
-                DispatchQueue.main.async { manager.onResumeLastChat() }
                 return nil
             case .textEditing(let shortcut):
                 DispatchQueue.main.async { manager.onTextEditing(shortcut) }

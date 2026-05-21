@@ -543,7 +543,11 @@ final class SuggestionsOverlay: NSObject {
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onRerollKey: (() -> Void)?
     var onTogglePinKey: (() -> Void)?
-    var onResumeLastChatKey: (() -> Bool)?
+    /// Implicit dismiss path — double-click outside the panel. The
+    /// coordinator routes this to `dismissOverlay(implicit: true)`
+    /// so the LDS snapshot is tagged as auto-resume eligible. Esc
+    /// continues to call `onDismissKey` (explicit).
+    var onOutsideClickDismiss: (() -> Void)?
     var onDismissKey: (() -> Void)?
     var onVisibilityChange: ((Bool) -> Void)?
     var onPinnedChanged: ((Bool) -> Void)?
@@ -3315,7 +3319,15 @@ final class SuggestionsOverlay: NSObject {
         let now = event.timestamp
         if lastOutsideClickAt > 0, now - lastOutsideClickAt <= NSEvent.doubleClickInterval {
             lastOutsideClickAt = 0
-            onDismissKey?()
+            // Outside-click is the "accidental" dismiss path — falls
+            // through to Esc semantics only if no outside-click handler
+            // is wired (defensive). Esc proper goes through `onDismissKey`
+            // directly from the key router.
+            if let onOutsideClickDismiss {
+                onOutsideClickDismiss()
+            } else {
+                onDismissKey?()
+            }
             return
         }
         lastOutsideClickAt = now
@@ -3362,12 +3374,6 @@ final class SuggestionsOverlay: NSObject {
         case .togglePin:
             onTogglePinKey?()
             return true
-        case .resumeLastChat:
-            // Returns Bool so the coordinator can refuse (no snapshot
-            // available, or not in collecting state) — in which case the
-            // key falls through to the panel's responder chain so the
-            // system can still surface the standard "no undo" beep.
-            return onResumeLastChatKey?() ?? false
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false
         }

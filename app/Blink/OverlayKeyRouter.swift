@@ -11,7 +11,6 @@ enum OverlayKeyCommand: Equatable {
     case moveSelectionUp
     case moveSelectionDown
     case togglePin
-    case resumeLastChat
     case textEditing(TextEditingShortcut)
 }
 
@@ -38,7 +37,6 @@ struct OverlayKeyRouter {
     private static let escapeKeyCode: UInt16 = 53
     private static let rerollKeyCode: UInt16 = 15
     private static let pinKeyCode: UInt16 = 35
-    private static let undoKeyCode: UInt16 = 6
     private static let blockingCGFlags: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift,
     ]
@@ -75,13 +73,6 @@ struct OverlayKeyRouter {
         }
         if keyCode == pinKeyCode, hasCommandOnlyModifier {
             return .togglePin
-        }
-        // Cmd+Z is only meaningful when the custom input field doesn't
-        // own undo. The HotkeyManager tap further gates `.resumeLastChat`
-        // on `isCollectingActive()` so Cmd+Z falls through to the focused
-        // app once suggestions are visible.
-        if keyCode == undoKeyCode, hasCommandOnlyModifier, !customInputActive {
-            return .resumeLastChat
         }
 
         if customInputActive {
