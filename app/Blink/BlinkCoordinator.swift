@@ -216,6 +216,21 @@ final class BlinkCoordinator: @unchecked Sendable {
         return collectingState
     }
 
+    /// True while the overlay is up but suggestions haven't rendered
+    /// yet (collecting frames OR streaming model output). Used by
+    /// `HotkeyManager` to gate the ⌘Z resume — once suggestions land
+    /// we want ⌘Z to fall through to the focused app for native undo.
+    var isPreSuggestionsOverlay: Bool {
+        guard isOverlayActive else { return false }
+        if isCollectingActive { return true }
+        // `currentSuggestions` is touched on main; the closure callsite
+        // runs on the event-tap thread. Reading without a barrier is
+        // safe in practice because the only write happens on main and
+        // we only care about the post-stream transition, not exact
+        // mid-stream count semantics.
+        return currentSuggestions.isEmpty
+    }
+
     var shouldConsumeOverlayInsertKey: Bool {
         overlayInsertConsumeLock.lock()
         defer { overlayInsertConsumeLock.unlock() }
@@ -455,6 +470,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTogglePinKey = { [weak self] in
             guard let self else { return }
             self.overlay.setPinned(!self.overlay.isPinned)
+        }
+        overlay.onResumeLastChatKey = { [weak self] in
+            self?.resumeLastChatIfAvailable()
+            return true
         }
         overlay.onDismissKey = { [weak self] in
             self?.dismissOverlay()
@@ -1550,6 +1569,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard let self else { return }
                     self.overlay.setPinned(!self.overlay.isPinned)
                 }
+                self.overlay.onResumeLastChatKey = { [weak self] in
+                    self?.resumeLastChatIfAvailable()
+                    return true
+                }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
@@ -1882,6 +1905,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                         guard let self else { return }
                         self.overlay.setPinned(!self.overlay.isPinned)
                     }
+                    self.overlay.onResumeLastChatKey = { [weak self] in
+                        self?.resumeLastChatIfAvailable()
+                        return true
+                    }
                     self.overlay.onDismissKey = { [weak self] in
                         self?.dismissOverlay()
                     }
@@ -2177,9 +2204,15 @@ final class BlinkCoordinator: @unchecked Sendable {
         let text = currentSuggestions[index]
         let requestID = currentRequestID
         let clientMetadata = Self.clientMetadata()
+        let pinned = overlay.isPinned
         recordChoice(index: index, text: text, action: "inserted")
-        currentBundleDir = nil
-        resetChoiceState(suggestionCount: 0)
+        // Pinned panel: keep the run live so a follow-up pick / keyboard
+        // nav from the same panel still works. The unpinned path tears
+        // it all down via resetCurrentRun once dismissAnimated completes.
+        if !pinned {
+            currentBundleDir = nil
+            resetChoiceState(suggestionCount: 0)
+        }
         let finishingRequestID = requestID
         let attachmentRefs = index < currentSuggestionDetails.count ? overlay.activeAttachments(for: index) : []
         status("inserting suggestion \(index + 1)...")
@@ -2206,7 +2239,6 @@ final class BlinkCoordinator: @unchecked Sendable {
             } else {
                 guard self.currentRequestID == nil else { return }
             }
-            let pinned = self.overlay.isPinned
             let previousApp = self.overlay.previousFrontmost
             let runInsert: () -> Void = { [weak self] in
                 guard let self else { return }
@@ -2293,14 +2325,17 @@ final class BlinkCoordinator: @unchecked Sendable {
                         )
                     }
                 }
-                self.resetCurrentRun()
             }
             if pinned {
-                self.overlay.resetAfterInsertKeepOpen()
+                // Keep the panel exactly as it was — same suggestion
+                // cards, same coordinator state — so the user can pick
+                // another, copy text, or just leave it sitting. Esc
+                // dismisses; ⌘P unpins.
                 runInsert()
             } else {
                 self.overlay.dismissAnimated {
                     runInsert()
+                    self.resetCurrentRun()
                 }
             }
         }
@@ -2413,14 +2448,15 @@ final class BlinkCoordinator: @unchecked Sendable {
                     )
                 }
             }
-            self.resetCurrentRun()
         }
         if pinned {
-            overlay.resetAfterInsertKeepOpen()
+            // Keep the panel exactly as it was after a pinned custom
+            // reply — user can keep typing follow-ups in the same panel.
             runInsert()
         } else {
             overlay.dismissAnimated {
                 runInsert()
+                self.resetCurrentRun()
             }
         }
     }
@@ -2442,6 +2478,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTextEditingKey = nil
         overlay.onRerollKey = nil
         overlay.onTogglePinKey = nil
+        overlay.onResumeLastChatKey = nil
         overlay.onChoiceKey = nil
         overlay.onArrowKey = nil
         overlay.onInsertKey = nil
@@ -2826,7 +2863,21 @@ final class BlinkCoordinator: @unchecked Sendable {
         }
     }
 
-    private func reportFailure(title: String, statusText: String, detail: String) {
+    private func reportFailure(
+        title: String,
+        statusText: String,
+        detail: String,
+        file: String = #fileID,
+        line: Int = #line
+    ) {
+        // Dogfood diagnostic for the "Funk boop on hotkey" report:
+        // every code path that plays the hardError chime logs its
+        // source location and the detail. Once the boop reproduces,
+        // `log show --predicate 'subsystem == "com.henryz2004.blink"' --info`
+        // pinpoints which `reportFailure` call site fired.
+        latencyLogger.error(
+            "report_failure at \(file, privacy: .public):\(line, privacy: .public) title=\(title, privacy: .public) status=\(statusText, privacy: .public) detail=\(detail, privacy: .public)"
+        )
         status(statusText)
         DispatchQueue.main.async {
             self.soundEffects.play(.hardError)
