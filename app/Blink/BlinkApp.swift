@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
+            isPreSuggestionsOverlay: { [weak coordinator] in coordinator?.isPreSuggestionsOverlay ?? false },
             onSummarize: { [weak coordinator, weak nudges] pressedAt in
                 let summarizeEnteredAt = DispatchTime.now()
                 Task { @MainActor in nudges?.noteHotkeyInvoked() }

@@ -28,8 +28,22 @@ final class SuggestionsPanel: NSPanel {
         // even when text is selected. Router already handles the
         // customInputActive case, so this is a no-op for typing into the
         // custom reply field.
-        if event.type == .keyDown, onLocalKeyDown?(event) == true {
-            return
+        if event.type == .keyDown {
+            if onLocalKeyDown?(event) == true {
+                return
+            }
+            // Router didn't match. If the custom-input field is the active
+            // editor, let the event reach it for typing/native shortcuts.
+            // Otherwise swallow: the first responder is most likely a
+            // selectable suggestion text field's field editor, whose
+            // default `keyDown` calls NSResponder.beep() on unmatched
+            // keys — and the user reads that as a "boop" sitting on top
+            // of the Blink chime. The panel's own `keyDown` override
+            // already implements this swallow, but `sendEvent` skips it
+            // when a child field editor is first responder.
+            if customReplyField?.isEditing != true {
+                return
+            }
         }
         super.sendEvent(event)
     }
@@ -463,6 +477,13 @@ final class SuggestionsOverlay: NSObject {
     private var basePanelHeight: CGFloat = 0
     private var basePanelTopY: CGFloat = 0
     private var summaryCard: NSView?
+    /// Inner content view of the summary glass pane. On macOS 26+,
+    /// this is a separate NSView hosted as the NSGlassEffectView's
+    /// contentView; on legacy macOS it's the NSVisualEffectView itself.
+    /// Stashed so post-show updates (e.g. installing the suggestion
+    /// hint after the streaming-loading transition) can add subviews
+    /// to the right host.
+    private var summaryContent: NSView?
     private var summaryLabel: NSTextField?
     private var refreshStatusPill: NSView?
     private var refreshStatusLabel: NSTextField?
@@ -604,12 +625,16 @@ final class SuggestionsOverlay: NSObject {
         show(tldr: tldr, suggestionDetails: suggestions.map(SuggestionDetail.plain))
     }
 
+    /// Bottom-of-summary hint while suggestions are visible.
+    private static let suggestionHintText =
+        "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R reroll \u{00B7} \u{2318}P pin \u{00B7} Esc dismiss"
+
     func show(tldr: String, suggestionDetails: [SuggestionDetail]) {
         show(
             tldr: tldr,
             suggestionDetails: suggestionDetails,
             showsCustomInput: true,
-            hintText: "Press 1 / 2 / 3 to expand \u{00B7} \u{2318}R reroll \u{00B7} \u{2318}P pin \u{00B7} Esc dismiss",
+            hintText: Self.suggestionHintText,
             showsTldrHeader: true
         )
     }
@@ -656,6 +681,34 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         label.stringValue = composedHintText(base: base)
+    }
+
+    /// Install the bottom-of-summary hint label on demand. Used by the
+    /// streaming-loading → suggestions transition (`updateSummary`'s
+    /// `wasLoading` branch): `showLoading` set `hintText: nil`, so the
+    /// label was never created during the initial show(). Adding it now
+    /// without rebuilding the whole panel avoids the flicker the
+    /// in-place-update path was designed to prevent.
+    private func installSuggestionHintIfNeeded(_ baseText: String) {
+        guard summaryHintLabel == nil, let host = summaryContent else { return }
+        let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
+        let contentWidth = Layout.panelWidth
+        self.summaryHintBaseText = baseText
+        let hint = label(
+            frame: NSRect(
+                x: 24,
+                y: Layout.summaryBottomInset,
+                width: contentWidth - 48,
+                height: Layout.summaryHintHeight
+            ),
+            text: composedHintText(base: baseText),
+            font: hintFont,
+            color: .tertiaryLabelColor,
+            singleLine: true
+        )
+        hint.alignment = .center
+        host.addSubview(hint)
+        self.summaryHintLabel = hint
     }
 
     func showLoading(tldr: String) {
@@ -1136,6 +1189,7 @@ final class SuggestionsOverlay: NSObject {
         self.basePanelHeight = panelHeight
         self.basePanelTopY = frame.maxY
         self.summaryCard = summary.outer
+        self.summaryContent = summary.content
         self.summaryLabel = summaryLabel
         self.summaryBaseFrame = summaryFrame
         self.summaryTextY = summaryTextY
@@ -1298,6 +1352,10 @@ final class SuggestionsOverlay: NSObject {
             // promote the panel to key so its local handler intercepts stray
             // keystrokes. Mirrors the immediate-show path in `show(...)`.
             panel.makeKey()
+            // `showLoading` skipped the bottom hint (hintText: nil), so the
+            // hint label was never created. Install it now — same string
+            // the non-streaming `show(tldr:suggestionDetails:)` uses.
+            installSuggestionHintIfNeeded(Self.suggestionHintText)
         }
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
@@ -2038,6 +2096,7 @@ final class SuggestionsOverlay: NSObject {
         panel = nil
         contentView = nil
         summaryCard = nil
+        summaryContent = nil
         summaryLabel = nil
         summaryExpandButton = nil
         summaryScrollView = nil
