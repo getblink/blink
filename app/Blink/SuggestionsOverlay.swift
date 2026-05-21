@@ -522,6 +522,7 @@ final class SuggestionsOverlay: NSObject {
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onRerollKey: (() -> Void)?
     var onTogglePinKey: (() -> Void)?
+    var onResumeLastChatKey: (() -> Bool)?
     var onDismissKey: (() -> Void)?
     var onVisibilityChange: ((Bool) -> Void)?
     var onPinnedChanged: ((Bool) -> Void)?
@@ -3288,6 +3289,12 @@ final class SuggestionsOverlay: NSObject {
         case .togglePin:
             onTogglePinKey?()
             return true
+        case .resumeLastChat:
+            // Returns Bool so the coordinator can refuse (no snapshot
+            // available, or not in collecting state) — in which case the
+            // key falls through to the panel's responder chain so the
+            // system can still surface the standard "no undo" beep.
+            return onResumeLastChatKey?() ?? false
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false
         }
