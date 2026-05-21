@@ -48,8 +48,40 @@ enum SelectionCapture {
         guard shouldTrySyntheticCopy(role: context.role, bundleID: context.bundleID) else {
             return nil
         }
+        // If AX exposes a selected-text range and it's explicitly zero
+        // length, there's nothing to copy. Posting Cmd+C anyway lands
+        // an empty copy in the focused app, and some apps (Tauri /
+        // WebKit text fields like Conductor) beep when Cmd+C fires
+        // with no selection. Skip the fallback in that case. A nil
+        // range means the element doesn't expose range info at all
+        // (Chromium contenteditable, Electron) — still worth trying
+        // synthetic Cmd+C because AX selection is known broken there.
+        if let rangeLength = readSelectedRangeLength(context.element),
+           rangeLength == 0 {
+            return nil
+        }
         guard let raw = synthesizeCopyAndRead(maxWaitMS: 120) else { return nil }
         return sanitize(raw, source: .syntheticCopy, maxChars: maxChars)
+    }
+
+    /// Read the length of the focused element's selected-text range, or
+    /// nil when the attribute isn't exposed. Used to skip the synthetic
+    /// Cmd+C fallback when AX confirms no selection exists — sending
+    /// Cmd+C to an empty text field makes some apps (Tauri/WebKit)
+    /// beep.
+    private static func readSelectedRangeLength(_ element: AXUIElement) -> Int? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &ref
+        ) == .success, let ref else { return nil }
+        guard CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
+        let axValue = ref as! AXValue
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+        return range.length
     }
 
     // MARK: - AX
