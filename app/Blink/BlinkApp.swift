@@ -169,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = coordinator?.performCustomInputShortcut(shortcut)
             },
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
+            onTogglePin: { [weak coordinator] in coordinator?.toggleOverlayPin() },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

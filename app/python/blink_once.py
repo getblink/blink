@@ -184,19 +184,23 @@ def _follow_up_history_lines(history: Any) -> list[str]:
 def style_block(style: dict[str, Any] | None) -> str:
     if not isinstance(style, dict):
         return ""
-    lines: list[str] = []
+    lines: list[str] = ["<style_preferences>"]
+    body_count = 0
     for knob in STYLE_KNOB_ORDER:
         value = str(style.get(knob) or "").strip().lower()
         instruction = STYLE_KNOB_INSTRUCTIONS.get(knob, {}).get(value)
         if instruction:
             lines.append(f"- {instruction}")
+            body_count += 1
     about_me = str(style.get("about_me") or "").strip()
     if about_me:
         about_me = about_me[:STYLE_ABOUT_ME_MAX_CHARS]
         lines.append(f"- About the user: {about_me}")
-    if not lines:
+        body_count += 1
+    if body_count == 0:
         return ""
-    return "Style preferences:\n" + "\n".join(lines)
+    lines.append("</style_preferences>")
+    return "\n".join(lines)
 
 DEFAULT_PROMPT = """<identity>
 You are an expert observer of the user's active digital workspace. You produce high-signal, low-friction summaries and three paste-ready next actions. Speak like a friend leaning over their shoulder: warm, terse, direct.
@@ -823,53 +827,50 @@ def prompt_with_context(
         for text in [_bounded_text(example.get("user_typed"), PREFERENCE_TEXT_MAX_CHARS)]
         if text
     }
-    lines = [""]
+    blocks: list[str] = []
     if style_text:
-        lines.append(style_text)
+        blocks.append(style_text)
     if follow_up_history_lines:
-        lines.extend(
-            [
-                "User's recent follow-up guidance (apply per suggestion rule 7):",
-            ]
-        )
-        lines.extend(follow_up_history_lines)
+        block_lines = [
+            "<recent_follow_up_guidance>",
+            "Apply per suggestion rule 7.",
+        ]
+        block_lines.extend(follow_up_history_lines)
+        block_lines.append("</recent_follow_up_guidance>")
+        blocks.append("\n".join(block_lines))
     if has_stateful_context:
-        lines.extend(
-            [
-                "Stateful Blink context:",
-                "Use user preference examples to infer which suggestions are useful in this surface.",
-                "User voice examples below are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
-                "Use recent same-surface history only for continuity in this immediate thread. Current screen evidence wins.",
-            ]
-        )
+        block_lines = [
+            "<stateful_context>",
+            "Use user preference examples in <preference_examples> to infer which suggestions are useful in this surface.",
+            "User voice examples in <voice_examples> are samples of how this user actually writes. Imitate their style closely in the suggestions: casing, punctuation, contractions, sentence shape, vocabulary, hedging, emoji habits. The 'do not copy facts' rule applies: if a voice sample mentions a name, fact, or commitment that isn't on the current screen, don't carry it over. The current capture's tone wins when it conflicts with older voice (for example, a formal escalation overrides a casual chat tic).",
+            "Use the entries in <recent_surface_history> only for continuity in this immediate thread. Current screen evidence wins.",
+            "</stateful_context>",
+        ]
+        blocks.append("\n".join(block_lines))
     if previous_suggestion_texts:
-        lines.extend(
-            [
-                "Reroll instructions:",
-            ]
-        )
+        block_lines = ["<reroll_instructions>"]
         if follow_up_instruction:
-            lines.extend(
+            block_lines.extend(
                 [
-                    "User follow-up instruction:",
-                    follow_up_instruction,
+                    f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
                     "Apply this instruction to the new suggestions while still using only visible evidence.",
                 ]
             )
-        lines.append(
+        block_lines.append(
             "The user asked for a fresh set of suggestions for the same capture. Use the same visible evidence, but avoid repeating these previous suggestions unless one is clearly the only correct answer:"
         )
         for suggestion in previous_suggestion_texts:
-            lines.append(f"- {suggestion}")
+            block_lines.append(f"- {suggestion}")
+        block_lines.append("</reroll_instructions>")
+        blocks.append("\n".join(block_lines))
     elif follow_up_instruction:
-        lines.extend(
-            [
-                "Reroll instructions:",
-                "User follow-up instruction:",
-                follow_up_instruction,
-                "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
-            ]
-        )
+        block_lines = [
+            "<reroll_instructions>",
+            f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
+            "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
+            "</reroll_instructions>",
+        ]
+        blocks.append("\n".join(block_lines))
     if preference_examples:
         valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
         for example in preference_examples[:PREFERENCE_EXAMPLE_LIMIT]:
@@ -889,24 +890,29 @@ def prompt_with_context(
             valid_pref_examples.append((example, user_typed, rejected_texts))
         if len(valid_pref_examples) == 1:
             _, user_typed, _ = valid_pref_examples[0]
-            lines.append(f'Last time, the user typed "{user_typed}" instead of the model\'s suggestions.')
-        elif valid_pref_examples:
-            lines.extend(
-                [
-                    "User preference examples from this same surface:",
-                    "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
-                    "These are individual data points, not a pattern. Don't extrapolate a stance or verb shape from a single example; at most they tell you the user wanted something more specific than what was offered.",
-                ]
+            blocks.append(
+                "<preference_examples>\n"
+                f'Last time, the user typed "{user_typed}" instead of the model\'s suggestions.\n'
+                "</preference_examples>"
             )
+        elif valid_pref_examples:
+            block_lines = [
+                "<preference_examples>",
+                "These show cases where model suggestions were not useful enough and the user typed their own reply instead.",
+                "These are individual data points, not a pattern. Don't extrapolate a stance or verb shape from a single example; at most they tell you the user wanted something more specific than what was offered.",
+            ]
             for index, (example, user_typed, rejected_texts) in enumerate(valid_pref_examples, start=1):
                 screen_takeaway = _bounded_text(example.get("screen_takeaway"), PREFERENCE_TEXT_MAX_CHARS)
-                lines.append(f"Example {index}:")
+                block_lines.append(f'<example index="{index}">')
                 if screen_takeaway:
-                    lines.append(f"Screen takeaway: {screen_takeaway}")
-                lines.append("Model suggestions the user did not use:")
+                    block_lines.append(f"Screen takeaway: {screen_takeaway}")
+                block_lines.append("Model suggestions the user did not use:")
                 for suggestion in rejected_texts:
-                    lines.append(f"- {suggestion}")
-                lines.append(f"User typed instead: {user_typed}")
+                    block_lines.append(f"- {suggestion}")
+                block_lines.append(f"User typed instead: {user_typed}")
+                block_lines.append("</example>")
+            block_lines.append("</preference_examples>")
+            blocks.append("\n".join(block_lines))
     if voice_samples:
         rendered_voice_samples = []
         for sample in voice_samples:
@@ -916,11 +922,14 @@ def prompt_with_context(
             if text and text not in preference_texts:
                 rendered_voice_samples.append(text)
         if rendered_voice_samples:
-            lines.append("User voice examples:")
+            block_lines = ["<voice_examples>"]
             for text in rendered_voice_samples:
-                lines.append(f"- {text}")
+                block_lines.append(f"- {text}")
+            block_lines.append("</voice_examples>")
+            blocks.append("\n".join(block_lines))
     if surface_history:
-        lines.append("Recent same-surface history:")
+        block_lines = ["<recent_surface_history>"]
+        body_added = False
         for item in surface_history:
             if not isinstance(item, dict):
                 continue
@@ -930,20 +939,28 @@ def prompt_with_context(
             chosen_action = _bounded_text(item.get("chosen_action"), 80)
             chosen_index = item.get("chosen_index")
             if tldr:
-                lines.append(f"- Prior summary: {tldr}")
+                block_lines.append(f"- Prior summary: {tldr}")
+                body_added = True
             if custom_reply:
                 if custom_reply in preference_texts:
-                    lines.append("  Prior outcome: user typed a custom reply instead of using the suggestions.")
+                    block_lines.append("  Prior outcome: user typed a custom reply instead of using the suggestions.")
                 else:
-                    lines.append(f"  Prior outcome: {custom_reply}")
+                    block_lines.append(f"  Prior outcome: {custom_reply}")
+                body_added = True
             elif chosen_text:
                 index_text = f" #{chosen_index + 1}" if isinstance(chosen_index, int) else ""
                 action_text = chosen_action or "used"
-                lines.append(
+                block_lines.append(
                     f"  Prior outcome: user {action_text} model suggestion{index_text}; "
                     "do not copy that prior model-authored wording into new suggestions."
                 )
-    return prompt_text.rstrip() + "\n" + "\n".join(lines) + "\n"
+                body_added = True
+        if body_added:
+            block_lines.append("</recent_surface_history>")
+            blocks.append("\n".join(block_lines))
+    if not blocks:
+        return prompt_text
+    return prompt_text.rstrip() + "\n\n" + "\n\n".join(blocks) + "\n"
 
 
 def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, Any] | None) -> str:
