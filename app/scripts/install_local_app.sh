@@ -10,9 +10,27 @@ ROOT_DIR="$(cd "$APP_DIR/.." && pwd)"
 source "$SCRIPT_DIR/env_compat.sh"
 blink_apply_legacy_env_aliases
 
+# Mirror build.sh's env load so we see BLINK_SIGN_IDENTITY (and any
+# other settings) when deciding whether to reset TCC below. Without
+# this the auto-detect always flags the install as ad-hoc, since the
+# env isn't typically exported from the parent shell.
+ROOT_ENV="$SCRIPT_DIR/../../.env"
+if [[ -f "$ROOT_ENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$ROOT_ENV"
+fi
+
 CANONICAL_APP="${BLINK_CANONICAL_APP:-$HOME/Applications/Blink.app}"
 
-RESET_TCC=1
+# TCC tracks permission grants by the bundle's designated requirement.
+# With a Developer ID cert the DR is anchored to identifier + cert chain
+# (stable across rebuilds → TCC grants survive). With ad-hoc signing
+# the DR is cdhash-anchored (changes on every rebuild → grants go
+# stale). So the reset is only useful when the previous install or the
+# new install is ad-hoc. Default to auto-detect; `--reset-tcc` /
+# `--skip-tcc-reset` flags override. If you switch Developer ID certs,
+# pass `--reset-tcc` explicitly — the cert leaf is part of the DR.
+RESET_TCC=auto
 LAUNCH_APP=1
 
 while [[ $# -gt 0 ]]; do
@@ -31,11 +49,36 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "[blink] unknown option: $1" >&2
-            echo "[blink] usage: bash app/scripts/install_local_app.sh [--skip-tcc-reset] [--no-launch]" >&2
+            echo "[blink] usage: bash app/scripts/install_local_app.sh [--reset-tcc|--skip-tcc-reset] [--no-launch]" >&2
             exit 2
             ;;
     esac
 done
+
+if [[ "$RESET_TCC" == "auto" ]]; then
+    RESET_TCC=0
+    if [[ "${BLINK_SIGN_IDENTITY:--}" == "-" ]]; then
+        # New install will be ad-hoc; cdhash-anchored DR invalidates
+        # existing TCC grants every build.
+        RESET_TCC=1
+        echo "[blink] auto-reset: new install will be ad-hoc signed"
+    elif [[ -d "$CANONICAL_APP" ]]; then
+        # Read codesign output into a variable instead of piping into
+        # `grep -q`. With `set -o pipefail` the early grep-q close
+        # SIGPIPEs codesign on its next write, returning 141 from the
+        # pipeline — and the `!` would then flip false-negatives into
+        # spurious resets.
+        prev_sig=$(codesign -dvv "$CANONICAL_APP" 2>&1 || true)
+        if ! grep -q '^Authority=Developer ID Application:' <<<"$prev_sig"; then
+            # Previous install was ad-hoc; TCC has stale cdhash rows
+            # that won't match the new Developer ID DR. One-shot reset
+            # clears them; subsequent Developer ID → Developer ID
+            # installs skip the reset.
+            RESET_TCC=1
+            echo "[blink] auto-reset: previous install was ad-hoc, clearing stale TCC rows"
+        fi
+    fi
+fi
 
 remove_duplicate_app() {
     # Delete a duplicate Blink.app bundle so macOS Launch Services and TCC
