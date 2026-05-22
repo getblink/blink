@@ -157,6 +157,59 @@ final class ScreenCaptureTests: XCTestCase {
         ]
     }
 
+    func testBestDisplayIndexPicksContainingDisplay() {
+        // Two displays side by side. A rect whose center sits on the
+        // right-hand display should pick that display, even though both
+        // intersect the rect.
+        let left = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let right = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+        let rect = CGRect(x: 1800, y: 200, width: 800, height: 600)
+
+        let idx = ScreenCapture.bestDisplayIndex(for: rect, displayFrames: [left, right])
+
+        XCTAssertEqual(idx, 1)
+    }
+
+    func testBestDisplayIndexFallsBackToLargestIntersection() {
+        // Rect center off all displays (degenerate AX coords). Should pick
+        // the display with the largest intersection rather than nil so the
+        // fullscreen path still degrades to a sensible default.
+        let left = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let right = CGRect(x: 2000, y: 0, width: 1000, height: 800)
+        let orphan = CGRect(x: -500, y: -500, width: 100, height: 100)
+
+        let idx = ScreenCapture.bestDisplayIndex(for: orphan, displayFrames: [left, right])
+
+        // Neither contains the center, neither intersects — should still
+        // return a non-nil index (the first display, by tie-break).
+        XCTAssertEqual(idx, 0)
+    }
+
+    func testBestDisplayIndexReturnsNilForEmptyList() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
+
+        XCTAssertNil(ScreenCapture.bestDisplayIndex(for: rect, displayFrames: []))
+    }
+
+    func testBestDisplayIndexPrefersCenterOverArea() {
+        // The rect overlaps display A more in area, but its center sits on
+        // display B. Center-containment must win — that's what makes the
+        // fullscreen path land on the right Space's display.
+        let displayA = CGRect(x: 0, y: 0, width: 2000, height: 1000)
+        let displayB = CGRect(x: 2000, y: 0, width: 500, height: 1000)
+        // Wide rect spanning both displays, center at x=2050 (on B).
+        let rect = CGRect(x: 1055, y: 400, width: 1990, height: 200)
+
+        XCTAssertTrue(displayB.contains(CGPoint(x: rect.midX, y: rect.midY)))
+        let areaOnA = displayA.intersection(rect).width * displayA.intersection(rect).height
+        let areaOnB = displayB.intersection(rect).width * displayB.intersection(rect).height
+        XCTAssertGreaterThan(areaOnA, areaOnB)
+
+        let idx = ScreenCapture.bestDisplayIndex(for: rect, displayFrames: [displayA, displayB])
+
+        XCTAssertEqual(idx, 1, "center-containment must outrank intersection area")
+    }
+
     func testPreferredCaptureSizeReportsAxSourceEvenWhenDimsMatchSck() {
         // When AX and SCK happen to agree, the source tag must still report
         // .ax so log audits can confirm the AX path fired.

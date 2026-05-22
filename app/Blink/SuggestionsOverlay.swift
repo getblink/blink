@@ -464,6 +464,16 @@ final class SuggestionsOverlay: NSObject {
     }
 
     private var panel: SuggestionsPanel?
+    /// Screen the next panel should be centered on. Set by the coordinator
+    /// from the latest `ScreenCapture.Capture.windowFramePoints` so the
+    /// overlay lands on the display the captured content came from, not
+    /// `NSScreen.main` (which on multi-display + Spaces-per-display setups
+    /// flips around based on which display most recently had key focus).
+    /// Nil falls back to `NSScreen.main`, preserving prior behavior for
+    /// non-capture entry points (Settings, manual show calls in tests, etc).
+    /// Only consulted at panel construction; once a panel exists, recenter
+    /// logic uses `panel.screen` and ignores this value.
+    var preferredScreen: NSScreen?
     // Close handle for the active multi-frame submit-prompt pill. Set by
     // `showSubmitPrompt()`; invoked + cleared by `dismissSubmitPrompt()`
     // (or replaced if `showSubmitPrompt()` is called again).
@@ -814,7 +824,8 @@ final class SuggestionsOverlay: NSObject {
         let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
         let panelHeight = contentHeight + Layout.shadowBleed * 2
 
-        let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let targetScreen = preferredScreen ?? NSScreen.main
+        let screenFrame = targetScreen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let origin = NSPoint(
             x: screenFrame.midX - panelWidth / 2,
             y: screenFrame.midY - panelHeight / 2

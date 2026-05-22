@@ -64,11 +64,12 @@ enum ScreenCapture {
     static func captureFrontmostWindow(
         preferredGlobalRect: CGRect? = nil,
         shareableContent cachedContent: SCShareableContent? = nil,
-        preferredPID: pid_t? = nil
+        preferredPID: pid_t? = nil,
+        axIsFullscreen: Bool = false
     ) async throws -> Capture {
         let startedAt = Date()
         TCCDiagnostics.log(
-            "screen_capture_start preferred_pid=\(preferredPID.map(String.init) ?? "nil") preferred_rect=\(preferredGlobalRect.map { NSStringFromRect($0) } ?? "nil") cached_shareable_content=\(cachedContent != nil)"
+            "screen_capture_start preferred_pid=\(preferredPID.map(String.init) ?? "nil") preferred_rect=\(preferredGlobalRect.map { NSStringFromRect($0) } ?? "nil") ax_is_fullscreen=\(axIsFullscreen) cached_shareable_content=\(cachedContent != nil)"
         )
 
         // Preflight is informational only — we do NOT guard on it (see class
@@ -111,6 +112,49 @@ enum ScreenCapture {
                 throw CaptureError.permissionDenied
             }
             throw CaptureError.underlying(error)
+        }
+
+        // Fullscreen apps live on their own macOS Space. Capturing them via a
+        // per-window SCK filter from a different Space is the failure mode
+        // behind: (a) "Failed to start stream due to audio/video capture
+        // failure" dialogs, (b) silent all-black captures, and (c) the
+        // chooser picking the wrong same-PID candidate when multiple
+        // fullscreen Spaces are open. Display capture of the SCDisplay that
+        // contains the AX-reported window center is significantly more
+        // reliable on cross-Space content because it streams compositor
+        // output rather than a per-surface window stream. Skip the
+        // candidate/chooser walk entirely in that case.
+        if axIsFullscreen,
+           let axRect = preferredGlobalRect,
+           let display = displayForRect(axRect, in: content) {
+            TCCDiagnostics.log(
+                "fullscreen_display_capture_attempt pid=\(pid) ax_rect=\(NSStringFromRect(axRect)) display_id=\(display.displayID) display_frame=\(NSStringFromRect(display.frame))"
+            )
+            do {
+                let pngData = try await captureDisplayPNG(display)
+                await MainActor.run {
+                    CaptureConfirmationOverlay.flash(frame: display.frame)
+                }
+                return Capture(
+                    pngData: pngData,
+                    capturedAt: startedAt,
+                    windowFramePoints: display.frame,
+                    windowID: 0,
+                    windowTitle: nil,
+                    ownerPID: pid,
+                    ownerName: ownerName,
+                    ownerBundleID: nil,
+                    shareableContent: content
+                )
+            } catch {
+                logSCKError("fullscreen_display_capture_failed", error: error)
+                if isPermissionDenialError(error) {
+                    throw CaptureError.permissionDenied
+                }
+                // Fall through to the window-capture path as a backstop. The
+                // chooser may still pick wrong, but on AX-reachable apps
+                // we've at least logged the failure mode for diagnosis.
+            }
         }
 
         let candidates = candidateWindows(in: content, pid: pid)
@@ -229,7 +273,8 @@ enum ScreenCapture {
     static func captureFrontmostWindowSync(
         preferredGlobalRect: CGRect? = nil,
         shareableContent: SCShareableContent? = nil,
-        preferredPID: pid_t? = nil
+        preferredPID: pid_t? = nil,
+        axIsFullscreen: Bool = false
     ) throws -> Capture {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Capture, Error>!
@@ -238,7 +283,8 @@ enum ScreenCapture {
                 result = .success(try await captureFrontmostWindow(
                     preferredGlobalRect: preferredGlobalRect,
                     shareableContent: shareableContent,
-                    preferredPID: preferredPID
+                    preferredPID: preferredPID,
+                    axIsFullscreen: axIsFullscreen
                 ))
             }
             catch { result = .failure(error) }
@@ -248,10 +294,24 @@ enum ScreenCapture {
         return try result.get()
     }
 
+    struct AXWindowProbe {
+        var globalRect: CGRect?
+        var isFullscreen: Bool
+    }
+
     /// Probe Accessibility for the focused (or main) window's screen rect for the given PID.
     /// Three-tier: AXFocusedWindow → AXMainWindow → nil (today's behavior as last resort).
     /// A 200ms messaging timeout prevents a hung target from stalling capture.
     static func focusedWindowGlobalRect(for pid: pid_t) -> CGRect? {
+        focusedWindowAXProbe(for: pid).globalRect
+    }
+
+    /// Combined AX probe that reads the focused window's global rect and its
+    /// `kAXFullScreenAttribute` in one round-trip. Returned struct fields may
+    /// be individually nil/false when the corresponding attribute couldn't be
+    /// read; callers should treat the absence of fullscreen as the
+    /// conservative default (window capture rather than display capture).
+    static func focusedWindowAXProbe(for pid: pid_t) -> AXWindowProbe {
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, 0.2)
 
@@ -260,21 +320,29 @@ enum ScreenCapture {
             AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &windowRef)
         }
         guard let windowRef, CFGetTypeID(windowRef) == AXUIElementGetTypeID() else {
-            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=no_window_attribute")
-            return nil
+            TCCDiagnostics.log("ax_focused_probe pid=\(pid) result=nil reason=no_window_attribute")
+            return AXWindowProbe(globalRect: nil, isFullscreen: false)
         }
         let windowElement = windowRef as! AXUIElement  // safe: CFGetTypeID verified above
         // The 200ms cap set on `appElement` doesn't propagate to elements vended by it;
-        // re-apply on `windowElement` so the position/size reads stay bounded too.
+        // re-apply on `windowElement` so subsequent reads stay bounded too.
         AXUIElementSetMessagingTimeout(windowElement, 0.2)
 
+        let rect = readAXWindowRect(windowElement, pid: pid)
+        let isFullscreen = readAXFullscreen(windowElement)
+        TCCDiagnostics.log(
+            "ax_focused_probe pid=\(pid) rect=\(rect.map { NSStringFromRect($0) } ?? "nil") is_fullscreen=\(isFullscreen)"
+        )
+        return AXWindowProbe(globalRect: rect, isFullscreen: isFullscreen)
+    }
+
+    private static func readAXWindowRect(_ windowElement: AXUIElement, pid: pid_t) -> CGRect? {
         var posRef: CFTypeRef?
         var sizeRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(windowElement, kAXPositionAttribute as CFString, &posRef) == .success,
               AXUIElementCopyAttributeValue(windowElement, kAXSizeAttribute as CFString, &sizeRef) == .success,
               let posRef, CFGetTypeID(posRef) == AXValueGetTypeID(),
               let sizeRef, CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
-            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=no_position_or_size")
             return nil
         }
 
@@ -282,18 +350,37 @@ enum ScreenCapture {
         var size = CGSize.zero
         guard AXValueGetValue(posRef as! AXValue, .cgPoint, &position),  // safe: AXValueGetTypeID verified above
               AXValueGetValue(sizeRef as! AXValue, .cgSize, &size) else {
-            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=value_type_mismatch")
             return nil
         }
 
         guard size.width >= 80, size.height >= 80 else {
-            TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=nil reason=too_small width=\(size.width) height=\(size.height)")
             return nil
         }
+        return CGRect(origin: position, size: size)
+    }
 
-        let rect = CGRect(origin: position, size: size)
-        TCCDiagnostics.log("ax_focused_rect pid=\(pid) result=\(NSStringFromRect(rect))")
-        return rect
+    private static func readAXFullscreen(_ windowElement: AXUIElement) -> Bool {
+        var valueRef: CFTypeRef?
+        // "AXFullScreen" has been the canonical AXUIElement attribute name
+        // for the green-traffic-light fullscreen state since OS X 10.7. There
+        // is no kAX*Attribute symbol exported for it in the public
+        // Accessibility headers, so the literal string is the documented
+        // way to read it.
+        guard AXUIElementCopyAttributeValue(windowElement, "AXFullScreen" as CFString, &valueRef) == .success,
+              let valueRef else {
+            return false
+        }
+        // CFBoolean is bridged into NSNumber-shaped values; reading it as
+        // CFBooleanGetValue is the most direct check.
+        let typeID = CFGetTypeID(valueRef)
+        if typeID == CFBooleanGetTypeID() {
+            return CFBooleanGetValue((valueRef as! CFBoolean))
+        }
+        // Some apps return NSNumber-bridged values for boolean AX attributes.
+        if let number = valueRef as? NSNumber {
+            return number.boolValue
+        }
+        return false
     }
 
     // `kSCStreamErrorUserDeclined` — the genuine TCC denial. Everything else
@@ -583,24 +670,73 @@ enum ScreenCapture {
     }
 
     private static func displayForWindow(_ window: SCWindow, in content: SCShareableContent) -> SCDisplay? {
+        displayForRect(window.frame, in: content)
+    }
+
+    private static func displayForRect(_ rect: CGRect, in content: SCShareableContent) -> SCDisplay? {
         guard !content.displays.isEmpty else { return nil }
-        let center = CGPoint(x: window.frame.midX, y: window.frame.midY)
-        var bestDisplay = content.displays[0]
+        guard let idx = bestDisplayIndex(for: rect, displayFrames: content.displays.map(\.frame)) else {
+            return nil
+        }
+        return content.displays[idx]
+    }
+
+    /// Pure-data display chooser: returns the index of the display whose
+    /// frame contains the center of `rect`, or the one with the largest
+    /// intersection if no display contains the center. Extracted from
+    /// `displayForRect` so it's testable without SCDisplay (which can't be
+    /// constructed outside of SCK).
+    static func bestDisplayIndex(for rect: CGRect, displayFrames: [CGRect]) -> Int? {
+        guard !displayFrames.isEmpty else { return nil }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        var bestIndex = 0
         var bestArea: CGFloat = -1
         var bestContainsCenter = false
-        for display in content.displays {
-            let intersection = display.frame.intersection(window.frame)
+        for (idx, frame) in displayFrames.enumerated() {
+            let intersection = frame.intersection(rect)
             let area = intersection.isNull ? 0 : intersection.width * intersection.height
-            let containsCenter = display.frame.contains(center)
+            let containsCenter = frame.contains(center)
             let isBetter = (containsCenter && !bestContainsCenter)
                 || (containsCenter == bestContainsCenter && area > bestArea)
             if isBetter {
-                bestDisplay = display
+                bestIndex = idx
                 bestArea = area
                 bestContainsCenter = containsCenter
             }
         }
-        return bestDisplay
+        return bestIndex
+    }
+
+    /// Pick the `NSScreen` whose AppKit frame best covers `frame` (a global
+    /// CG rect, top-left origin — same coordinate space as
+    /// `Capture.windowFramePoints`). Used by the overlay to land on the
+    /// display the captured content came from instead of `NSScreen.main`,
+    /// which on multi-display setups flips around based on focus history.
+    ///
+    /// `NSScreen.frame` is in AppKit coords (bottom-left origin), while
+    /// `windowFramePoints` is in CG global coords (top-left origin), so we
+    /// translate before intersecting. Returns nil only when no screens are
+    /// attached.
+    @MainActor
+    static func screenForGlobalRect(_ frame: CGRect) -> NSScreen? {
+        guard let primary = NSScreen.screens.first else { return nil }
+        let height = primary.frame.height
+        // Convert frame from CG global (top-left) to AppKit (bottom-left).
+        // Y in AppKit = primaryHeight - (top + height).
+        let appKitRect = NSRect(
+            x: frame.origin.x,
+            y: height - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+        return NSScreen.screens.max { lhs, rhs in
+            intersectionArea(lhs.frame, appKitRect) < intersectionArea(rhs.frame, appKitRect)
+        }
+    }
+
+    private static func intersectionArea(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let i = a.intersection(b)
+        return i.isNull ? 0 : i.width * i.height
     }
 
     @MainActor

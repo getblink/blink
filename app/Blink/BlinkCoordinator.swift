@@ -1135,12 +1135,13 @@ final class BlinkCoordinator: @unchecked Sendable {
                 return nil
             }
         }
-        let axRect = effectivePID.flatMap { ScreenCapture.focusedWindowGlobalRect(for: $0) }
+        let axProbe = effectivePID.map { ScreenCapture.focusedWindowAXProbe(for: $0) }
 
         let capture = try ScreenCapture.captureFrontmostWindowSync(
-            preferredGlobalRect: axRect,
+            preferredGlobalRect: axProbe?.globalRect,
             shareableContent: shareableContent,
-            preferredPID: effectivePID
+            preferredPID: effectivePID,
+            axIsFullscreen: axProbe?.isFullscreen ?? false
         )
         let captureMS = durationMS(since: captureStartedPerf)
         TCCDiagnostics.log(
@@ -1174,6 +1175,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         // `CaptureConfirmationOverlay.flash` (ScreenCapture.swift:571-576)
         // which does the same conversion for its overlay window.
         let captureRectScreen = captureRectInAppKitScreen(capture.windowFramePoints)
+        // Tell the overlay which screen the captured content came from
+        // before any showCollecting / show / showLoading call constructs a
+        // panel. `panel.screen` takes over for recenters once the panel
+        // exists; this only steers the *first* placement. On fullscreen
+        // / multi-display setups, this is what prevents the overlay from
+        // landing on a different display than the captured window.
+        let capturedFrame = capture.windowFramePoints
+        DispatchQueue.main.async { [overlay] in
+            overlay.preferredScreen = ScreenCapture.screenForGlobalRect(capturedFrame)
+        }
         // Selection harvest runs here — on the capture queue, after the
         // PNG has landed and before any main-thread overlay dispatch —
         // so AX (and any synthesized Cmd+C) targets the still-frontmost
