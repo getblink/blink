@@ -135,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isOverlayActive: { [weak coordinator] in coordinator?.isOverlayActive ?? false },
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
-            isPreSuggestionsOverlay: { [weak coordinator] in coordinator?.isPreSuggestionsOverlay ?? false },
+            isOverlayPinned: { [weak coordinator] in coordinator?.isOverlayPinned ?? false },
             onSummarize: { [weak coordinator, weak nudges] pressedAt in
                 let summarizeEnteredAt = DispatchTime.now()
                 Task { @MainActor in nudges?.noteHotkeyInvoked() }
@@ -172,7 +172,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onTogglePin: { [weak coordinator] in coordinator?.toggleOverlayPin() },
             onArrowNav: { [weak coordinator] direction in coordinator?.handleArrowNav(direction) },
-            onResumeLastChat: { [weak coordinator] in coordinator?.resumeLastChatIfAvailable() },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 

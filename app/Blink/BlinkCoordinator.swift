@@ -117,6 +117,8 @@ final class BlinkCoordinator: @unchecked Sendable {
     private var overlayActiveValue = false
     private let customInputActiveLock = NSLock()
     private var customInputActiveValue = false
+    private let overlayPinnedLock = NSLock()
+    private var overlayPinnedValue = false
     private let overlayInsertConsumeLock = NSLock()
     private var overlayInsertConsumesReturnValue = false
     private var overlayKeySuggestionCount = 0
@@ -133,7 +135,12 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// (invoked from `DispatchQueue.main.async` in HotkeyManager)).
     private var lastDismissedSession: LastDismissedSession?
     private var lastDismissedSessionExpiry: DispatchSourceTimer?
-    private let resumeWindowSeconds: TimeInterval = 60
+    /// Auto-resume window. Tight (~3s) on purpose: the goal is to catch
+    /// "oh shit, I didn't mean to dismiss that" moments without auto-
+    /// restoring a chat the user has mentally moved on from. Esc dismisses
+    /// (`dismissedExplicitly = true`) are never auto-resumed regardless
+    /// of age — Esc is the "I'm done" signal.
+    private let autoResumeWindowSeconds: TimeInterval = 3
 
     private struct LastDismissedSession {
         let dismissedAt: Date
@@ -144,6 +151,18 @@ final class BlinkCoordinator: @unchecked Sendable {
         let customInputText: String
         let frontmostApp: [String: Any]
         let priorRequestID: String?
+        /// True for Esc dismiss; false for outside-click ("accidental").
+        /// Only `false` snapshots are eligible for auto-resume on next
+        /// hotkey press.
+        let dismissedExplicitly: Bool
+        /// Context fingerprint at dismiss time. Auto-resume requires both
+        /// to match the current frontmost — same app *and* same window.
+        let frontmostBundleID: String?
+        let frontmostWindowTitle: String?
+        /// Last-submitted-run context, preserved across dismiss so that
+        /// auto-resume + hotkey-to-add-frame keeps working (otherwise
+        /// the resumed chat can't be extended with another capture).
+        let submittedRun: SubmittedRunContext?
     }
 
     /// Snapshot of the just-submitted capture so that a hotkey press
@@ -216,25 +235,22 @@ final class BlinkCoordinator: @unchecked Sendable {
         return collectingState
     }
 
-    /// True while the overlay is up but suggestions haven't rendered
-    /// yet (collecting frames OR streaming model output). Used by
-    /// `HotkeyManager` to gate the ⌘Z resume — once suggestions land
-    /// we want ⌘Z to fall through to the focused app for native undo.
-    var isPreSuggestionsOverlay: Bool {
-        guard isOverlayActive else { return false }
-        if isCollectingActive { return true }
-        // `currentSuggestions` is touched on main; the closure callsite
-        // runs on the event-tap thread. Reading without a barrier is
-        // safe in practice because the only write happens on main and
-        // we only care about the post-stream transition, not exact
-        // mid-stream count semantics.
-        return currentSuggestions.isEmpty
-    }
-
     var shouldConsumeOverlayInsertKey: Bool {
         overlayInsertConsumeLock.lock()
         defer { overlayInsertConsumeLock.unlock() }
         return overlayInsertConsumesReturnValue
+    }
+
+    var isOverlayPinned: Bool {
+        overlayPinnedLock.lock()
+        defer { overlayPinnedLock.unlock() }
+        return overlayPinnedValue
+    }
+
+    private func setOverlayPinnedMirror(_ pinned: Bool) {
+        overlayPinnedLock.lock()
+        overlayPinnedValue = pinned
+        overlayPinnedLock.unlock()
     }
 
     static func clientMetadata() -> [String: Any] {
@@ -309,6 +325,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             allowsCustomInput: allowsCustomInput
         )
         setCustomInputActiveMirror(choiceState.customInputActive)
+        overlay.setCustomInputArmedHighlight(false)
         setOverlayKeyState(
             suggestionCount: suggestionCount,
             allowsCustomInput: allowsCustomInput,
@@ -369,9 +386,20 @@ final class BlinkCoordinator: @unchecked Sendable {
             onPermissionsNeeded?()
             return
         }
-        // The hotkey is always a fresh capture. To recover an
-        // accidentally-dismissed chat, press Cmd+Z during the collecting
-        // overlay — see `resumeLastChatIfCollecting()`.
+        // Auto-resume the just-dismissed chat when:
+        //   - last dismiss was implicit (outside-click, not Esc)
+        //   - within `autoResumeWindowSeconds` (~3s — only catches accidents)
+        //   - same frontmost app *and* same focused window title
+        // Outside that gate the hotkey is a normal fresh capture.
+        if let snapshot = takeAutoResumeSnapshotIfEligible() {
+            acknowledgeCaptureHotkey(
+                pressedAt: pressedAt,
+                summarizeEnteredAt: summarizeEnteredAt,
+                statusText: "resumed last chat"
+            )
+            restoreLastDismissedSession(snapshot)
+            return
+        }
         acknowledgeCaptureHotkey(
             pressedAt: pressedAt,
             summarizeEnteredAt: summarizeEnteredAt,
@@ -380,42 +408,43 @@ final class BlinkCoordinator: @unchecked Sendable {
         enqueueSummarize()
     }
 
-    private func takeResumeSnapshotIfFresh() -> LastDismissedSession? {
+    /// Returns the LDS snapshot iff it's eligible for auto-resume:
+    /// implicit dismiss, within the window, same bundle, same window
+    /// title. Consumes the snapshot on success.
+    @MainActor
+    private func takeAutoResumeSnapshotIfEligible() -> LastDismissedSession? {
         guard let snapshot = lastDismissedSession else { return nil }
+        guard !snapshot.dismissedExplicitly else { return nil }
         let age = Date().timeIntervalSince(snapshot.dismissedAt)
-        guard age <= resumeWindowSeconds else {
+        guard age <= autoResumeWindowSeconds else {
             clearLastDismissedSession()
             return nil
         }
-        // Consume — Cmd+Z should restore once. A second press during the
-        // restored overlay falls through to the focused app's undo.
+        let currentMeta = frontmostAppMetadata()
+        let currentBundle = currentMeta["bundle_id"] as? String
+        let currentTitle = currentMeta["window_title"] as? String
+        guard let snapshotBundle = snapshot.frontmostBundleID,
+              !snapshotBundle.isEmpty,
+              snapshotBundle == currentBundle else {
+            return nil
+        }
+        // Require both sides to have a title and match — strictness here
+        // is on purpose: same app + different window should not resume.
+        guard let snapshotTitle = snapshot.frontmostWindowTitle,
+              !snapshotTitle.isEmpty,
+              snapshotTitle == currentTitle else {
+            return nil
+        }
         lastDismissedSession = nil
         lastDismissedSessionExpiry?.cancel()
         lastDismissedSessionExpiry = nil
         return snapshot
     }
 
-    /// Cmd+Z entry point during the collecting / "reading the screen"
-    /// overlay. Cancels the in-flight capture and restores the previously
-    /// dismissed chat if one is still within the resume window. No-op
-    /// (and falls through to native undo at the event-tap layer) when no
-    /// snapshot is available.
-    @MainActor
-    func resumeLastChatIfAvailable() {
-        guard let snapshot = takeResumeSnapshotIfFresh() else {
-            status("nothing to undo")
-            return
-        }
-        if isCollectingActive {
-            cancelCollectingSession()
-        }
-        restoreLastDismissedSession(snapshot)
-    }
-
     private func armResumeExpiryTimer() {
         lastDismissedSessionExpiry?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + resumeWindowSeconds)
+        timer.schedule(deadline: .now() + autoResumeWindowSeconds)
         timer.setEventHandler { [weak self] in
             self?.clearLastDismissedSession()
         }
@@ -436,6 +465,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         currentSuggestions = snapshot.suggestions
         currentSuggestionDetails = snapshot.suggestionDetails
         currentBundleDir = snapshot.bundleDir
+        // Restore the submitted-run context so a follow-up hotkey on the
+        // resumed chat can still enter modal multi-frame. Without this,
+        // `handleSummaryHotkeyWhileOverlay` falls into the "nothing to
+        // add to" branch on auto-resumed chats.
+        lastSubmittedRun = snapshot.submittedRun
         terminalEmittedRequestID = nil
         resetChoiceState(suggestionCount: snapshot.suggestions.count)
 
@@ -471,12 +505,14 @@ final class BlinkCoordinator: @unchecked Sendable {
             guard let self else { return }
             self.overlay.setPinned(!self.overlay.isPinned)
         }
-        overlay.onResumeLastChatKey = { [weak self] in
-            self?.resumeLastChatIfAvailable()
-            return true
+        overlay.onPinnedChanged = { [weak self] pinned in
+            self?.setOverlayPinnedMirror(pinned)
         }
         overlay.onDismissKey = { [weak self] in
             self?.dismissOverlay()
+        }
+        overlay.onOutsideClickDismiss = { [weak self] in
+            self?.dismissOverlay(implicit: true)
         }
         overlay.show(
             tldr: snapshot.tldr,
@@ -524,6 +560,10 @@ final class BlinkCoordinator: @unchecked Sendable {
             status("nothing to add to")
             return
         }
+        // The modal multi-frame Esc-restore path is internal — it only
+        // ever round-trips through `restoreLastDismissedSession`, never
+        // through the hotkey auto-resume gate. So the dismissed/bundle/
+        // title fields don't have to be accurate; nil/false is fine.
         modalChatSnapshot = LastDismissedSession(
             dismissedAt: Date(),
             bundleDir: currentBundleDir,
@@ -532,7 +572,11 @@ final class BlinkCoordinator: @unchecked Sendable {
             tldr: overlay.summaryFullText,
             customInputText: overlay.customInputText,
             frontmostApp: prior.frontmostApp,
-            priorRequestID: currentRequestID
+            priorRequestID: currentRequestID,
+            dismissedExplicitly: true,
+            frontmostBundleID: nil,
+            frontmostWindowTitle: nil,
+            submittedRun: lastSubmittedRun
         )
         let newRequestID = UUID().uuidString.lowercased()
         currentRequestID = newRequestID
@@ -812,6 +856,19 @@ final class BlinkCoordinator: @unchecked Sendable {
 
     private func dispatchSubmit(_ active: CaptureSession) {
         let token = UUID()
+        // Stash the just-submitted run so a follow-up hotkey while
+        // suggestions are visible can extend its frames with another
+        // capture (modal multi-frame). Both the single-tap path
+        // (`startCaptureSession`) and the collecting-mode path
+        // (`submitSession`) funnel through here, so this is the one
+        // place that guarantees both flows can append.
+        let context = SubmittedRunContext(
+            staging: active.staging,
+            frames: active.frames,
+            runtime: active.runtime,
+            clientMetadata: active.clientMetadata,
+            frontmostApp: active.frontmostApp
+        )
         DispatchQueue.main.sync {
             // If an earlier submission is still streaming, abandon it so
             // it doesn't head-of-line-block this submit on the serial
@@ -826,6 +883,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 requestID: active.requestID,
                 run: nil
             )
+            self.lastSubmittedRun = context
         }
         submitQueue.async { [self] in
             submitCapturedSession(active, submissionToken: token)
@@ -1038,20 +1096,11 @@ final class BlinkCoordinator: @unchecked Sendable {
     private func submitSession() {
         guard let active = session else { return }
         active.collectingTimer?.cancel()
-        // Stash the just-submitted run so a follow-up hotkey while
-        // suggestions are visible can extend its frames with another
-        // capture (modal multi-frame).
-        let context = SubmittedRunContext(
-            staging: active.staging,
-            frames: active.frames,
-            runtime: active.runtime,
-            clientMetadata: active.clientMetadata,
-            frontmostApp: active.frontmostApp
-        )
+        // Submitting from modal multi-frame means the user wants the new
+        // run — there's no chat to revert to anymore. (lastSubmittedRun
+        // is stamped inside dispatchSubmit, covering both this path and
+        // single-tap startCaptureSession.)
         DispatchQueue.main.async { [weak self] in
-            self?.lastSubmittedRun = context
-            // Submitting from modal multi-frame means the user wants the
-            // new run — there's no chat to revert to anymore.
             self?.modalChatSnapshot = nil
         }
         session = nil
@@ -1569,12 +1618,14 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard let self else { return }
                     self.overlay.setPinned(!self.overlay.isPinned)
                 }
-                self.overlay.onResumeLastChatKey = { [weak self] in
-                    self?.resumeLastChatIfAvailable()
-                    return true
+                self.overlay.onPinnedChanged = { [weak self] pinned in
+                    self?.setOverlayPinnedMirror(pinned)
                 }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
+                }
+                self.overlay.onOutsideClickDismiss = { [weak self] in
+                    self?.dismissOverlay(implicit: true)
                 }
                 if self.overlay.isStreamingActive {
                     // Streaming already populated the panel via updateSummary
@@ -1762,6 +1813,9 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onDismissKey = { [weak self] in
             self?.dismissOverlay()
         }
+        overlay.onOutsideClickDismiss = { [weak self] in
+            self?.dismissOverlay(implicit: true)
+        }
         overlay.beginSuggestionRefresh()
         status("rerolling suggestions...")
         emitEvent(
@@ -1905,12 +1959,14 @@ final class BlinkCoordinator: @unchecked Sendable {
                         guard let self else { return }
                         self.overlay.setPinned(!self.overlay.isPinned)
                     }
-                    self.overlay.onResumeLastChatKey = { [weak self] in
-                        self?.resumeLastChatIfAvailable()
-                        return true
+                    self.overlay.onPinnedChanged = { [weak self] pinned in
+                        self?.setOverlayPinnedMirror(pinned)
                     }
                     self.overlay.onDismissKey = { [weak self] in
                         self?.dismissOverlay()
+                    }
+                    self.overlay.onOutsideClickDismiss = { [weak self] in
+                        self?.dismissOverlay(implicit: true)
                     }
                     if self.overlay.isStreamingActive {
                         self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
@@ -2105,8 +2161,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         case .ignored:
             return
         case .expand(let index):
+            overlay.setCustomInputArmedHighlight(false)
             expandSuggestion(index: index)
         case .commit(let index):
+            overlay.setCustomInputArmedHighlight(false)
             insertSuggestion(index: index)
         case .focusInput:
             overlay.focusCustomInput()
@@ -2123,6 +2181,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         case .insert(let index):
             insertSuggestion(index: index)
             return true
+        case .focusCustomInput:
+            // Arrow-armed custom-input slot: first Return focuses the textfield,
+            // second Return (now customInputActive == true) submits.
+            choiceState.clearCustomInputArmed()
+            _ = choiceState.pressNumber(index: 3)
+            setCustomInputActiveMirror(choiceState.customInputActive)
+            setOverlayInsertConsumesReturn(choiceState.pressReturn() != .propagate)
+            overlay.focusCustomInput()
+            status("type your own reply")
+            return true
         }
     }
 
@@ -2131,10 +2199,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard currentBundleDir != nil, !currentSuggestions.isEmpty else { return }
         let navigableCount = min(currentSuggestions.count, 3)
         let stateDirection: SuggestionChoiceState.Direction = direction == .up ? .up : .down
-        guard let index = choiceState.moveSelection(stateDirection, navigableCount: navigableCount) else { return }
+        guard let slot = choiceState.moveSelection(stateDirection, navigableSuggestionCount: navigableCount) else { return }
         setCustomInputActiveMirror(choiceState.customInputActive)
         setOverlayInsertConsumesReturn(choiceState.pressReturn() != .propagate)
-        expandSuggestion(index: index)
+        switch slot {
+        case .suggestion(let index):
+            overlay.setCustomInputArmedHighlight(false)
+            expandSuggestion(index: index)
+        case .customInput:
+            overlay.armCustomInput()
+        }
     }
 
     @MainActor
@@ -2478,7 +2552,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTextEditingKey = nil
         overlay.onRerollKey = nil
         overlay.onTogglePinKey = nil
-        overlay.onResumeLastChatKey = nil
+        overlay.onOutsideClickDismiss = nil
         overlay.onChoiceKey = nil
         overlay.onArrowKey = nil
         overlay.onInsertKey = nil
@@ -2505,7 +2579,7 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     @MainActor
-    func dismissOverlay() {
+    func dismissOverlay(implicit: Bool = false) {
         if isCollectingActive {
             cancelCollectingSession()
             return
@@ -2518,12 +2592,26 @@ final class BlinkCoordinator: @unchecked Sendable {
 
         // Accident-recovery snapshot: a dismiss that wasn't from a pick
         // (`alreadyTerminal`) and that had real suggestions on screen is
-        // exactly the "Esc fat-finger" case. Keep the run alive in memory
-        // for `resumeWindowSeconds` so the next hotkey press brings it
-        // straight back instead of starting a fresh capture.
+        // a candidate for auto-resume on next hotkey. Only *implicit*
+        // dismisses (outside-click) are eligible — Esc means "I'm done."
+        // Auto-resume also requires same bundle + same window title at
+        // the next hotkey press; both fingerprints are snapshotted here.
         if overlayWasVisible,
            !alreadyTerminal,
            !currentSuggestions.isEmpty {
+            // For the bundle/title fingerprint, use the app Blink was
+            // summoned over (`previousFrontmost`), not the live
+            // frontmost at dismiss time. An outside-click dismiss moves
+            // focus to whatever the click landed on first; if that's
+            // another app (Chrome behind the panel), `frontmostAppMetadata()`
+            // here would return Chrome and the next hotkey-in-Chrome
+            // would wrongly auto-resume the Conductor chat. The
+            // `previousFrontmost` reference was captured when the panel
+            // opened, so it's stable across the dismiss path.
+            let meta = frontmostAppMetadata()
+            let previousFrontmostBundle = overlay.previousFrontmost?.bundleIdentifier
+            let previousFrontmostTitle = overlay.previousFrontmost
+                .flatMap { focusedWindowTitle(pid: $0.processIdentifier) }
             let snapshot = LastDismissedSession(
                 dismissedAt: Date(),
                 bundleDir: currentBundleDir,
@@ -2531,8 +2619,12 @@ final class BlinkCoordinator: @unchecked Sendable {
                 suggestionDetails: currentSuggestionDetails,
                 tldr: overlay.summaryFullText,
                 customInputText: overlay.customInputText,
-                frontmostApp: frontmostAppMetadata(),
-                priorRequestID: currentRequestID
+                frontmostApp: meta,
+                priorRequestID: currentRequestID,
+                dismissedExplicitly: !implicit,
+                frontmostBundleID: previousFrontmostBundle,
+                frontmostWindowTitle: previousFrontmostTitle,
+                submittedRun: lastSubmittedRun
             )
             lastDismissedSession = snapshot
             armResumeExpiryTimer()
@@ -2735,11 +2827,39 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard let app = NSWorkspace.shared.frontmostApplication else {
             return [:]
         }
-        return [
+        var meta: [String: Any] = [
             "bundle_id": app.bundleIdentifier as Any,
             "app_name": app.localizedName as Any,
             "pid": Int(app.processIdentifier),
         ]
+        if let title = focusedWindowTitle(pid: app.processIdentifier), !title.isEmpty {
+            meta["window_title"] = title
+        }
+        return meta
+    }
+
+    /// Best-effort focused window title for a given pid via AX. Returns
+    /// nil when AX is denied, the app has no focused window, or the
+    /// window has no title. Used to fingerprint "same window" for the
+    /// auto-resume gate.
+    private func focusedWindowTitle(pid: pid_t) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.1)
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedWindowAttribute as CFString,
+            &focusedRef
+        ) == .success, let focusedRef else { return nil }
+        let windowElement = focusedRef as! AXUIElement
+        var titleRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            windowElement,
+            kAXTitleAttribute as CFString,
+            &titleRef
+        ) == .success else { return nil }
+        return titleRef as? String
     }
 
     private func failureEventType(for error: Error, lastPhase: String) -> String {
