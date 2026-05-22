@@ -117,6 +117,8 @@ final class BlinkCoordinator: @unchecked Sendable {
     private var overlayActiveValue = false
     private let customInputActiveLock = NSLock()
     private var customInputActiveValue = false
+    private let overlayPinnedLock = NSLock()
+    private var overlayPinnedValue = false
     private let overlayInsertConsumeLock = NSLock()
     private var overlayInsertConsumesReturnValue = false
     private var overlayKeySuggestionCount = 0
@@ -157,6 +159,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         /// to match the current frontmost — same app *and* same window.
         let frontmostBundleID: String?
         let frontmostWindowTitle: String?
+        /// Last-submitted-run context, preserved across dismiss so that
+        /// auto-resume + hotkey-to-add-frame keeps working (otherwise
+        /// the resumed chat can't be extended with another capture).
+        let submittedRun: SubmittedRunContext?
     }
 
     /// Snapshot of the just-submitted capture so that a hotkey press
@@ -235,6 +241,18 @@ final class BlinkCoordinator: @unchecked Sendable {
         return overlayInsertConsumesReturnValue
     }
 
+    var isOverlayPinned: Bool {
+        overlayPinnedLock.lock()
+        defer { overlayPinnedLock.unlock() }
+        return overlayPinnedValue
+    }
+
+    private func setOverlayPinnedMirror(_ pinned: Bool) {
+        overlayPinnedLock.lock()
+        overlayPinnedValue = pinned
+        overlayPinnedLock.unlock()
+    }
+
     static func clientMetadata() -> [String: Any] {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = info["CFBundleShortVersionString"] as? String ?? "0"
@@ -307,6 +325,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             allowsCustomInput: allowsCustomInput
         )
         setCustomInputActiveMirror(choiceState.customInputActive)
+        overlay.setCustomInputArmedHighlight(false)
         setOverlayKeyState(
             suggestionCount: suggestionCount,
             allowsCustomInput: allowsCustomInput,
@@ -446,6 +465,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         currentSuggestions = snapshot.suggestions
         currentSuggestionDetails = snapshot.suggestionDetails
         currentBundleDir = snapshot.bundleDir
+        // Restore the submitted-run context so a follow-up hotkey on the
+        // resumed chat can still enter modal multi-frame. Without this,
+        // `handleSummaryHotkeyWhileOverlay` falls into the "nothing to
+        // add to" branch on auto-resumed chats.
+        lastSubmittedRun = snapshot.submittedRun
         terminalEmittedRequestID = nil
         resetChoiceState(suggestionCount: snapshot.suggestions.count)
 
@@ -480,6 +504,9 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTogglePinKey = { [weak self] in
             guard let self else { return }
             self.overlay.setPinned(!self.overlay.isPinned)
+        }
+        overlay.onPinnedChanged = { [weak self] pinned in
+            self?.setOverlayPinnedMirror(pinned)
         }
         overlay.onDismissKey = { [weak self] in
             self?.dismissOverlay()
@@ -548,7 +575,8 @@ final class BlinkCoordinator: @unchecked Sendable {
             priorRequestID: currentRequestID,
             dismissedExplicitly: true,
             frontmostBundleID: nil,
-            frontmostWindowTitle: nil
+            frontmostWindowTitle: nil,
+            submittedRun: lastSubmittedRun
         )
         let newRequestID = UUID().uuidString.lowercased()
         currentRequestID = newRequestID
@@ -828,6 +856,19 @@ final class BlinkCoordinator: @unchecked Sendable {
 
     private func dispatchSubmit(_ active: CaptureSession) {
         let token = UUID()
+        // Stash the just-submitted run so a follow-up hotkey while
+        // suggestions are visible can extend its frames with another
+        // capture (modal multi-frame). Both the single-tap path
+        // (`startCaptureSession`) and the collecting-mode path
+        // (`submitSession`) funnel through here, so this is the one
+        // place that guarantees both flows can append.
+        let context = SubmittedRunContext(
+            staging: active.staging,
+            frames: active.frames,
+            runtime: active.runtime,
+            clientMetadata: active.clientMetadata,
+            frontmostApp: active.frontmostApp
+        )
         DispatchQueue.main.sync {
             // If an earlier submission is still streaming, abandon it so
             // it doesn't head-of-line-block this submit on the serial
@@ -842,6 +883,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 requestID: active.requestID,
                 run: nil
             )
+            self.lastSubmittedRun = context
         }
         submitQueue.async { [self] in
             submitCapturedSession(active, submissionToken: token)
@@ -1054,20 +1096,11 @@ final class BlinkCoordinator: @unchecked Sendable {
     private func submitSession() {
         guard let active = session else { return }
         active.collectingTimer?.cancel()
-        // Stash the just-submitted run so a follow-up hotkey while
-        // suggestions are visible can extend its frames with another
-        // capture (modal multi-frame).
-        let context = SubmittedRunContext(
-            staging: active.staging,
-            frames: active.frames,
-            runtime: active.runtime,
-            clientMetadata: active.clientMetadata,
-            frontmostApp: active.frontmostApp
-        )
+        // Submitting from modal multi-frame means the user wants the new
+        // run — there's no chat to revert to anymore. (lastSubmittedRun
+        // is stamped inside dispatchSubmit, covering both this path and
+        // single-tap startCaptureSession.)
         DispatchQueue.main.async { [weak self] in
-            self?.lastSubmittedRun = context
-            // Submitting from modal multi-frame means the user wants the
-            // new run — there's no chat to revert to anymore.
             self?.modalChatSnapshot = nil
         }
         session = nil
@@ -1585,6 +1618,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard let self else { return }
                     self.overlay.setPinned(!self.overlay.isPinned)
                 }
+                self.overlay.onPinnedChanged = { [weak self] pinned in
+                    self?.setOverlayPinnedMirror(pinned)
+                }
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
@@ -1923,6 +1959,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                         guard let self else { return }
                         self.overlay.setPinned(!self.overlay.isPinned)
                     }
+                    self.overlay.onPinnedChanged = { [weak self] pinned in
+                        self?.setOverlayPinnedMirror(pinned)
+                    }
                     self.overlay.onDismissKey = { [weak self] in
                         self?.dismissOverlay()
                     }
@@ -2122,8 +2161,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         case .ignored:
             return
         case .expand(let index):
+            overlay.setCustomInputArmedHighlight(false)
             expandSuggestion(index: index)
         case .commit(let index):
+            overlay.setCustomInputArmedHighlight(false)
             insertSuggestion(index: index)
         case .focusInput:
             overlay.focusCustomInput()
@@ -2140,6 +2181,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         case .insert(let index):
             insertSuggestion(index: index)
             return true
+        case .focusCustomInput:
+            // Arrow-armed custom-input slot: first Return focuses the textfield,
+            // second Return (now customInputActive == true) submits.
+            choiceState.clearCustomInputArmed()
+            _ = choiceState.pressNumber(index: 3)
+            setCustomInputActiveMirror(choiceState.customInputActive)
+            setOverlayInsertConsumesReturn(choiceState.pressReturn() != .propagate)
+            overlay.focusCustomInput()
+            status("type your own reply")
+            return true
         }
     }
 
@@ -2148,10 +2199,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard currentBundleDir != nil, !currentSuggestions.isEmpty else { return }
         let navigableCount = min(currentSuggestions.count, 3)
         let stateDirection: SuggestionChoiceState.Direction = direction == .up ? .up : .down
-        guard let index = choiceState.moveSelection(stateDirection, navigableCount: navigableCount) else { return }
+        guard let slot = choiceState.moveSelection(stateDirection, navigableSuggestionCount: navigableCount) else { return }
         setCustomInputActiveMirror(choiceState.customInputActive)
         setOverlayInsertConsumesReturn(choiceState.pressReturn() != .propagate)
-        expandSuggestion(index: index)
+        switch slot {
+        case .suggestion(let index):
+            overlay.setCustomInputArmedHighlight(false)
+            expandSuggestion(index: index)
+        case .customInput:
+            overlay.armCustomInput()
+        }
     }
 
     @MainActor
@@ -2566,7 +2623,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 priorRequestID: currentRequestID,
                 dismissedExplicitly: !implicit,
                 frontmostBundleID: previousFrontmostBundle,
-                frontmostWindowTitle: previousFrontmostTitle
+                frontmostWindowTitle: previousFrontmostTitle,
+                submittedRun: lastSubmittedRun
             )
             lastDismissedSession = snapshot
             armResumeExpiryTimer()

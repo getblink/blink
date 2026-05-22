@@ -249,46 +249,65 @@ final class SuggestionChoiceStateTests: XCTestCase {
     func testMoveSelectionDownFromNoneSelectsFirst() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
-        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.moveSelection(.down, navigableSuggestionCount: 3), .suggestion(0))
         XCTAssertEqual(state.expandedIndex, 0)
     }
 
-    func testMoveSelectionUpFromNoneSelectsLast() {
+    func testMoveSelectionUpFromNoneSelectsCustomInputWhenAllowed() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
-        XCTAssertEqual(state.moveSelection(.up, navigableCount: 3), 2)
+        XCTAssertEqual(state.moveSelection(.up, navigableSuggestionCount: 3), .customInput)
+        XCTAssertTrue(state.customInputArmed)
+        XCTAssertNil(state.expandedIndex)
+    }
+
+    func testMoveSelectionUpFromNoneSelectsLastSuggestionWhenCustomInputDisabled() {
+        var state = SuggestionChoiceState(suggestionCount: 3, allowsCustomInput: false)
+
+        XCTAssertEqual(state.moveSelection(.up, navigableSuggestionCount: 3), .suggestion(2))
         XCTAssertEqual(state.expandedIndex, 2)
     }
 
-    func testMoveSelectionDownWrapsAtEnd() {
+    func testMoveSelectionDownFromLastSuggestionArmsCustomInput() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
         _ = state.pressNumber(index: 2)
-        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.moveSelection(.down, navigableSuggestionCount: 3), .customInput)
+        XCTAssertTrue(state.customInputArmed)
+        XCTAssertNil(state.expandedIndex)
+    }
+
+    func testMoveSelectionDownFromArmedWrapsToFirstSuggestion() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        _ = state.moveSelection(.up, navigableSuggestionCount: 3) // arm custom
+        XCTAssertTrue(state.customInputArmed)
+        XCTAssertEqual(state.moveSelection(.down, navigableSuggestionCount: 3), .suggestion(0))
+        XCTAssertFalse(state.customInputArmed)
         XCTAssertEqual(state.expandedIndex, 0)
     }
 
-    func testMoveSelectionUpWrapsAtStart() {
+    func testMoveSelectionUpWrapsAtStartToCustomInput() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
         _ = state.pressNumber(index: 0)
-        XCTAssertEqual(state.moveSelection(.up, navigableCount: 3), 2)
-        XCTAssertEqual(state.expandedIndex, 2)
+        XCTAssertEqual(state.moveSelection(.up, navigableSuggestionCount: 3), .customInput)
+        XCTAssertTrue(state.customInputArmed)
     }
 
     func testMoveSelectionDoesNothingWhileCustomInputActive() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
         _ = state.pressNumber(index: 3)
-        XCTAssertNil(state.moveSelection(.down, navigableCount: 3))
+        XCTAssertNil(state.moveSelection(.down, navigableSuggestionCount: 3))
         XCTAssertTrue(state.customInputActive)
         XCTAssertNil(state.expandedIndex)
     }
 
-    func testMoveSelectionDoesNothingWithZeroNavigableCount() {
-        var state = SuggestionChoiceState(suggestionCount: 0)
+    func testMoveSelectionDoesNothingWithZeroNavigableCountAndNoCustomInput() {
+        var state = SuggestionChoiceState(suggestionCount: 0, allowsCustomInput: false)
 
-        XCTAssertNil(state.moveSelection(.down, navigableCount: 0))
+        XCTAssertNil(state.moveSelection(.down, navigableSuggestionCount: 0))
         XCTAssertNil(state.expandedIndex)
     }
 
@@ -315,11 +334,18 @@ final class SuggestionChoiceStateTests: XCTestCase {
     func testReturnAfterMoveSelectionInsertsHighlighted() {
         var state = SuggestionChoiceState(suggestionCount: 3)
 
-        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 0)
+        XCTAssertEqual(state.moveSelection(.down, navigableSuggestionCount: 3), .suggestion(0))
         XCTAssertEqual(state.pressReturn(), .insert(0))
 
-        XCTAssertEqual(state.moveSelection(.down, navigableCount: 3), 1)
+        XCTAssertEqual(state.moveSelection(.down, navigableSuggestionCount: 3), .suggestion(1))
         XCTAssertEqual(state.pressReturn(), .insert(1))
+    }
+
+    func testReturnFromArmedCustomInputFocusesField() {
+        var state = SuggestionChoiceState(suggestionCount: 3)
+
+        XCTAssertEqual(state.moveSelection(.up, navigableSuggestionCount: 3), .customInput)
+        XCTAssertEqual(state.pressReturn(), .focusCustomInput)
     }
 
     func testPressReturnDefaultBehaviorUnchanged() {

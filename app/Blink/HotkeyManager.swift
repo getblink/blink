@@ -67,6 +67,7 @@ final class HotkeyManager {
     private let isOverlayActive: () -> Bool
     private let isCustomInputActive: () -> Bool
     private let isCollectingActive: () -> Bool
+    private let isOverlayPinned: () -> Bool
     private let onSummarize: (DispatchTime) -> Void
     private let onSummaryHotkeyWhileOverlay: (DispatchTime) -> Void
     private let onSubmitCollecting: () -> Void
@@ -104,6 +105,7 @@ final class HotkeyManager {
         isOverlayActive: @escaping () -> Bool,
         isCustomInputActive: @escaping () -> Bool,
         isCollectingActive: @escaping () -> Bool,
+        isOverlayPinned: @escaping () -> Bool,
         onSummarize: @escaping (DispatchTime) -> Void,
         onSummaryHotkeyWhileOverlay: @escaping (DispatchTime) -> Void,
         onSubmitCollecting: @escaping () -> Void,
@@ -125,6 +127,7 @@ final class HotkeyManager {
         self.isOverlayActive = isOverlayActive
         self.isCustomInputActive = isCustomInputActive
         self.isCollectingActive = isCollectingActive
+        self.isOverlayPinned = isOverlayPinned
         self.onSummarize = onSummarize
         self.onSummaryHotkeyWhileOverlay = onSummaryHotkeyWhileOverlay
         self.onSubmitCollecting = onSubmitCollecting
@@ -336,6 +339,19 @@ final class HotkeyManager {
             flags: event.flags,
             customInputActive: manager.isCustomInputActive()
            ) {
+            // When pinned and the user hasn't focused Blink's text field,
+            // they're interacting with the underlying app. Release the
+            // suggestion-selection keys (numbers/arrows/Return) so they
+            // reach the focused app. Keep Esc / ⌘P / ⌘R intercepted so
+            // the user can still dismiss, unpin, and reroll Blink.
+            if manager.isOverlayPinned() && !manager.isCustomInputActive() {
+                switch command {
+                case .dismiss, .reroll, .togglePin:
+                    break
+                default:
+                    return Unmanaged.passUnretained(event)
+                }
+            }
             switch command {
             case .choice(let index):
                 manager.onChoicePreflight(index)

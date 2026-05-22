@@ -210,10 +210,21 @@ ENTITLEMENTS_PATH="${BLINK_ENTITLEMENTS_PATH:-$APP_DIR/Blink/Blink.entitlements}
 # refuse to launch ("error connecting to the installer"). Re-sign just the
 # outer bundle so Sparkle.framework's nested Developer-ID XPCs keep their
 # original signatures.
+# Use a real secure timestamp when re-signing local installs. Accessibility's
+# TCC binding is the strictest of the privacy services: with --timestamp=none
+# tccd falls back to cdhash matching even when the cert + designated
+# requirement are stable, which is why Accessibility drops after a rebuild
+# while Input Monitoring and Screen Recording survive. A real timestamp
+# anchors the grant to the cert chain instead. Opt out with
+# BLINK_LOCAL_SIGN_TIMESTAMP=none if Apple's TSA is unreachable.
+LOCAL_SIGN_TIMESTAMP_FLAG="--timestamp"
+if [[ "${BLINK_LOCAL_SIGN_TIMESTAMP:-}" == "none" ]]; then
+    LOCAL_SIGN_TIMESTAMP_FLAG="--timestamp=none"
+fi
 echo "[blink] re-signing ($LOCAL_SIGN_IDENTITY) after Info.plist + resource stamping"
 codesign --force --sign "$LOCAL_SIGN_IDENTITY" \
     --options=runtime \
-    --timestamp=none \
+    "$LOCAL_SIGN_TIMESTAMP_FLAG" \
     --generate-entitlement-der \
     --entitlements "$ENTITLEMENTS_PATH" \
     "$APP_PATH"

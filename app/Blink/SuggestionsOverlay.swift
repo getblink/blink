@@ -355,6 +355,9 @@ final class SuggestionsOverlay: NSObject {
     private enum Layout {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
+        static let pinButtonSize: CGFloat = 16
+        static let pinButtonRightInset: CGFloat = 14
+        static let pinButtonTopInset: CGFloat = 12
         static let summaryMinHeight: CGFloat = 144
         static let loadingMinHeight: CGFloat = 56
         static let loadingDotSize: CGFloat = 8
@@ -513,6 +516,7 @@ final class SuggestionsOverlay: NSObject {
     /// the previous app *without* dismissing the overlay. Esc still dismisses.
     /// Toggled via Cmd+P.
     private(set) var isPinned: Bool = false
+    private var pinButton: NSButton?
     private var summaryHintLabel: NSTextField?
     private var summaryHintBaseText: String?
 
@@ -634,6 +638,9 @@ final class SuggestionsOverlay: NSObject {
     func setPinned(_ pinned: Bool) {
         guard pinned != isPinned else { return }
         isPinned = pinned
+        if let pinButton {
+            applyPinButtonAppearance(pinButton, pinned: pinned)
+        }
         refreshHintLabel()
         onPinnedChanged?(pinned)
     }
@@ -659,7 +666,7 @@ final class SuggestionsOverlay: NSObject {
 
     private func composedHintText(base: String) -> String {
         if isPinned {
-            return "\u{1F4CC} pinned \u{00B7} " + base
+            return "pinned \u{00B7} " + base
         }
         return base
     }
@@ -860,6 +867,14 @@ final class SuggestionsOverlay: NSObject {
         let summaryY = contentTop - summaryHeight
         let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
         let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
+
+        // Skip the pin affordance during the loading shimmer — the panel is
+        // momentarily an unactionable "Reading the screen…" pill and the
+        // pin icon would just be visual noise. updateSummary's wasLoading
+        // branch installs it when the real tldr arrives.
+        if !isLoading {
+            installPinButton(in: summary.content, summaryHeight: summaryHeight)
+        }
 
         if let hintText {
             self.summaryHintBaseText = hintText
@@ -1243,6 +1258,9 @@ final class SuggestionsOverlay: NSObject {
                 + Layout.summaryHintHeight
                 + Layout.summaryHintGap
             installSuggestionHintIfNeeded(Self.suggestionHintText)
+            if pinButton == nil, let summaryContent {
+                installPinButton(in: summaryContent, summaryHeight: summaryContent.bounds.height)
+            }
         }
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
@@ -1521,6 +1539,25 @@ final class SuggestionsOverlay: NSObject {
         guard let panel, let field = customInputField else { return }
         collapseSuggestions()
         panel.makeFirstResponder(field.textView)
+    }
+
+    /// Arrow-key arming: collapse any expanded suggestion and highlight the
+    /// custom-input card without making the textfield first responder. The
+    /// next Return then promotes to a real edit via `focusCustomInput()`.
+    func armCustomInput() {
+        collapseSuggestions()
+        setCustomInputArmedHighlight(true)
+    }
+
+    func setCustomInputArmedHighlight(_ visible: Bool) {
+        guard let tint = customInputTint else { return }
+        // Don't fight an active edit — focus-state already owns the tint.
+        if customInputField?.isEditing == true { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.animationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            tint.animator().alphaValue = visible ? 1 : 0
+        }
     }
 
     func leaveCustomInput() {
@@ -1890,6 +1927,7 @@ final class SuggestionsOverlay: NSObject {
         customWriteButton = nil
         bottomHintLabel = nil
         bottomHintBaseFrame = .zero
+        pinButton = nil
         showsTldrHeader = false
         expandedSuggestionIndex = nil
         currentHeightDelta = 0
@@ -2156,6 +2194,47 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         view.layer?.cornerRadius = radius
+    }
+
+    /// Pin lives in the top-right corner of the tldr glass pane. Hosted by
+    /// summary.content so it auto-clips with the card and the rest of the
+    /// panel keeps `isMovableByWindowBackground` drag intact.
+    private func installPinButton(in host: NSView, summaryHeight: CGFloat) {
+        let pin = NSButton(frame: pinButtonFrame(summaryHeight: summaryHeight))
+        pin.isBordered = false
+        pin.bezelStyle = .regularSquare
+        pin.imagePosition = .imageOnly
+        pin.imageScaling = .scaleProportionallyDown
+        pin.target = self
+        pin.action = #selector(pinButtonClicked(_:))
+        pin.toolTip = "Pin (\u{2318}P)"
+        pin.focusRingType = .none
+        // Bottom-margin flexible: as summary.content grows in height the pin
+        // stays anchored to the top edge.
+        pin.autoresizingMask = [.minYMargin]
+        applyPinButtonAppearance(pin, pinned: isPinned)
+        host.addSubview(pin)
+        pinButton = pin
+    }
+
+    private func pinButtonFrame(summaryHeight: CGFloat) -> NSRect {
+        let x = Layout.panelWidth - Layout.pinButtonSize - Layout.pinButtonRightInset
+        let y = summaryHeight - Layout.pinButtonSize - Layout.pinButtonTopInset
+        return NSRect(x: x, y: y, width: Layout.pinButtonSize, height: Layout.pinButtonSize)
+    }
+
+    private func applyPinButtonAppearance(_ button: NSButton, pinned: Bool) {
+        let name = pinned ? "pin.fill" : "pin"
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: pinned ? "Unpin" : "Pin")
+        if let image {
+            image.isTemplate = true
+            button.image = image
+        }
+        button.contentTintColor = pinned ? NSColor.labelColor : NSColor.tertiaryLabelColor
+    }
+
+    @objc private func pinButtonClicked(_ sender: NSButton) {
+        onTogglePinKey?()
     }
 
     private func installLoadingDot(in host: NSView, at frame: NSRect) -> NSView {

@@ -126,8 +126,16 @@ fi
 
 echo "[blink] installing canonical app -> $CANONICAL_APP"
 mkdir -p "$(dirname "$CANONICAL_APP")"
-rm -rf "$CANONICAL_APP"
-ditto "$RELEASE_APP" "$CANONICAL_APP"
+# Update in place rather than rm -rf + ditto. Deleting the bundle even briefly
+# triggers tccd to invalidate the Accessibility grant — Accessibility reacts to
+# "the app at this path was removed" while Screen Recording and Input
+# Monitoring do not. rsync --delete preserves the .app directory's inode and
+# tccd sees a normal modification.
+if [[ -d "$CANONICAL_APP" ]]; then
+    rsync -a --delete "$RELEASE_APP/" "$CANONICAL_APP/"
+else
+    ditto "$RELEASE_APP" "$CANONICAL_APP"
+fi
 
 remove_duplicate_app "$RELEASE_APP"
 remove_duplicate_app "/Applications/Blink.app"
