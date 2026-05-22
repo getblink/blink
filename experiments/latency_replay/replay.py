@@ -235,6 +235,7 @@ def replay_once(
     token: str,
     override_model: str | None = None,
     override_thinking: str | None = None,
+    override_output_format: str | None = None,
     image_prep_mode: str = "sips",  # sips | passthrough
     max_dimension: int = 1600,
     jpeg_quality: int = 70,
@@ -253,6 +254,8 @@ def replay_once(
         prefs["model"] = override_model
     if override_thinking:
         prefs["thinking_level"] = override_thinking
+    if override_output_format:
+        prefs["output_format"] = override_output_format
 
     tmp_dir = tmp_dir or Path("/tmp/blink_latency_replay")
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -509,6 +512,7 @@ def main() -> int:
     parser.add_argument("--url", type=str, default=None, help="Server URL (defaults to BLINK_PROXY_URL)")
     parser.add_argument("--model", type=str, default=None, help="Override preferences.model")
     parser.add_argument("--thinking", type=str, default=None, help="Override preferences.thinking_level")
+    parser.add_argument("--output-format", type=str, default=None, choices=["json", "tags"], help="Override preferences.output_format")
     parser.add_argument("--image-prep", type=str, default="sips", choices=["sips", "passthrough"], help="Image-prep mode")
     parser.add_argument("--max-dimension", type=int, default=1600)
     parser.add_argument("--jpeg-quality", type=int, default=70)
@@ -561,6 +565,7 @@ def main() -> int:
                     token=token,
                     override_model=args.model,
                     override_thinking=args.thinking,
+                    override_output_format=args.output_format,
                     image_prep_mode=args.image_prep,
                     max_dimension=args.max_dimension,
                     jpeg_quality=args.jpeg_quality,
