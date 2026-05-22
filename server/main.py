@@ -669,7 +669,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
     }
 
 
-_ALLOWED_THINKING_LEVELS = {"low", "medium", "high"}
+_ALLOWED_THINKING_LEVELS = {"low", "medium", "high", "off"}
 
 
 def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:

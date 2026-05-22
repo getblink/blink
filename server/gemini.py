@@ -930,6 +930,10 @@ def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> 
         response_schema=_schema(supports_attachments=supports_attachments),
     )
     override = settings.get("thinking_level")
+    if isinstance(override, str) and override == "off" and _is_thinking_model(model):
+        # latency-replay C8 experiment: disable thinking via budget=0.
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        return types.GenerateContentConfig(**config_kwargs)
     if isinstance(override, str) and override and _is_thinking_model(model):
         level: str | None = override
     else:

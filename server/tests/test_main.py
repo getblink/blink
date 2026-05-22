@@ -1637,6 +1637,49 @@ class MainTests(unittest.TestCase):
         self.assertFalse(thinking_called)
         self.assertEqual(captured_thinking, {})
 
+    def test_generate_config_thinking_level_off_emits_thinking_budget_zero(self) -> None:
+        # When the client opts into thinking_level="off" on a Gemini 3.x model,
+        # _generate_config must build ThinkingConfig(thinking_budget=0) — NOT
+        # thinking_level=off. Older google-genai SDKs validate thinking_level as
+        # a known enum, so passing "off" would raise.
+        captured_thinking: dict[str, Any] = {}
+
+        class FakeThinkingConfig:
+            def __init__(self, **kwargs: Any) -> None:
+                captured_thinking.update(kwargs)
+
+        class FakeGenerateContentConfig:
+            def __init__(self, **_: Any) -> None:
+                pass
+
+        class FakeTypes:
+            ThinkingConfig = FakeThinkingConfig
+            GenerateContentConfig = FakeGenerateContentConfig
+
+        with mock.patch.object(gemini, "_schema", return_value={"schema": True}):
+            gemini._generate_config(
+                FakeTypes,
+                {
+                    "model": "gemini-3.5-flash",
+                    "temperature": 0.2,
+                    "max_output_tokens": 512,
+                    "media_resolution": "MEDIA_RESOLUTION_LOW",
+                    "thinking_level": "off",
+                },
+                "PROMPT",
+            )
+
+        self.assertEqual(captured_thinking, {"thinking_budget": 0})
+
+    def test_selected_settings_honors_thinking_level_off(self) -> None:
+        warnings: list[str] = []
+        settings = _selected_settings(
+            {"preferences": {"thinking_level": "off"}},
+            warnings,
+        )
+        self.assertEqual(settings["thinking_level"], "off")
+        self.assertEqual(warnings, [])
+
     @mock.patch("server.main.gemini.generate_tldr_and_suggestions")
     @mock.patch("server.main.gemini.create_client")
     def test_v1_tldr_still_succeeds_when_request_storage_fails(
