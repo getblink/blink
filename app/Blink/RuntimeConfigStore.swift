@@ -78,6 +78,7 @@ struct RuntimeConfigFile: Codable {
     var allowContentRetention: Bool
     var soundsEnabled: Bool
     var thinkingLevel: String?
+    var outputFormat: String?
     var nudgesEnabled: Bool
     var lastNudgeAt: Date?
     var recentNudgeDismissals: [Date]
@@ -93,6 +94,7 @@ struct RuntimeConfigFile: Codable {
         case allowContentRetention = "allow_content_retention"
         case soundsEnabled = "sounds_enabled"
         case thinkingLevel = "thinking_level"
+        case outputFormat = "output_format"
         case nudgesEnabled = "nudges_enabled"
         case lastNudgeAt = "last_nudge_at"
         case recentNudgeDismissals = "recent_nudge_dismissals"
@@ -109,6 +111,7 @@ struct RuntimeConfigFile: Codable {
         allowContentRetention: Bool,
         soundsEnabled: Bool,
         thinkingLevel: String?,
+        outputFormat: String? = nil,
         nudgesEnabled: Bool,
         lastNudgeAt: Date?,
         recentNudgeDismissals: [Date],
@@ -123,6 +126,7 @@ struct RuntimeConfigFile: Codable {
         self.allowContentRetention = allowContentRetention
         self.soundsEnabled = soundsEnabled
         self.thinkingLevel = thinkingLevel
+        self.outputFormat = outputFormat
         self.nudgesEnabled = nudgesEnabled
         self.lastNudgeAt = lastNudgeAt
         self.recentNudgeDismissals = recentNudgeDismissals
@@ -142,6 +146,7 @@ struct RuntimeConfigFile: Codable {
             ?? false
         soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        outputFormat = try container.decodeIfPresent(String.self, forKey: .outputFormat)
         nudgesEnabled = try container.decodeIfPresent(Bool.self, forKey: .nudgesEnabled) ?? true
         lastNudgeAt = try container.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
         recentNudgeDismissals = try container.decodeIfPresent([Date].self, forKey: .recentNudgeDismissals) ?? []
@@ -169,6 +174,9 @@ final class RuntimeConfigStore: ObservableObject {
         didSet { save() }
     }
     @Published var thinkingLevel: String? {
+        didSet { save() }
+    }
+    @Published var outputFormat: String? {
         didSet { save() }
     }
     @Published var nudgesEnabled: Bool {
@@ -200,6 +208,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.allowContentRetention = config.allowContentRetention
         self.soundsEnabled = config.soundsEnabled
         self.thinkingLevel = config.thinkingLevel
+        self.outputFormat = config.outputFormat
         self.nudgesEnabled = config.nudgesEnabled
         self.lastNudgeAt = config.lastNudgeAt
         self.recentNudgeDismissals = config.recentNudgeDismissals
@@ -217,6 +226,7 @@ final class RuntimeConfigStore: ObservableObject {
             allowContentRetention: allowContentRetention,
             soundsEnabled: soundsEnabled,
             thinkingLevel: thinkingLevel,
+            outputFormat: outputFormat,
             nudgesEnabled: nudgesEnabled,
             lastNudgeAt: lastNudgeAt,
             recentNudgeDismissals: recentNudgeDismissals,
@@ -240,6 +250,7 @@ final class RuntimeConfigStore: ObservableObject {
             allowContentRetention: false,
             soundsEnabled: true,
             thinkingLevel: nil,
+            outputFormat: nil,
             nudgesEnabled: true,
             lastNudgeAt: nil,
             recentNudgeDismissals: [],

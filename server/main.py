@@ -670,6 +670,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
 
 
 _ALLOWED_THINKING_LEVELS = {"low", "medium", "high", "off"}
+_ALLOWED_OUTPUT_FORMATS = {"json", "tags"}
 
 
 def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
@@ -691,6 +692,15 @@ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[st
             settings["thinking_level"] = requested_thinking
         else:
             warnings.append("requested_thinking_level_disallowed")
+    # output_format: experimental knob to swap JSON-mode generation for
+    # tag-delimited text. Default stays "json" so this is opt-in; setting
+    # `preferences.output_format = "tags"` flips to the tag-mode prompt + parser.
+    requested_format = str(preferences.get("output_format") or "").strip().lower()
+    if requested_format:
+        if requested_format in _ALLOWED_OUTPUT_FORMATS:
+            settings["output_format"] = requested_format
+        else:
+            warnings.append("requested_output_format_disallowed")
     settings["supports_attachments"] = envelope.get("supports_attachments", False)
     settings["attachments_catalog"] = envelope.get("attachments_catalog", [])
     return settings
@@ -1323,10 +1333,19 @@ async def _run_tldr_request(
         None if conversation_turns is not None else model_envelope.get("reroll_context"),
         model_envelope.get("style"),
     )
+    # Tag-mode experiment: swap the prompt's <output_format> block for tag-style
+    # instructions, then call the tag streaming function below. Otherwise the
+    # canonical JSON path applies.
+    use_tags = settings.get("output_format") == "tags"
+    if use_tags:
+        prompt_text = gemini.substitute_output_format_for_tags(prompt_text)
+        streaming_fn = gemini.generate_tldr_and_suggestions_streaming_tags
+    else:
+        streaming_fn = gemini.generate_tldr_and_suggestions_streaming
     if stream:
         def stream_events() -> Any:
             try:
-                for event in gemini.generate_tldr_and_suggestions_streaming(
+                for event in streaming_fn(
                     client=client,
                     settings=settings,
                     prompt_text=prompt_text,
