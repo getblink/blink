@@ -57,7 +57,7 @@ if [[ -z "$SPARKLE_SIGN_UPDATE" ]]; then
 fi
 
 if [[ "$UPLOAD" != "0" ]]; then
-    require aws
+    require rclone
     if [[ -z "$R2_BUCKET" || -z "$R2_DOMAIN" ]]; then
         echo "[blink] error: set BLINK_R2_BUCKET and BLINK_R2_PUBLIC_DOMAIN, or BLINK_RELEASE_UPLOAD=0" >&2
         exit 1
@@ -155,49 +155,19 @@ echo "[blink] dmg sha256: $DMG_SHA256"
 
 if [[ "$UPLOAD" != "0" ]]; then
     echo "[blink] uploading $DMG_REMOTE_KEY and $APPCAST_REMOTE_KEY to R2 bucket $R2_BUCKET"
-    # AWS CLI v2 defaults to sending integrity-check headers that R2 rejects
-    # mid-multipart-upload with `SSLV3_ALERT_BAD_RECORD_MAC` on partNumber=2.
-    # Opt back to legacy behavior so the upload streams without checksum
-    # negotiation R2 doesn't fully support.
-    export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
-    export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-    export AWS_DEFAULT_REGION=auto
-    export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
-    export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
-
-    # rclone fallback config — lazily materialized if aws s3 cp fails. The
-    # 0.2.6 release hit BAD_RECORD_MAC across every aws-cli/boto3/curl variant
-    # we tried (Python OpenSSL and LibreSSL alike, single-part PUT and
-    # multipart, rate-limited and full-speed); rclone (Go TLS + 5MB chunked
-    # per-part retries) was the only path that completed. Keep aws s3 cp as
-    # the primary path; per-object fall back to rclone on any non-zero exit.
-    BLINK_RCLONE_CONFIG_TEMP=""
-    trap '[[ -n "${BLINK_RCLONE_CONFIG_TEMP:-}" ]] && rm -f "$BLINK_RCLONE_CONFIG_TEMP"' EXIT
-
-    upload_one() {
-        local src="$1" key="$2" content_type="$3"
-        local cache_control='public, max-age=60, must-revalidate'
-        if aws s3 cp "$src" "s3://$R2_BUCKET/$key" \
-                --endpoint-url "$R2_ENDPOINT" \
-                --content-type "$content_type" \
-                --cache-control "$cache_control"; then
-            return 0
-        fi
-        echo "[blink] aws s3 cp failed for $key — falling back to rclone (Go TLS, chunked retries)"
-        if ! command -v rclone >/dev/null 2>&1; then
-            echo "[blink] error: rclone fallback unavailable. Install with 'brew install rclone' and rerun (artifacts in app/build/ are reusable)." >&2
-            return 1
-        fi
-        if [[ -z "$BLINK_RCLONE_CONFIG_TEMP" ]]; then
-            BLINK_RCLONE_CONFIG_TEMP="$(mktemp)"
-            # `no_check_bucket = true`: rclone's S3 backend probes the bucket
-            # via HeadBucket / CreateBucket by default, but our Cloudflare R2
-            # tokens are scoped to Object Read & Write — they have no bucket
-            # permissions, so the probe fails with `403 AccessDenied:
-            # CreateBucket` before any object upload is attempted. Caught
-            # during the 0.2.11 release when aws s3 cp hit BAD_RECORD_MAC and
-            # rclone fallback then died 20 retries deep on CreateBucket.
-            cat > "$BLINK_RCLONE_CONFIG_TEMP" <<EOF
+    # rclone-only upload. `aws s3 cp` was the historical primary path but hit
+    # `SSLV3_ALERT_BAD_RECORD_MAC` on R2 multipart uploads from 0.2.6 onward
+    # across every aws-cli/boto3/curl variant tried. Every release since has
+    # in practice been delivered by the rclone fallback after aws-cli burned
+    # a minute failing; the primary path is removed to skip that step.
+    BLINK_RCLONE_CONFIG_TEMP="$(mktemp)"
+    trap 'rm -f "$BLINK_RCLONE_CONFIG_TEMP"' EXIT
+    # `no_check_bucket = true`: rclone's S3 backend probes the bucket via
+    # HeadBucket / CreateBucket by default, but our Cloudflare R2 tokens are
+    # scoped to Object Read & Write — they have no bucket permissions, so the
+    # probe fails with `403 AccessDenied: CreateBucket` before any object
+    # upload is attempted (caught during the 0.2.11 release).
+    cat > "$BLINK_RCLONE_CONFIG_TEMP" <<EOF
 [r2]
 type = s3
 provider = Cloudflare
@@ -207,11 +177,20 @@ endpoint = ${R2_ENDPOINT}
 region = auto
 no_check_bucket = true
 EOF
-        fi
+
+    upload_one() {
+        local src="$1" key="$2" content_type="$3"
+        local cache_control='public, max-age=60, must-revalidate'
+        # `--bind 0.0.0.0` forces IPv4. The R2 anycast v6 endpoint
+        # (`[2606:4700:2ff9::1]:443`) drops mid-upload with broken-pipe /
+        # closed-connection across 20+ retries from this network; the v4 path
+        # to 172.64.66.x is stable. Caught on the 0.2.20 release after rclone
+        # spent ~minute thrashing on v6 before the operator overrode it.
         # `--s3-no-check-bucket` belt-and-suspenders with `no_check_bucket` in
         # the config above: the flag wins if a stale config ever survives, and
         # the config wins if the flag is dropped during a future refactor.
         RCLONE_CONFIG="$BLINK_RCLONE_CONFIG_TEMP" rclone copyto \
+            --bind 0.0.0.0 \
             --s3-no-check-bucket \
             --s3-chunk-size=5M \
             --s3-upload-concurrency=1 \
