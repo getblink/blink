@@ -1754,6 +1754,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             var requestEnvelope = JSONFiles.readObject(at: sourceBundleDir.appendingPathComponent("request.json")) ?? [:]
             if let preferences = requestEnvelope["preferences"] as? [String: Any] {
                 runtime.thinkingLevel = preferences["thinking_level"] as? String
+                runtime.outputFormat = preferences["output_format"] as? String
             }
             try writeJSON(runtime, to: runtimeURL)
             requestEnvelope["request_id"] = requestID
@@ -2821,6 +2822,9 @@ final class BlinkCoordinator: @unchecked Sendable {
         ]
         if let level = runtime.thinkingLevel, !level.isEmpty {
             preferences["thinking_level"] = level
+        }
+        if let format = runtime.outputFormat, !format.isEmpty {
+            preferences["output_format"] = format
         }
         if let settingsPath = Paths.settingsPath,
            let settings = JSONFiles.readObject(at: settingsPath) {

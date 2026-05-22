@@ -930,6 +930,10 @@ def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> 
         response_schema=_schema(supports_attachments=supports_attachments),
     )
     override = settings.get("thinking_level")
+    if isinstance(override, str) and override == "off" and _is_thinking_model(model):
+        # latency-replay C8 experiment: disable thinking via budget=0.
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        return types.GenerateContentConfig(**config_kwargs)
     if isinstance(override, str) and override and _is_thinking_model(model):
         level: str | None = override
     else:
@@ -1146,4 +1150,280 @@ def generate_tldr_and_suggestions_streaming(
                     "suggestion_details": suggestion_details,
                 }
             )
+    yield {"event": "final", "data": final}
+
+
+# -----------------------------------------------------------------------------
+# Tag-delimited output mode (experiment).
+#
+# Same conversation/system prompt shape, but the model emits its response as
+# <tldr>…</tldr><suggestion tags="…">…</suggestion> blocks instead of JSON.
+# Goal: shorter output (no JSON escaping or schema-mode overhead) and earlier
+# usable streaming (a closed <tldr> tag is immediately renderable).
+# -----------------------------------------------------------------------------
+
+_TAG_OUTPUT_FORMAT_BLOCK = """<output_format>
+IGNORE the JSON shape shown in the <worked_example> above. Your output MUST use XML-style tags as described here, not JSON.
+
+The first non-whitespace character of your response MUST be the literal text `<tldr>`.
+
+Use exactly this structure, in this order:
+
+<tldr>
+Headline here.
+
+Supporting beat or Heads up here.
+</tldr>
+<suggestion tags="Reply">
+Paste-ready text
+</suggestion>
+<suggestion tags="Reply">
+Paste-ready text
+</suggestion>
+<suggestion tags="Reply">
+Paste-ready text
+</suggestion>
+
+Rules:
+- Exactly one <tldr> and exactly three <suggestion> blocks.
+- The `tags="..."` attribute carries 1-2 short labels (e.g. "Reply", "Ask", "Next step", "Pitch", "Insight"), comma-separated, joined with a comma and a single space.
+- Text inside tags is the literal value: no JSON quotes, no JSON escaping. Newlines inside <tldr> are real newlines, not `\\n`.
+- No prose, attributes, or other tags outside the four listed above. No XML declaration, no wrapper element.
+- If you would normally include `attachments` on a suggestion, add an extra attribute `attachments="id1:reason,id2:reason"` on the <suggestion> tag, comma-separated, with each entry as `id:reason`. Omit the attribute when there are no attachments.
+</output_format>"""
+
+_OUTPUT_FORMAT_PATTERN = re.compile(r"<output_format>.*?</output_format>", re.DOTALL)
+
+
+def substitute_output_format_for_tags(prompt_text: str) -> str:
+    """Replace the JSON <output_format>...</output_format> block with the tag-mode block."""
+    new_prompt, count = _OUTPUT_FORMAT_PATTERN.subn(_TAG_OUTPUT_FORMAT_BLOCK, prompt_text, count=1)
+    if count == 0:
+        # Prompt didn't carry an output_format block; append the tag block.
+        return prompt_text.rstrip() + "\n\n" + _TAG_OUTPUT_FORMAT_BLOCK
+    return new_prompt
+
+
+_TAG_TLDR_CLOSED = re.compile(r"<tldr>(.*?)</tldr>", re.DOTALL)
+_TAG_TLDR_OPEN = re.compile(r"<tldr>(.*)", re.DOTALL)
+# Suggestion with optional `tags="…"` and optional `attachments="…"` attributes,
+# in either order.
+_TAG_SUG_ATTRS = r"""(?:\s+tags="(?P<tags>[^"]*)")?(?:\s+attachments="(?P<attachments>[^"]*)")?(?:\s+tags="(?P<tags2>[^"]*)")?"""
+_TAG_SUG_CLOSED = re.compile(rf"<suggestion{_TAG_SUG_ATTRS}\s*>(?P<body>.*?)</suggestion>", re.DOTALL)
+_TAG_SUG_OPEN = re.compile(rf"<suggestion{_TAG_SUG_ATTRS}\s*>(?P<body>(?!.*</suggestion>).*)", re.DOTALL)
+
+
+def extract_partial_tldr_tags(raw_text: str) -> str | None:
+    """Return the body of <tldr>…</tldr> if closed, else the open body so far.
+
+    Strips any partially-emitted trailing tag (e.g. `<sugges`) so the user
+    sees clean text mid-stream.
+    """
+    m = _TAG_TLDR_CLOSED.search(raw_text)
+    if m:
+        return m.group(1).strip() or None
+    m = _TAG_TLDR_OPEN.search(raw_text)
+    if not m:
+        return None
+    body = m.group(1)
+    # Drop any text after the first `<` since it may be a partial tag.
+    cut = body.find("<")
+    if cut >= 0:
+        body = body[:cut]
+    body = body.strip()
+    return body or None
+
+
+def _parse_attachments_attr(raw: str) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if not raw:
+        return out
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if ":" in piece:
+            ident, _, reason = piece.partition(":")
+            out.append({"id": ident.strip(), "reason": reason.strip()[:80]})
+        else:
+            out.append({"id": piece.strip(), "reason": ""})
+    return out
+
+
+def extract_partial_suggestions_tags(raw_text: str) -> list[dict[str, Any]]:
+    """Return list of {text, tags, attachments?} for all closed (and trailing
+    open) <suggestion> blocks. Streaming-safe."""
+    results: list[dict[str, Any]] = []
+    last_end = 0
+    for m in _TAG_SUG_CLOSED.finditer(raw_text):
+        tags_str = m.group("tags") or m.group("tags2") or ""
+        attachments_str = m.group("attachments") or ""
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+        text = m.group("body").strip()
+        item: dict[str, Any] = {"text": text, "tags": tags}
+        attachments = _parse_attachments_attr(attachments_str)
+        if attachments:
+            item["attachments"] = attachments
+        results.append(item)
+        last_end = m.end()
+    # Trailer: an open <suggestion> that hasn't been closed yet.
+    tail = raw_text[last_end:]
+    om = _TAG_SUG_OPEN.search(tail)
+    if om and "</suggestion>" not in om.group(0):
+        tags_str = om.group("tags") or om.group("tags2") or ""
+        body = om.group("body")
+        cut = body.find("<")
+        if cut >= 0:
+            body = body[:cut]
+        body = body.strip()
+        if body:
+            tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+            results.append({"text": body, "tags": tags})
+    return results
+
+
+def _generate_config_tags(types: Any, settings: dict[str, Any], prompt_text: str) -> Any:
+    """Like _generate_config but for tag-delimited text output.
+
+    Drops `response_mime_type=application/json` and `response_schema` (model
+    emits plain text); keeps everything else identical (temperature,
+    max_output_tokens, media_resolution, thinking_config).
+    """
+    model = settings.get("model", "")
+    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
+    config_kwargs: dict[str, Any] = dict(
+        system_instruction=prompt_text,
+        temperature=settings["temperature"],
+        max_output_tokens=max_tokens,
+        media_resolution=media_resolution_for_model(model, settings["media_resolution"]),
+    )
+    override = settings.get("thinking_level")
+    if isinstance(override, str) and override == "off" and _is_thinking_model(model):
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        return types.GenerateContentConfig(**config_kwargs)
+    if isinstance(override, str) and override and _is_thinking_model(model):
+        level: str | None = override
+    else:
+        level = thinking_level_for_model(model)
+    if level is not None:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+    return types.GenerateContentConfig(**config_kwargs)
+
+
+def generate_tldr_and_suggestions_streaming_tags(
+    client: Any,
+    settings: dict[str, Any],
+    prompt_text: str,
+    images: list[tuple[bytes, str]] | None = None,
+    image_bytes: bytes | None = None,
+    mime_type: str = "image/png",
+    conversation_turns: list[dict[str, Any]] | None = None,
+    user_message_suffix: str = "",
+) -> Iterator[dict[str, Any]]:
+    """Tag-mode mirror of generate_tldr_and_suggestions_streaming.
+
+    Emits the same SSE event names (`partial_tldr`, `partial_suggestions`,
+    `final`) so the client and server SSE plumbing don't need to know.
+    """
+    from google.genai import types
+
+    contents = _conversation_contents(
+        types,
+        images,
+        image_bytes,
+        mime_type,
+        conversation_turns,
+        user_message_suffix=user_message_suffix,
+    )
+    if not contents:
+        raise ValueError("No screenshot was provided.")
+
+    config = _generate_config_tags(types, settings, prompt_text)
+    started = time.perf_counter()
+    raw_text = ""
+    usage = None
+    last_partial = ""
+    last_partial_suggestions: list[str] = []
+    for chunk in client.models.generate_content_stream(
+        model=settings["model"],
+        contents=contents,
+        config=config,
+    ):
+        text = getattr(chunk, "text", None) or ""
+        if text:
+            raw_text += text
+            partial = extract_partial_tldr_tags(raw_text)
+            if partial and partial != last_partial:
+                last_partial = partial
+                yield {"event": "partial_tldr", "data": {"tldr": partial}}
+            partial_items = extract_partial_suggestions_tags(raw_text)
+            partial_strings = [item["text"] for item in partial_items if item.get("text")]
+            if partial_strings and partial_strings != last_partial_suggestions:
+                last_partial_suggestions = list(partial_strings)
+                yield {
+                    "event": "partial_suggestions",
+                    "data": {"suggestions": partial_strings},
+                }
+        chunk_usage = getattr(chunk, "usage_metadata", None)
+        if chunk_usage is not None:
+            usage = chunk_usage
+
+    duration_ms = int(round((time.perf_counter() - started) * 1000))
+    raw_final = raw_text.strip()
+    usage_dict = plain_data(usage)
+
+    # Final parse: harvest closed tags only (no trailing open block).
+    closed_items = []
+    for m in _TAG_SUG_CLOSED.finditer(raw_final):
+        tags_str = m.group("tags") or m.group("tags2") or ""
+        attachments_str = m.group("attachments") or ""
+        text = m.group("body").strip()
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+        attachments = _parse_attachments_attr(attachments_str)
+        item: dict[str, Any] = {"text": text, "tags": tags}
+        if attachments:
+            item["attachments"] = attachments
+        closed_items.append(item)
+    tldr_match = _TAG_TLDR_CLOSED.search(raw_final)
+    tldr_text = (tldr_match.group(1).strip() if tldr_match else "").strip()
+
+    final: dict[str, Any] = {
+        "raw": raw_final,
+        "usage": usage_dict,
+        "thoughts_token_count": usage_thoughts_token_count(usage_dict),
+        "duration_ms": duration_ms,
+        "parse_error": None,
+        "model": settings["model"],
+        "output_format": "tags",
+    }
+
+    if not tldr_text and not closed_items:
+        final.update(
+            {
+                "status": "parse_error",
+                "tldr": "Gemini returned no recognizable tags.",
+                "suggestions": [raw_final or "[empty response]"],
+                "parse_error": "no_tags_found",
+            }
+        )
+    elif len(closed_items) != 3:
+        final.update(
+            {
+                "status": "schema_mismatch",
+                "tldr": tldr_text or "Gemini returned an incomplete response.",
+                "suggestions": [item["text"] for item in closed_items]
+                or [raw_final or "[empty response]"],
+                "parse_error": f"expected_3_suggestions_got_{len(closed_items)}",
+            }
+        )
+    else:
+        final.update(
+            {
+                "status": "ok",
+                "schema_version": RESPONSE_SCHEMA_VERSION,
+                "tldr": tldr_text,
+                "suggestions": [item["text"] for item in closed_items],
+                "suggestion_details": closed_items,
+            }
+        )
     yield {"event": "final", "data": final}

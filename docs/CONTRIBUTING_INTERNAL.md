@@ -116,23 +116,38 @@ The script backs up each workspace's existing `.env` to `.env.bak.<timestamp>` b
 
 ## Branch strategy
 
-`main` is the source of truth. `staging` exists only as a deploy mirror for Railway — it should track `main` exactly except during deliberate server-only previews.
+**The invariant:** after every release, `git rev-parse origin/main` and `git rev-parse origin/staging` point at the same commit. They are two names for the same canonical history. Anything that's on `main` is on `staging`, and vice versa. The only time they're allowed to diverge is during an active testing window — and only briefly.
+
+`staging` is the branch Railway watches and auto-deploys. `main` is what reviewers and humans treat as the source of truth. Both exist; neither is "ahead." Diverging them produces a half-shipped product where dogfood and `main` disagree about what features exist.
 
 Workflow:
 
-1. Branch off `main` for any change: `git checkout -B my-change origin/main`.
-2. Open a PR to `main`. Don't commit directly to `staging`.
-3. After merge, fast-set `staging` to the new `main` tip when you want the server to redeploy:
+1. Branch off `main`: `git checkout -B my-change origin/main`.
+2. **Deploy to staging for testing** by fast-setting `staging` to your branch's tip:
+
+   ```bash
+   git push origin +my-change:staging
+   ```
+
+   Railway picks up the new tip and redeploys. Dogfood and iterate against the branch.
+3. **Promote to `main`** by opening a PR (`gh pr create --base main`) and merging once it's validated.
+4. **Re-mirror `staging` to `main`** the moment the PR lands so the two pointers match again:
 
    ```bash
    git push origin +origin/main:staging
    ```
 
-   (You can also use the GitHub UI: delete the `staging` branch and recreate from `main`.)
+   Skip this step and you have created drift. The longer you skip it, the more painful the resync.
 
-If you need to ship a server-only change ahead of a full main release, that's the one valid exception: push the change to a branch, then fast-set `staging` to that branch's tip. Cherry-pick or merge back to `main` as soon as the preview is validated, then re-mirror `staging`.
+If a test branch's `staging` deploy gets abandoned (you decide not to promote), do *not* leave `staging` pointing at the abandoned branch. Re-mirror to `main` immediately so the invariant holds. Whatever was on staging-for-testing is then just a dead branch; archive it with a tag if you want to come back to it later (`git tag staging-archive-YYYY-MM-DD <abandoned-sha> && git push origin staging-archive-YYYY-MM-DD`).
 
-Anti-pattern this replaces: pushing WIP directly to `staging` and periodically squash-merging chunks into `main`. That accumulates phantom commit history on `staging` and produces a strict subset of `main`'s product surface — staging dogfooders end up testing a degraded build (e.g., missing UI refactors that only landed on `main` via numbered PRs). If you find `staging` has drifted, archive its tip with a tag (`git tag staging-archive-YYYY-MM-DD origin/staging && git push origin staging-archive-YYYY-MM-DD`) before forcing it back to `main`.
+Anti-patterns:
+
+- **Pushing WIP directly to `staging`** (no feature branch). Either you forget to PR it to `main`, or you PR it as a giant grab-bag later — either way `staging` accumulates commits `main` never sees.
+- **Forgetting the re-mirror step** after merging a PR. `main` moves ahead, `staging` stays behind, and dogfooders are testing a stale build that's missing whatever just landed.
+- **Long-lived staging-only branches** ("just keeping it on staging while I poke at it for a week"). That's how the two diverge by a hundred commits. If a test is going to take days, document it; better, finish it quickly so the invariant can be restored.
+
+If you find `staging` has drifted, archive its tip with a tag (`git tag staging-archive-YYYY-MM-DD origin/staging && git push origin staging-archive-YYYY-MM-DD`) before forcing it back to `main`.
 
 ## What lives where (so you don't edit the fallback)
 

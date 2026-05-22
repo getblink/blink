@@ -33,7 +33,7 @@ For public Sparkle releases, use `app/scripts/release.sh` and verify the log con
 
 ## Branches & deploys
 
-`main` is the source of truth. Land changes via short-lived branches → PR to `main`. `staging` exists only as a Railway deploy mirror — fast-set it from `main` after merge (`git push origin +origin/main:staging`). Don't commit directly to `staging`; see [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy) for the full anti-pattern this avoids.
+`main` and `staging` are kept **in sync** — same tip, every release. `staging` is what Railway deploys, so the easiest way to dogfood a change is to fast-set `staging` to your feature branch first (`git push origin +my-branch:staging`), then PR to `main` once it's validated, then fast-set `staging` back to `main` (`git push origin +origin/main:staging`) so the two pointers match again. After every release the invariant `origin/main == origin/staging` should hold; divergence is a bug, not a workflow. See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy) for the full workflow and the anti-patterns to avoid.
 
 Rebuilds and deploys are **independent**:
 

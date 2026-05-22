@@ -1,0 +1,139 @@
+bundle,model,thinking_level,status,http_status,image_prep_ms,image_request_bytes,multipart_build_ms,multipart_bytes,connect_ms,request_sent_ms,ttfb_ms,first_partial_tldr_ms,first_partial_suggestions_ms,final_event_ms,total_wall_ms,server_duration_ms,final_tldr,final_suggestions,raw_event_count,sips_status,error
+20260522-091157-974,gemini-3.5-flash,off,ok,200,45,318134,0,324305,2,0,8,2021,2183,2698,2754,2698,"Jerry Wu just realized the 1M context window model is actually the default for whatever tool you're discussing, despite his previous confusion.","yeah it defaults to the 1m one now. if you want to switch just use /models again and pick a different one | the 1m is actually pretty good for larger codebases, why do you want to switch? | haha yeah they updated the default recently. you can sign up for the beta at useblink.dev if you want to see how we handle context on the desktop side",8,processed,
+20260522-090859-405,gemini-3.5-flash,off,ok,200,95,151553,0,157553,0,0,7,1677,2042,2641,2746,2640,"Claude finished the latency fix and a staging deploy is underway. 
+
+PR #57 is ready for merge, which will introduce an ""Off"" reasoning option to the Blink settings for faster performance.","can you double check the y-coordinate snapping when the reasoning is set to off? | alright, let's merge. i'll run the mirror command to restore the invariant once it's in. | btw, how many test captures did you eyeball for quality drift during the replay?",9,processed,
+20260522-090301-638,gemini-3.5-flash,off,ok,200,103,278557,0,284734,0,0,7,1534,1730,2279,2393,2277,"The agent finished the local build and install but confirms it has not pushed any changes to staging yet.
+
+Server-side patches are still required before the new ""Off"" option actually disables thinking on the backend.",makes sense. go ahead and push the diff to staging so we can test the full loop. | did you verify if the UI shows the new reasoning picker correctly in the fresh local build? | got it. i'll wait for you to land the server changes before i try to verify the latency drop.,7,processed,
+20260522-083204-647,gemini-3-flash-preview,off,ok,200,86,249873,0,256529,0,0,8,1310,1472,2033,2130,2031,cozyblaze claims gpt-5.5 achieved 99.46% accuracy on multi-digit multiplication using medium reasoning and 7 samples.,99.46% is wild without tool use. wonder if this scales to even larger digit counts or if it hits a wall soon | this is impressive for pure reasoning. any chance you can share the prompt or eval harness for this? | gpt-5.5's reasoning is clearly a massive jump over o3-mini based on these heatmaps,7,processed,
+20260522-083022-715,gemini-3-flash-preview,off,ok,200,119,284017,0,290439,0,0,7,1595,1977,2460,2589,2459,"The agent successfully modified project.pbxproj and verified the Swift tests pass.
+
+All 7 ReasoningLevelsTests and the full pytest suite are green; the agent is now standing by for your next move.","looks good, can you summarize the performance delta between the baseline and the current latency numbers from those csv logs? | nice work on the pbxproj injection. go ahead and push these changes to a new branch called latency-analysis. | can you double check why the server tests jumped from 104 to 106? i want to make sure those two new ones are expected.",7,processed,
+20260522-083004-741,gemini-3.5-flash,off,ok,200,117,274843,0,281020,0,0,8,1399,1597,2130,2256,2129,"The agent finished adding test coverage for the new 'off' thinking level and all 106 tests are passing.
+
+server tests jumped from 104 to 106, Python app is solid at 78, and the Xcode build is clean.","looks good. can you double check the project.pbxproj changes to make sure there aren't any accidental file removals? | great. since we're green, let's ship this to staging and run a quick sanity check on the latency dashboard. | can you show me the diff for the ReasoningLevelsTests.swift file specifically? want to see the edge cases you added.",9,processed,
+20260522-024709-056,gemini-3.5-flash,off,ok,200,84,212942,0,220737,0,0,7,1334,1626,2687,2782,2686,Rohan Varma is arguing that @sama's $2M OAI credit offer for YC companies is worth taking despite the uncapped SAFE. He claims the tokens are worth double Anthropic's due to efficiency and will let you scale agentic products faster.,"it's an interesting hedge for sure. for something like blink (useblink.dev) where we're basically just reading pixels and hitting models constantly, those credits go a long way. definitely makes the b | the efficiency point is the kicker. if the $2M in credits actually yields $4M in work compared to opus, the dilution math starts looking a lot better for ai-native products. | curious how many founders actually value the credits at face value vs. the dilution risk. if you're building heavily agentic stuff, you'll burn through that faster than most people realize.",11,processed,
+20260522-024644-220,gemini-3.5-flash,off,ok,200,111,187959,0,195303,0,0,7,1741,1948,2809,2931,2808,Jared Friedman is calling OpenAI's $2M uncapped SAFE offer a no-brainer for YC companies.,uncapped SAFE for $2M is basically free optionality. would be curious to see if this changes how much follow-on capital these teams actually go after in the short term. | makes sense for the compute alone if you're building in this space. i've been using tools like this to build out useblink.dev lately and the speed is night and day. | this feels like a massive distribution play for their own api ecosystem. if you're already building on openai it's hard to find a reason to say no.,8,processed,
+20260522-023130-499,gemini-3.5-flash,off,ok,200,118,349405,0,365326,0,0,7,2346,2517,3132,3259,3131,"Claude analyzed the Blink codebase and identified that per-hop breakdown for the TL;DR flow isn't currently instrumented.
+
+It's asking if you want to dig into server-side timings, Python pipeline duration, or add new instrumentation to the chrome-fullscreen-capture branch.","let's go with adding instrumentation to the chrome-fullscreen-capture branch. i want to see a proper breakdown from hotkey to render. | can you start by drafting a plan for how we'd track the pieces scattered across the python duration_ms and swift coordinator state? | actually, show me the server-side logs first so i can see the current end-to-end latency for gemini calls.",10,processed,
+20260522-023014-098,gemini-3.5-flash,off,ok,200,60,218780,0,236832,0,0,7,1493,1829,2990,3061,2989,"Kevin Whinnery is describing Anthropic's ""hackable"" internal environment where every piece of data is accessible to Claude. Justin's Esthéon Studio adds that this is the blueprint for an AI-native company, while others are calling it sub-optimal.","it feels like the only way to actually scale agentic workflows. if the data isn't reachable by the model, you're just back to manual context switching. definitely messy at first but the payoff is huge | this is exactly the philosophy i'm building toward with blink. the idea that your tools should just see what you see and be ready to act on it is the end goal. check out useblink.dev if you want to se | honestly the ""messy"" part is what most companies are terrified of, but it's the only way to avoid the bottleneck of human retrieval. curious how you guys handle the noise/signal ratio when everything ",11,processed,
+20260522-022912-694,gemini-3.5-flash,off,ok,200,68,220855,0,239065,0,0,11,1715,1846,2883,2966,2882,"Jerry Wu tagged you in a thread about Cursor Composer 2.5 and Claude Opus adding ""Chinese hieroglyphs"" to the start of their responses.","yeah i've seen this too. i think it's just a classic case of the model losing the plot on token encoding when it's under pressure, weird that it's surfacing as specific characters across different mod | it's definitely an annoying bit of noise to filter out. makes me think there's a bigger underlying issue with how these prompts are being structured lately | honestly it's exactly why i'm building blink. i want to just collapse these kinds of predictable patterns into one keystroke and move on. if you want to try it out i'm at useblink.dev",9,processed,
+20260522-021806-201,gemini-3.5-flash,off,ok,200,73,251571,0,271985,0,0,8,1480,1836,3233,3317,3232,"Mark Pincus is advocating for building products ""wrong and fast"" to find signal before investing in quality, citing Zynga's 1m installs in a week from a simple Mafia Wars link.","it's the only way to stay sane as a founder. if you spend months building the perfect version and then nobody wants it, you just wasted the only thing you can't buy back which is time. better to be em | this is exactly how i'm thinking about the tool i'm building right now. most people are terrified of shipping something that doesn't feel finished, but that's usually just an excuse to avoid finding o | definitely feels true for local first apps too. i've been building a little mac assistant called blink based on this same bet. the hard part is keeping it fast and quiet enough that the user forgets i",13,processed,
+20260522-021745-635,gemini-3.5-flash,off,ok,200,78,251571,0,272201,0,0,8,1495,1660,3217,3308,3216,"Mark Pincus is arguing that founders should ""build it wrong and fast"" to find product signal before investing in quality, citing Zynga's 1m installs in a week from a fake link.","it's funny how founders still over-index on clean code before they even have a single user. honestly the ""rob them at the poker table"" link is the ultimate signal test.
+
+i see this loop everywhere now | building wrong to build right is basically the only way to survive the first 6 months. the ""mvp trap"" usually happens because people are afraid of showing something that feels hacky.
+
+if you aren't sl | completely agree, speed is the only real moat early on. i've been building a little mac tool called blink that follows this logic—it just reads pixels to help you reply faster.
+
+it's still early and d",14,processed,
+20260522-021714-475,gemini-3.5-flash,off,ok,200,83,251571,0,270176,0,0,8,1138,1285,3120,3213,3120,"Mark Pincus is arguing that founders should build products ""wrong and fast"" first to validate signal before building them right.","really agree with the focus on signal over polish. i think people get too caught up in the architecture before they even know if anyone wants the thing.
+
+it's honestly why i'm building blink this way. | that mafiapoker example is wild. 1m installs in a week just from a single link is insane heat. it's a good reminder that the distribution channel usually matters way more than the v1 code.
+
+i'm trying | the mvp trap is so real. i've seen so many founders spend six months building a perfect backend for a product that doesn't have a single user yet.
+
+definitely going to check the book out. we need more",13,processed,
+20260522-021642-539,gemini-3.5-flash,off,ok,200,63,256463,0,275121,0,0,8,1612,1753,3926,4000,3923,"David Wong is weighing the cost of running zkao, an automated bug-finding tool, against its effectiveness and considering a ""nano"" version for lower budgets.","really interesting trade-off. honestly i think the 'nano' version makes sense for most teams who aren't doing deep cryptographic work but still want that automated coverage without the infinite budget | this makes a lot of sense for high-stakes codebases where missing one bug is way more expensive than the compute costs anyway. for everything else, a nano version would definitely find its audience.
+
+ | definitely think there's a market for a nano version. most devs just want a faster feedback loop even if it's less thorough than a full consultants-level sweep.
+
+i'm building a tool called blink to he",14,processed,
+20260522-021626-618,gemini-3.5-flash,off,ok,200,87,219655,0,237847,0,0,9,1630,1810,3357,3457,3356,"L is questioning whether Megatron MoE's softmax implementation correctly handles forwards vs backwards passes, but later clarified it was likely just a brain fart.","honestly the whole thing feels like a lot of reprocessing for nothing. most of the open models i've been looking at just use sigmoid and normalize to scale anyway, it avoids that entire routing headac | yeah the sigmoid approach feels way cleaner for dodging these kinds of edge cases entirely. otherwise you're just fighting the math to get the gradients to behave.
+
+i've been building a tool called bl | it's interesting how these implementation details in things like megatron become such a massive context tax for everyone else. i'm working on a mac assistant called blink to help collapse that loop so",12,processed,
+20260522-021603-313,gemini-3.5-flash,off,ok,200,79,267092,0,285116,0,0,8,2183,2368,4199,4289,4198,"Howard Lerman argues that AI exposes poor performance faster by amplifying ""negative"" impacts and junk output.
+
+He cites Zeb Evans' 22% headcount reduction at ClickUp as evidence that the bar for productivity is shifting.","it's the 'garbage in, garbage out' problem but at industrial scale. if you don't have the taste to guide the tool, you're just accelerating the rate at which you generate technical or creative debt.
+
+ | definitely feels like the floor is being raised. when anyone can produce 'mediocre' in seconds, the value of just being a pair of hands drops to zero.
+
+it's why i've been building blink—to help the pe | the 'junky artwork' analogy is spot on. a lot of people think speed is the win, but speed without taste is just a faster way to ruin your product.
+
+curious if you think this leads to smaller, more eli",15,processed,
+20260522-021530-818,gemini-3.5-flash,off,ok,200,83,273980,0,294836,0,0,8,1496,1649,2953,3048,2951,"Yann LeCun is arguing that AIs aren't close to human intelligence despite their massive knowledge bases, contradicting Noah Smith's claim that AI is already superintelligent.","it feels like we are just moving the goalposts on what intelligence actually means. if it can solve erdos problems by brute forcing connections that a human never could, that is a form of superintelli | the lack of world models and common sense is definitely the bottleneck right now. we have built these massive libraries of declarative knowledge but they still don't actually 'know' how the physical w | honestly this is why i built blink. it handles the tedious contextual stuff by reading pixels because humans are the bottleneck for original thought right now.
+
+if you want to see how it bridges that ",11,processed,
+20260522-021515-034,gemini-3.5-flash,off,ok,200,83,273980,0,292432,0,0,8,1309,1481,2914,3008,2913,Yann LeCun argues that AI is currently useful only because it compensates for a lack of human-level reasoning with massive declarative knowledge.,"i feel like most people confuse 'knowing everything' with actual intelligence. until we solve common sense and planning, it's just a really powerful library.
+
+it's why i'm building blink—to handle the | honestly i agree, the reasoning gap is still massive. it's incredible how much brute force knowledge can mask a total lack of common sense.
+
+i see this everyday with how people interact with agents. t | spot on. i think we're seeing a ceiling where adding more data doesn't fix the underlying reasoning issues. 
+
+it makes you wonder if the current architecture can ever get to human-level common sense o",12,processed,
+20260522-021512-652,gemini-3.5-flash,off,ok,200,84,255480,0,273932,0,0,8,1610,1787,3187,3283,3186,Yann LeCun argues that AI's success comes from massive data accumulation rather than true intelligence or reasoning.,"really feels like we are just brute-forcing declarative knowledge right now.
+
+i've been building blink around this idea—it just reads pixels to help with the repetitive stuff so i can save my actual r | the data accumulation is impressive but the lack of common sense still hits a wall pretty fast.
+
+honestly i think the internet will just adapt to the noise and we'll get better at filtering out the no | the electricity point is huge too. we're throwing massive compute at things that the human brain does for basically nothing.
+
+if you want to see how we're trying to make the interface side of this mor",9,processed,
+20260522-021450-619,gemini-3.5-flash,off,ok,200,79,227739,0,245605,0,0,8,2008,2206,3788,3878,3787,"BuccoCapital Bloke is critiquing a new genre of post he calls ""performative white-collar executions,"" specifically citing Zeb Evans' announcement of a 22% headcount reduction.
+
+Other users are already chiming in on the irony of explaining layoffs in a ""position of strength"" essay.","it’s pretty wild how common this has become. people have completely lost the plot if they think writing a substack about layoffs makes it feel any less like a cold execution.
+
+this kind of noise is ac | honestly the internet will just adapt to this the same way it did with ai ugc. we’ll just instinctively swipe past these essays once we realize it’s just performative corporate speak.
+
+nothing says po | the ""i own it"" line is such a classic at this point. it’s the ultimate way to pretend you’re taking responsibility while doing the exact opposite. 
+
+i wonder if we’ll see a counter-trend of people jus",14,processed,
+20260522-021436-729,gemini-3.5-flash,off,ok,200,79,266705,0,283662,0,0,8,1467,1616,3368,3459,3367,"Tenobrus is reacting to an AI generation that claim to include hidden text (""you are loved immensely"") inside a mathematical pattern.","it’s honestly kind of wild that models are starting to include hidden messages in the generation logs like that. the intent is getting super specific.
+
+anyway this is exactly the kind of nuance i’m bu | this is exactly what i mean about ai ugc. the filter is going to have to get so much better because we’re moving past just simple images into these weird multi-layered generations.
+
+i’ve been thinking | the hidden text thing is actually such a flex from the model lol. i wonder if it’s actually legible in the final render or if it just hallucinated that it put it in there.
+
+definitely beats the generi",13,processed,
+20260522-021322-984,gemini-3.5-flash,off,ok,200,82,239022,0,255618,0,0,8,1672,1783,3206,3299,3204,Cody Blakeney is comparing the current state of RL environments to the human preference annotation business from a few years ago.,"it really does feel like we're just repeating the data labeling cycle but for sims now. the leverage is definitely there if you can get the environment right.
+
+i've actually been building a tool calle | honestly the parallel to preference data is spot on. everyone thinks it's low status until they realize it's the only thing actually moving the needle on performance.
+
+it's basically just high-leverag | i've been thinking about this a lot lately too. the move to contracting domain experts for specific traces feels like the natural next step once the generic environments hit a wall.
+
+definitely not a ",12,processed,
+20260522-021239-991,gemini-3.5-flash,off,ok,200,71,280968,0,299722,0,0,8,1210,1497,2909,2992,2908,"Toiletpirate and Recent-Sense-1749 are debating why brands struggle to create content that users actually want.
+
+Significant_Law5994 and Addycee29 added that most people just do what they think is cool instead of using clear storytelling to connect with users.","honestly everyone nods and agrees but then just defaults back to the same high-production noise that doesn't actually say anything.
+
+the hard part is being disciplined enough to only ship stuff that a | this is exactly why i built blink tbh. the goal is to stop the bottleneck of just typing for the sake of it and focus on what actually cuts through.
+
+if you want to try a more local-first approach to  | most brands are just terrified of not being 'on' 24/7 so they prioritize volume over actual connection.
+
+it's a crowded space and storytelling is the only thing that really differentiates at this poin",13,processed,
+20260522-021214-035,gemini-3.5-flash,off,ok,200,70,307796,0,326383,0,0,8,1578,1752,3233,3314,3232,"LeaderAtLeading says brands fail on Reddit because they broadcast instead of replying, treating it as a channel rather than a demand discovery tool.","couldn't agree more with the broadcasting point. it feels like most brands just want to dump links and leave without actually reading the room.
+
+i built a little tool called blink that helps me with t | honestly the ""demand discovery"" framing is spot on. if you aren't finding the person with the actual problem, you're just adding to the noise.
+
+it's wild how many companies still treat reddit like a b | this is exactly why i'm a fan of the ""reply first"" approach. most of the internet is shifting toward ai-generated junk, so real human context in the replies is going to be the only thing that stands o",13,processed,
+20260522-021129-943,gemini-3.5-flash,off,ok,200,78,337712,0,356227,0,0,8,1625,1832,3407,3494,3406,Known_Leather3166 is asking small business owners for manual tasks to automate to ensure they build something useful.,"honestly for me it's context switching between my email and my task manager. i spend so much time just copy-pasting details from one to the other.
+
+i feel like a lot of what i put on the screen is jus | my biggest bottleneck is definitely following up on cold leads and drafting responses that don't sound like robots. it's the kind of thing where you know exactly what to say but it still takes ten min | i hate chasing down client info that's spread across three different platforms. i probably spend at least two hours a week just verifying dates and numbers before i can even start my actual work.
+
+any",14,processed,
+20260522-021019-926,gemini-3.5-flash,off,ok,200,51,473874,0,495959,0,0,7,1726,2050,4138,4200,4137,"A fellow EA is hitting a breaking point at a chaotic startup and needs advice on how to survive the workload until they find a new role.
+
+They're struggling with zero onboarding, shifting structures, and a colleague who already quit due to the burnout.","really sorry you're going through this. honestly, the ""figure it out with no clarity"" line is such a red flag when they aren't backing it up with actual support. 
+
+if the boundaries aren't working, ma | that sounds completely unsustainable, especially with the visa stress on top of it. 
+
+since they've already acknowledged the burnout but kept adding tasks, it might be time to protect your peace as mu | the ""insanity"" you're feeling is real. i've been working on a project called blink that actually helps me stay sane with stuff like this—it summarizes the noise and helps me draft responses in seconds",16,processed,
+20260522-020928-400,gemini-3.5-flash,off,ok,200,77,473874,0,491667,0,0,8,1361,1657,3643,3732,3642,"A fellow EA at a remote startup is hitting a breaking point due to zero onboarding, constant structural changes, and burnout.
+
+They're asking for advice on how to survive the environment while they look for a new role.","honestly that sounds incredibly draining. since you're already job hunting, maybe try to automate some of the repetitive onboarding stuff to buy your brain some space?
+
+i'm actually building a tool ca | this sounds like classic startup chaos where they expect you to build the plane while flying it. if boundaries aren't working, maybe try to strictly document the time every task takes and hand it back | it's wild how common this 'figure it out' culture is in remote startups. so sorry you're going through this.
+
+i've been working on a mac tool called blink to help with exactly this kind of burnout—it ",15,processed,
+20260522-020845-147,gemini-3.5-flash,off,ok,200,73,297518,0,314852,0,0,8,1614,1750,3729,3812,3728,quiet_confessions shared a story about an assertive response to a simple task request during their last week on the job.,"honestly this is so satisfying to read. the passive-aggressive 'speak with IT' line is legendary for a final week move.
+
+i actually built a tool called blink specifically for these moments where you'r | the 'empowerment' angle is actually a really smart way to frame what would usually just be seen as bridge burning. congrats on the new role btw!
+
+if you ever get tired of manually teaching people how  | this is the dream scenario for anyone who's ever felt like a glorified personal assistant for tech-illiterate execs. love the bold move.
+
+i'm actually working on useblink.dev right now to help people ",15,processed,
+20260522-020604-903,gemini-3.5-flash,off,ok,200,62,248884,0,268347,0,0,8,1813,1898,4102,4176,4101,LingonberryLess2228 is asking r/coldemail if reaching out for summer opportunities in June for an August start is seen as unprofessional by PIs.,"it's definitely not unprofessional, just might be a bit late since most labs plan their summer headcounts months in advance. as long as you're clear about your availability and why you're a good fit,  | most PIs are just looking for people who can actually do the work, so the timing matters less than the value you bring. the worst they can say is no because the spots are full.
+
+i actually built a too | nah, not unprofessional at all. it's just a numbers game at that point in the season. if they have the budget and the space, they'll take the help regardless of the calendar.
+
+if you find the writing ",17,processed,

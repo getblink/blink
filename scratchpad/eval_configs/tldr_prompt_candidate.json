@@ -1,0 +1,8 @@
+{
+  "name": "prompt_candidate",
+  "provider": "gemini",
+  "model": "gemini-3.1-flash-lite-preview",
+  "temperature": 1.0,
+  "media_resolution": "MEDIA_RESOLUTION_LOW",
+  "prompt_path": "scratchpad/tldr_reply/prompts/prompt_candidate.txt"
+}

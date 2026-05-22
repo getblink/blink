@@ -55,9 +55,11 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
     }
 
-    /// `runtimeStore.thinkingLevel` is `String?` ("low" / "medium" / "high" / nil).
-    /// The picker works in human-readable titles ("Default" / "Low" / "Medium" / "High");
-    /// translate at the binding boundary.
+    /// `runtimeStore.thinkingLevel` is `String?` ("off" / "low" / "medium" / "high" / nil).
+    /// The picker works in human-readable titles ("Default" / "Off" / "Low" / "Medium" / "High");
+    /// translate at the binding boundary. "Off" disables Gemini's thinking budget
+    /// (server maps it to `thinking_budget=0`) for the fastest path; "Default" lets
+    /// the server pick the per-model default (currently `low` for Gemini 3.x).
     private var reasoningTitleBinding: Binding<String> {
         Binding(
             get: { ReasoningLevels.title(for: runtimeStore.thinkingLevel) },

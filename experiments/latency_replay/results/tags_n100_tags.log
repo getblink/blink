@@ -1,0 +1,149 @@
+# url=http://127.0.0.1:8765 bundles=100 model_override=- thinking_override=off image_prep=sips reuse_conn=False
+  [1/100 r1] 20260522-091157-974 model=gemini-3.5-flash prep=49ms mp=0ms conn=2ms ttfb=7ms first_tldr=1494ms final=2287ms server=2287ms TOTAL=2348ms events=8 bytes=324305 OK 
+  [2/100 r1] 20260522-090859-405 model=gemini-3.5-flash prep=134ms mp=0ms conn=0ms ttfb=7ms first_tldr=1398ms final=2171ms server=2169ms TOTAL=2316ms events=9 bytes=157553 OK 
+  [3/100 r1] 20260522-090301-638 model=gemini-3.5-flash prep=116ms mp=0ms conn=0ms ttfb=11ms first_tldr=1518ms final=2413ms server=2411ms TOTAL=2543ms events=8 bytes=284734 OK 
+  [4/100 r1] 20260522-083204-647 model=gemini-3-flash-preview prep=86ms mp=0ms conn=0ms ttfb=8ms first_tldr=1430ms final=2530ms server=2530ms TOTAL=2626ms events=9 bytes=256529 OK 
+  [5/100 r1] 20260522-083022-715 model=gemini-3-flash-preview prep=96ms mp=0ms conn=0ms ttfb=7ms first_tldr=1816ms final=2613ms server=2611ms TOTAL=2721ms events=7 bytes=290439 OK 
+  [6/100 r1] 20260522-083004-741 model=gemini-3.5-flash prep=116ms mp=0ms conn=0ms ttfb=7ms first_tldr=1788ms final=2633ms server=2632ms TOTAL=2758ms events=7 bytes=281020 OK 
+  [7/100 r1] 20260522-024709-056 model=gemini-3.5-flash prep=102ms mp=0ms conn=0ms ttfb=7ms first_tldr=2452ms final=4030ms server=4028ms TOTAL=4143ms events=12 bytes=220737 OK 
+  [8/100 r1] 20260522-024644-220 model=gemini-3.5-flash prep=82ms mp=0ms conn=0ms ttfb=8ms first_tldr=1549ms final=3063ms server=3062ms TOTAL=3155ms events=12 bytes=195303 OK 
+  [9/100 r1] 20260522-023130-499 model=gemini-3.5-flash prep=105ms mp=0ms conn=0ms ttfb=7ms first_tldr=1437ms final=2437ms server=2436ms TOTAL=2553ms events=10 bytes=365326 OK 
+  [10/100 r1] 20260522-023014-098 model=gemini-3.5-flash prep=75ms mp=0ms conn=0ms ttfb=8ms first_tldr=1537ms final=3114ms server=3113ms TOTAL=3201ms events=11 bytes=236832 OK 
+  [11/100 r1] 20260522-022912-694 model=gemini-3.5-flash prep=83ms mp=0ms conn=0ms ttfb=8ms first_tldr=1773ms final=3002ms server=3001ms TOTAL=3094ms events=11 bytes=239065 OK 
+  [12/100 r1] 20260522-021806-201 model=gemini-3.5-flash prep=72ms mp=0ms conn=0ms ttfb=8ms first_tldr=1956ms final=3803ms server=3802ms TOTAL=3884ms events=12 bytes=271985 OK 
+  [13/100 r1] 20260522-021745-635 model=gemini-3.5-flash prep=56ms mp=0ms conn=0ms ttfb=8ms first_tldr=1344ms final=4201ms server=4200ms TOTAL=4269ms events=18 bytes=272201 OK 
+  [14/100 r1] 20260522-021714-475 model=gemini-3.5-flash prep=58ms mp=0ms conn=0ms ttfb=7ms first_tldr=1433ms final=3429ms server=3427ms TOTAL=3498ms events=14 bytes=270176 OK 
+  [15/100 r1] 20260522-021642-539 model=gemini-3.5-flash prep=80ms mp=0ms conn=0ms ttfb=8ms first_tldr=1210ms final=3890ms server=3890ms TOTAL=3979ms events=17 bytes=275121 OK 
+  [16/100 r1] 20260522-021626-618 model=gemini-3.5-flash prep=55ms mp=0ms conn=0ms ttfb=7ms first_tldr=1509ms final=4001ms server=4000ms TOTAL=4065ms events=15 bytes=237847 OK 
+  [17/100 r1] 20260522-021603-313 model=gemini-3.5-flash prep=75ms mp=0ms conn=0ms ttfb=8ms first_tldr=1401ms final=3698ms server=3698ms TOTAL=3783ms events=16 bytes=285116 OK 
+  [18/100 r1] 20260522-021530-818 model=gemini-3.5-flash prep=66ms mp=0ms conn=0ms ttfb=9ms first_tldr=1480ms final=3734ms server=3732ms TOTAL=3812ms events=13 bytes=294836 OK 
+  [19/100 r1] 20260522-021515-034 model=gemini-3.5-flash prep=83ms mp=0ms conn=0ms ttfb=8ms first_tldr=1139ms final=2876ms server=2875ms TOTAL=2968ms events=13 bytes=292432 OK 
+  [20/100 r1] 20260522-021512-652 model=gemini-3.5-flash prep=51ms mp=0ms conn=0ms ttfb=7ms first_tldr=1398ms final=3443ms server=3443ms TOTAL=3503ms events=14 bytes=273932 OK 
+  [21/100 r1] 20260522-021450-619 model=gemini-3.5-flash prep=50ms mp=0ms conn=0ms ttfb=7ms first_tldr=1169ms final=3130ms server=3129ms TOTAL=3192ms events=14 bytes=245605 OK 
+  [22/100 r1] 20260522-021436-729 model=gemini-3.5-flash prep=86ms mp=0ms conn=0ms ttfb=8ms first_tldr=1223ms final=2674ms server=2672ms TOTAL=2772ms events=13 bytes=283662 OK 
+  [23/100 r1] 20260522-021322-984 model=gemini-3.5-flash prep=82ms mp=0ms conn=0ms ttfb=8ms first_tldr=1281ms final=2892ms server=2891ms TOTAL=2987ms events=14 bytes=255618 OK 
+  [24/100 r1] 20260522-021239-991 model=gemini-3.5-flash prep=76ms mp=0ms conn=0ms ttfb=8ms first_tldr=1261ms final=3545ms server=3543ms TOTAL=3634ms events=15 bytes=299722 OK 
+  [25/100 r1] 20260522-021214-035 model=gemini-3.5-flash prep=64ms mp=0ms conn=0ms ttfb=8ms first_tldr=1492ms final=3419ms server=3418ms TOTAL=3495ms events=14 bytes=326383 OK 
+  [26/100 r1] 20260522-021129-943 model=gemini-3.5-flash prep=70ms mp=0ms conn=0ms ttfb=8ms first_tldr=1403ms final=3478ms server=3476ms TOTAL=3560ms events=17 bytes=356227 OK 
+  [27/100 r1] 20260522-021019-926 model=gemini-3.5-flash prep=80ms mp=0ms conn=0ms ttfb=8ms first_tldr=1667ms final=4424ms server=4422ms TOTAL=4517ms events=20 bytes=495959 OK 
+  [28/100 r1] 20260522-020928-400 model=gemini-3.5-flash prep=79ms mp=0ms conn=0ms ttfb=8ms first_tldr=1502ms final=3832ms server=3831ms TOTAL=3920ms events=17 bytes=491667 OK 
+  [29/100 r1] 20260522-020845-147 model=gemini-3.5-flash prep=53ms mp=0ms conn=0ms ttfb=7ms first_tldr=1397ms final=3571ms server=3570ms TOTAL=3637ms events=15 bytes=314852 OK 
+  [30/100 r1] 20260522-020604-903 model=gemini-3.5-flash prep=74ms mp=0ms conn=0ms ttfb=8ms first_tldr=1390ms final=4900ms server=4899ms TOTAL=4986ms events=23 bytes=268347 OK 
+  [31/100 r1] 20260522-020523-399 model=gemini-3.5-flash prep=73ms mp=0ms conn=0ms ttfb=8ms first_tldr=1224ms final=3299ms server=3298ms TOTAL=3382ms events=17 bytes=267284 OK 
+  [32/100 r1] 20260522-020501-170 model=gemini-3.5-flash prep=65ms mp=0ms conn=0ms ttfb=8ms first_tldr=1073ms final=2614ms server=2612ms TOTAL=2691ms events=13 bytes=266559 OK 
+  [33/100 r1] 20260522-020428-415 model=gemini-3.5-flash prep=75ms mp=0ms conn=0ms ttfb=8ms first_tldr=1171ms final=2839ms server=2838ms TOTAL=2926ms events=12 bytes=264693 OK 
+  [34/100 r1] 20260522-020404-361 model=gemini-3.5-flash prep=69ms mp=0ms conn=0ms ttfb=8ms first_tldr=1167ms final=1923ms server=1922ms TOTAL=2002ms events=7 bytes=163851 OK 
+  [35/100 r1] 20260522-020255-576 model=gemini-3.5-flash prep=58ms mp=0ms conn=0ms ttfb=8ms first_tldr=1295ms final=2342ms server=2341ms TOTAL=2411ms events=9 bytes=159466 OK 
+  [36/100 r1] 20260522-020245-125 model=gemini-3.5-flash prep=80ms mp=0ms conn=0ms ttfb=9ms first_tldr=1164ms final=1687ms server=1687ms TOTAL=1779ms events=6 bytes=158163 OK 
+  [37/100 r1] 20260522-002020-704 model=gemini-3.5-flash prep=89ms mp=0ms conn=0ms ttfb=7ms first_tldr=1647ms final=2196ms server=2194ms TOTAL=2297ms events=7 bytes=109521 OK 
+  [38/100 r1] 20260522-000954-925 model=gemini-3.5-flash prep=179ms mp=0ms conn=0ms ttfb=7ms first_tldr=2361ms final=3320ms server=3320ms TOTAL=3508ms events=9 bytes=206284 OK 
+  [39/100 r1] 20260522-000949-513 model=gemini-3.5-flash prep=92ms mp=0ms conn=0ms ttfb=7ms first_tldr=1194ms final=1722ms server=1721ms TOTAL=1825ms events=6 bytes=109192 OK 
+  [40/100 r1] 20260522-000940-857 model=gemini-3.5-flash prep=113ms mp=0ms conn=0ms ttfb=7ms first_tldr=2260ms final=2826ms server=2825ms TOTAL=2950ms events=7 bytes=108953 OK 
+  [41/100 r1] 20260522-000928-799 model=gemini-3.5-flash prep=181ms mp=0ms conn=0ms ttfb=10ms first_tldr=1387ms final=2174ms server=2172ms TOTAL=2370ms events=10 bytes=208421 OK 
+  [42/100 r1] 20260521-235432-520 model=gemini-3.5-flash prep=141ms mp=0ms conn=0ms ttfb=7ms first_tldr=1427ms final=2222ms server=2221ms TOTAL=2375ms events=9 bytes=277682 OK 
+  [43/100 r1] 20260521-234922-134 model=gemini-3.5-flash prep=95ms mp=0ms conn=0ms ttfb=7ms first_tldr=1533ms final=2423ms server=2423ms TOTAL=2527ms events=8 bytes=282908 OK 
+  [44/100 r1] 20260521-233802-571 model=gemini-3.5-flash prep=54ms mp=0ms conn=0ms ttfb=7ms first_tldr=1209ms final=2046ms server=2044ms TOTAL=2111ms events=8 bytes=304127 OK 
+  [45/100 r1] 20260521-230920-613 model=gemini-3.5-flash prep=112ms mp=0ms conn=0ms ttfb=7ms first_tldr=1530ms final=2458ms server=2457ms TOTAL=2581ms events=8 bytes=253370 OK 
+  [46/100 r1] 20260521-230341-056 model=gemini-3.5-flash prep=113ms mp=0ms conn=0ms ttfb=7ms first_tldr=1474ms final=2497ms server=2496ms TOTAL=2621ms events=9 bytes=274725 OK 
+  [47/100 r1] 20260521-230332-182 model=gemini-3.5-flash prep=191ms mp=0ms conn=0ms ttfb=8ms first_tldr=1965ms final=3033ms server=3032ms TOTAL=3233ms events=10 bytes=540378 OK 
+  [48/100 r1] 20260521-230154-648 model=gemini-3.5-flash prep=96ms mp=0ms conn=0ms ttfb=7ms first_tldr=1511ms final=2487ms server=2485ms TOTAL=2594ms events=9 bytes=269598 OK 
+  [49/100 r1] 20260521-230101-455 model=gemini-3.5-flash prep=119ms mp=0ms conn=0ms ttfb=7ms first_tldr=1527ms final=2697ms server=2695ms TOTAL=2827ms events=9 bytes=267820 OK 
+  [50/100 r1] 20260521-182216-346 model=gemini-3.5-flash prep=112ms mp=0ms conn=0ms ttfb=7ms first_tldr=1181ms final=2278ms server=2277ms TOTAL=2398ms events=9 bytes=307912 OK 
+  [51/100 r1] 20260521-175719-270 model=gemini-3.5-flash prep=48ms mp=0ms conn=0ms ttfb=7ms first_tldr=1591ms final=2229ms server=2228ms TOTAL=2289ms events=8 bytes=192235 OK 
+  [52/100 r1] 20260521-175432-507 model=gemini-3.5-flash prep=69ms mp=0ms conn=0ms ttfb=8ms first_tldr=1068ms final=1798ms server=1797ms TOTAL=1879ms events=7 bytes=191448 OK 
+  [53/100 r1] 20260521-175234-914 model=gemini-3.5-flash prep=107ms mp=0ms conn=0ms ttfb=7ms first_tldr=1430ms final=2171ms server=2169ms TOTAL=2289ms events=8 bytes=412415 OK 
+  [54/100 r1] 20260521-175214-460 model=gemini-3.5-flash prep=110ms mp=0ms conn=0ms ttfb=7ms first_tldr=1373ms final=1782ms server=1781ms TOTAL=1904ms events=6 bytes=411800 OK 
+  [55/100 r1] 20260521-175206-193 model=gemini-3.5-flash prep=105ms mp=0ms conn=0ms ttfb=7ms first_tldr=1455ms final=1675ms server=1675ms TOTAL=1789ms events=6 bytes=412376 OK 
+  [56/100 r1] 20260521-175150-634 model=gemini-3.5-flash prep=78ms mp=0ms conn=0ms ttfb=7ms first_tldr=1247ms final=1484ms server=1483ms TOTAL=1573ms events=5 bytes=411680 OK 
+  [57/100 r1] 20260521-175127-368 model=gemini-3.5-flash prep=107ms mp=0ms conn=0ms ttfb=8ms first_tldr=1469ms final=1741ms server=1740ms TOTAL=1860ms events=6 bytes=336448 OK 
+  [58/100 r1] 20260521-175124-950 model=gemini-3.5-flash prep=103ms mp=0ms conn=0ms ttfb=7ms first_tldr=1253ms final=1579ms server=1579ms TOTAL=1691ms events=6 bytes=336514 OK 
+  [59/100 r1] 20260521-175108-712 model=gemini-3.5-flash prep=51ms mp=0ms conn=0ms ttfb=7ms first_tldr=1223ms final=2053ms server=2052ms TOTAL=2113ms events=10 bytes=190339 OK 
+  [60/100 r1] 20260521-175054-691 model=gemini-3.5-flash prep=109ms mp=0ms conn=0ms ttfb=7ms first_tldr=1342ms final=2023ms server=2022ms TOTAL=2143ms events=9 bytes=253447 OK 
+  [61/100 r1] 20260521-173944-769 model=gemini-3.5-flash prep=110ms mp=0ms conn=0ms ttfb=7ms first_tldr=1324ms final=2312ms server=2312ms TOTAL=2432ms events=9 bytes=264882 OK 
+  [62/100 r1] 20260521-151902-054 model=gemini-3.5-flash prep=100ms mp=0ms conn=0ms ttfb=7ms first_tldr=1228ms final=2549ms server=2547ms TOTAL=2661ms events=10 bytes=283113 OK 
+  [63/100 r1] 20260521-151845-603 model=gemini-3.5-flash prep=111ms mp=0ms conn=0ms ttfb=7ms first_tldr=1465ms final=2482ms server=2481ms TOTAL=2605ms events=10 bytes=283224 OK 
+  [64/100 r1] 20260521-151021-605 model=gemini-3.5-flash prep=113ms mp=0ms conn=0ms ttfb=7ms first_tldr=1662ms final=2526ms server=2525ms TOTAL=2651ms events=8 bytes=256888 OK 
+  [65/100 r1] 20260521-150853-058 model=gemini-3.5-flash prep=111ms mp=0ms conn=0ms ttfb=8ms first_tldr=1431ms final=2146ms server=2144ms TOTAL=2269ms events=9 bytes=246053 OK 
+  [66/100 r1] 20260521-150849-016 model=gemini-3.5-flash prep=110ms mp=0ms conn=0ms ttfb=7ms first_tldr=1498ms final=2499ms server=2497ms TOTAL=2620ms events=10 bytes=245897 OK 
+  [67/100 r1] 20260521-150844-605 model=gemini-3.5-flash prep=111ms mp=0ms conn=0ms ttfb=7ms first_tldr=1510ms final=2279ms server=2278ms TOTAL=2402ms events=7 bytes=245890 OK 
+  [68/100 r1] 20260521-150759-332 model=gemini-3.5-flash prep=109ms mp=0ms conn=0ms ttfb=7ms first_tldr=1206ms final=2256ms server=2255ms TOTAL=2374ms events=10 bytes=246281 OK 
+  [69/100 r1] 20260521-150755-031 model=gemini-3.5-flash prep=103ms mp=0ms conn=0ms ttfb=7ms first_tldr=1530ms final=2369ms server=2368ms TOTAL=2480ms events=9 bytes=247330 OK 
+  [70/100 r1] 20260521-150743-707 model=gemini-3.5-flash prep=83ms mp=0ms conn=0ms ttfb=7ms first_tldr=942ms final=2018ms server=2017ms TOTAL=2113ms events=8 bytes=246062 OK 
+  [71/100 r1] 20260521-144248-389 model=gemini-3.5-flash prep=110ms mp=0ms conn=0ms ttfb=8ms first_tldr=1290ms final=2066ms server=2065ms TOTAL=2188ms events=8 bytes=233447 OK 
+  [72/100 r1] 20260521-143608-464 model=gemini-3.5-flash prep=109ms mp=0ms conn=0ms ttfb=7ms first_tldr=1982ms final=2778ms server=2777ms TOTAL=2898ms events=9 bytes=262181 OK 
+  [73/100 r1] 20260521-143523-335 model=gemini-3.5-flash prep=127ms mp=0ms conn=0ms ttfb=13ms first_tldr=1201ms final=2481ms server=2479ms TOTAL=2624ms events=9 bytes=264217 OK 
+  [74/100 r1] 20260521-140835-779 model=gemini-3.5-flash prep=107ms mp=0ms conn=0ms ttfb=7ms first_tldr=1202ms final=2353ms server=2352ms TOTAL=2471ms events=10 bytes=253985 OK 
+  [75/100 r1] 20260521-140824-094 model=gemini-3.5-flash prep=111ms mp=0ms conn=0ms ttfb=7ms first_tldr=1308ms final=2360ms server=2359ms TOTAL=2483ms events=9 bytes=253821 OK 
+  [76/100 r1] 20260521-031418-560 model=gemini-3.5-flash prep=112ms mp=0ms conn=0ms ttfb=8ms first_tldr=1432ms final=2428ms server=2427ms TOTAL=2553ms events=9 bytes=251551 OK 
+  [77/100 r1] 20260521-031412-732 model=gemini-3.5-flash prep=74ms mp=0ms conn=0ms ttfb=8ms first_tldr=1396ms final=2470ms server=2470ms TOTAL=2554ms events=10 bytes=180965 OK 
+  [78/100 r1] 20260521-031349-940 model=gemini-3.5-flash prep=118ms mp=0ms conn=0ms ttfb=8ms first_tldr=1334ms final=2050ms server=2049ms TOTAL=2179ms events=10 bytes=246435 OK 
+  [79/100 r1] 20260521-031346-722 model=gemini-3.5-flash prep=69ms mp=0ms conn=0ms ttfb=8ms first_tldr=1315ms final=2091ms server=2090ms TOTAL=2170ms events=9 bytes=180913 OK 
+  [80/100 r1] 20260521-031306-029 model=gemini-3.5-flash prep=98ms mp=0ms conn=0ms ttfb=7ms first_tldr=1411ms final=2430ms server=2429ms TOTAL=2539ms events=10 bytes=250311 OK 
+  [81/100 r1] 20260521-031304-218 model=gemini-3.5-flash prep=111ms mp=0ms conn=0ms ttfb=7ms first_tldr=1313ms final=2067ms server=2065ms TOTAL=2189ms events=9 bytes=250294 OK 
+  [82/100 r1] 20260521-031300-022 model=gemini-3.5-flash prep=113ms mp=0ms conn=0ms ttfb=7ms first_tldr=1488ms final=2272ms server=2271ms TOTAL=2396ms events=8 bytes=250348 OK 
+  [83/100 r1] 20260521-031247-604 model=gemini-3.5-flash prep=109ms mp=0ms conn=0ms ttfb=7ms first_tldr=1415ms final=2356ms server=2351ms TOTAL=2474ms events=8 bytes=243757 OK 
+  [84/100 r1] 20260521-023014-424 model=gemini-3.5-flash prep=198ms mp=0ms conn=0ms ttfb=7ms first_tldr=1317ms final=2499ms server=2498ms TOTAL=2709ms events=9 bytes=279664 OK 
+  [85/100 r1] 20260521-022953-087 model=gemini-3.5-flash prep=108ms mp=0ms conn=0ms ttfb=7ms first_tldr=1313ms final=2500ms server=2499ms TOTAL=2618ms events=10 bytes=279279 OK 
+  [86/100 r1] 20260521-004434-993 model=gemini-3.5-flash prep=126ms mp=0ms conn=0ms ttfb=10ms first_tldr=1323ms final=2225ms server=2224ms TOTAL=2365ms events=8 bytes=226667 OK 
+  [87/100 r1] 20260521-000534-367 model=gemini-3.5-flash prep=134ms mp=0ms conn=0ms ttfb=8ms first_tldr=1383ms final=2398ms server=2396ms TOTAL=2542ms events=8 bytes=286921 OK 
+  [88/100 r1] 20260521-000510-687 model=gemini-3.5-flash prep=95ms mp=0ms conn=0ms ttfb=8ms first_tldr=1312ms final=2324ms server=2324ms TOTAL=2430ms events=9 bytes=287722 OK 
+  [89/100 r1] 20260520-235930-814 model=gemini-3.5-flash prep=102ms mp=0ms conn=0ms ttfb=7ms first_tldr=1129ms final=2526ms server=2524ms TOTAL=2639ms events=10 bytes=218204 OK 
+  [90/100 r1] 20260520-235916-360 model=gemini-3.5-flash prep=115ms mp=0ms conn=0ms ttfb=7ms first_tldr=1436ms final=2333ms server=2332ms TOTAL=2460ms events=9 bytes=211672 OK 
+  [91/100 r1] 20260520-235816-015 model=gemini-3.5-flash prep=73ms mp=0ms conn=0ms ttfb=8ms first_tldr=1409ms final=2293ms server=2291ms TOTAL=2376ms events=9 bytes=329929 OK 
+  [92/100 r1] 20260520-235759-531 model=gemini-3.5-flash prep=103ms mp=0ms conn=0ms ttfb=7ms first_tldr=1341ms final=2596ms server=2595ms TOTAL=2710ms events=10 bytes=205915 OK 
+  [93/100 r1] 20260520-235756-896 model=gemini-3.5-flash prep=92ms mp=0ms conn=0ms ttfb=8ms first_tldr=1827ms final=2433ms server=2433ms TOTAL=2535ms events=7 bytes=215938 OK 
+  [94/100 r1] 20260520-235717-634 model=gemini-3.5-flash prep=100ms mp=0ms conn=0ms ttfb=7ms first_tldr=1367ms final=2371ms server=2369ms TOTAL=2494ms events=9 bytes=219867 OK 
+  [95/100 r1] 20260520-235714-518 model=gemini-3.5-flash prep=108ms mp=0ms conn=0ms ttfb=11ms first_tldr=1441ms final=2345ms server=2344ms TOTAL=2467ms events=9 bytes=221169 OK 
+  [96/100 r1] 20260520-224852-118 model=gemini-3.5-flash prep=120ms mp=0ms conn=0ms ttfb=7ms first_tldr=1308ms final=2161ms server=2159ms TOTAL=2291ms events=9 bytes=220225 OK 
+  [97/100 r1] 20260520-224847-891 model=gemini-3.5-flash prep=120ms mp=0ms conn=0ms ttfb=7ms first_tldr=1386ms final=2264ms server=2263ms TOTAL=2395ms events=8 bytes=220311 OK 
+  [98/100 r1] 20260520-224841-533 model=gemini-3.5-flash prep=118ms mp=0ms conn=0ms ttfb=7ms first_tldr=1173ms final=2141ms server=2140ms TOTAL=2270ms events=9 bytes=221309 OK 
+  [99/100 r1] 20260520-224822-842 model=gemini-3.5-flash prep=123ms mp=0ms conn=0ms ttfb=7ms first_tldr=1021ms final=1966ms server=1964ms TOTAL=2099ms events=9 bytes=220067 OK 
+  [100/100 r1] 20260520-221445-162 model=gemini-3.5-flash prep=124ms mp=0ms conn=0ms ttfb=7ms first_tldr=1261ms final=1963ms server=1962ms TOTAL=2096ms events=8 bytes=212494 OK 
+
+# summary
+{
+  "connect_ms_mean": 0.0,
+  "connect_ms_n": 100,
+  "connect_ms_p50": 0.0,
+  "connect_ms_p90": 0.0,
+  "final_event_ms_mean": 2598.3,
+  "final_event_ms_n": 100,
+  "final_event_ms_p50": 2429.0,
+  "final_event_ms_p90": 3583.7,
+  "first_partial_suggestions_ms_mean": 1761.6,
+  "first_partial_suggestions_ms_n": 100,
+  "first_partial_suggestions_ms_p50": 1743.5,
+  "first_partial_suggestions_ms_p90": 2045.8,
+  "first_partial_tldr_ms_mean": 1422.3,
+  "first_partial_tldr_ms_n": 100,
+  "first_partial_tldr_ms_p50": 1397.5,
+  "first_partial_tldr_ms_p90": 1677.6,
+  "image_prep_ms_mean": 97.4,
+  "image_prep_ms_n": 100,
+  "image_prep_ms_p50": 102.0,
+  "image_prep_ms_p90": 123.1,
+  "multipart_build_ms_mean": 0.0,
+  "multipart_build_ms_n": 100,
+  "multipart_build_ms_p50": 0.0,
+  "multipart_build_ms_p90": 0.0,
+  "n_error": 0,
+  "n_ok": 100,
+  "n_total": 100,
+  "request_sent_ms_mean": 0.0,
+  "request_sent_ms_n": 100,
+  "request_sent_ms_p50": 0.0,
+  "request_sent_ms_p90": 0.0,
+  "server_duration_ms_mean": 2597.1,
+  "server_duration_ms_n": 100,
+  "server_duration_ms_p50": 2428.0,
+  "server_duration_ms_p90": 3582.8,
+  "total_wall_ms_mean": 2706.8,
+  "total_wall_ms_n": 100,
+  "total_wall_ms_p50": 2542.5,
+  "total_wall_ms_p90": 3651.6,
+  "ttfb_ms_mean": 7.6,
+  "ttfb_ms_n": 100,
+  "ttfb_ms_p50": 7.0,
+  "ttfb_ms_p90": 8.0
+}
+# wrote experiments/latency_replay/results/tags_n100_tags.csv (100 rows)

@@ -1,0 +1,28 @@
+diff --git a/server/gemini.py b/server/gemini.py
+index 7f249f8..9d1bad2 100644
+--- a/server/gemini.py
++++ b/server/gemini.py
+@@ -930,6 +930,10 @@ def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) ->
+         response_schema=_schema(supports_attachments=supports_attachments),
+     )
+     override = settings.get("thinking_level")
++    if isinstance(override, str) and override == "off" and _is_thinking_model(model):
++        # latency-replay C8 experiment: disable thinking via budget=0.
++        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
++        return types.GenerateContentConfig(**config_kwargs)
+     if isinstance(override, str) and override and _is_thinking_model(model):
+         level: str | None = override
+     else:
+diff --git a/server/main.py b/server/main.py
+index 09d09aa..ad57177 100644
+--- a/server/main.py
++++ b/server/main.py
+@@ -669,7 +669,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
+     }
+ 
+ 
+-_ALLOWED_THINKING_LEVELS = {"low", "medium", "high"}
++_ALLOWED_THINKING_LEVELS = {"low", "medium", "high", "off"}
+ 
+ 
+ def _selected_settings(envelope: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
