@@ -45,6 +45,32 @@ require() {
 require /usr/libexec/PlistBuddy
 require stat
 
+# Fail-fast version agreement check: xcodegen regenerates
+# `app/Blink/Info.plist` from `app/project.yml` on every build, so if the
+# two files disagree on CFBundleShortVersionString the build will silently
+# ship the project.yml value. Caught on 0.2.21 after 30+ minutes of
+# notarization that produced a Blink-0.2.20.dmg from a bump that only
+# touched Info.plist. Bump both at once via app/scripts/bump_version.sh.
+SOURCE_INFO_PLIST="$APP_DIR/Blink/Info.plist"
+SOURCE_PROJECT_YML="$APP_DIR/project.yml"
+INFO_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SOURCE_INFO_PLIST")"
+YML_VERSION="$(awk -F'"' '/^[[:space:]]+CFBundleShortVersionString:/ {print $2; exit}' "$SOURCE_PROJECT_YML")"
+if [[ -z "$INFO_VERSION" || -z "$YML_VERSION" ]]; then
+    echo "[blink] error: could not read CFBundleShortVersionString from both files" >&2
+    echo "[blink]   Info.plist:   ${INFO_VERSION:-(empty)}" >&2
+    echo "[blink]   project.yml:  ${YML_VERSION:-(empty)}" >&2
+    exit 1
+fi
+if [[ "$INFO_VERSION" != "$YML_VERSION" ]]; then
+    echo "[blink] error: version drift between Info.plist and project.yml" >&2
+    echo "[blink]   Info.plist:   $INFO_VERSION" >&2
+    echo "[blink]   project.yml:  $YML_VERSION" >&2
+    echo "[blink] xcodegen regenerates Info.plist from project.yml, so the project.yml value wins at build time." >&2
+    echo "[blink] Fix: bash $SCRIPT_DIR/bump_version.sh <X.Y.Z>" >&2
+    exit 1
+fi
+echo "[blink] version agreement check passed: $INFO_VERSION"
+
 if [[ -z "$SPARKLE_SIGN_UPDATE" ]]; then
     if command -v sign_update >/dev/null 2>&1; then
         SPARKLE_SIGN_UPDATE="$(command -v sign_update)"
