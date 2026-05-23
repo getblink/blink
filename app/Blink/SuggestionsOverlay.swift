@@ -413,6 +413,16 @@ final class SuggestionsOverlay: NSObject {
         static let attachmentChipPaddingX: CGFloat = 8
         static let attachmentChipSpacing: CGFloat = 6
         static let attachmentChipFontSize: CGFloat = 11
+        /// Vertical margin reserved at the top and bottom of the screen when
+        /// the overlay has to clamp to fit. Combined with `shadowBleed` to
+        /// keep the panel away from the menu bar and Dock.
+        static let screenSafetyMargin: CGFloat = 24
+        /// Height of the fade-out gradient at the top and bottom edges of the
+        /// scrollable area, used to soften the NSClipView's hard clip.
+        static let scrollFadeHeight: CGFloat = 24
+        /// Padding inside the scroller's documentView so the topmost and
+        /// bottommost cards have breathing room against the fade mask.
+        static let scrollDocumentPadding: CGFloat = 8
 
         static func expandedBottomPadding(hasAttachments: Bool) -> CGFloat {
             hasAttachments
@@ -511,6 +521,24 @@ final class SuggestionsOverlay: NSObject {
     private var bottomHintLabel: NSTextField?
     private var bottomHintBaseFrame: NSRect = .zero
     private var showsTldrHeader: Bool = false
+    /// When the unbounded content height exceeds the screen budget, the
+    /// summary card + suggestion cards are reparented into the documentView
+    /// of this scroll container. The custom reply input and bottom hint
+    /// remain pinned in `contentView` outside the scroller so they're always
+    /// reachable. Nil in the common (non-overflowing) case — the panel keeps
+    /// its existing flat layout and renders identically.
+    private var scrollContainer: NSScrollView?
+    private var scrollDocumentView: NSView?
+    private var scrollFadeMask: CAGradientLayer?
+    private var scrollBoundsObserver: NSObjectProtocol?
+    /// Layout state captured at show() / updateSuggestionDetails() time so
+    /// expansion and shrink paths can re-evaluate overflow without
+    /// re-measuring the source data. Only used while `scrollContainer` is
+    /// non-nil (scrolled mode) and for the y-clamp math in flat mode.
+    private var maxPanelHeight: CGFloat = .greatestFiniteMagnitude
+    private var pinnedAreaHeight: CGFloat = 0
+    private var scrollerBaseHeight: CGFloat = 0
+    private var documentViewBaseHeight: CGFloat = 0
     private var suggestionClickTargets: [SuggestionCardClickTarget] = []
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
@@ -621,6 +649,171 @@ final class SuggestionsOverlay: NSObject {
             }
         }
         return best
+    }
+
+    /// Pick the screen the panel should be sized against. Panel-known
+    /// screens take precedence (the user may have dragged the panel onto a
+    /// different display); otherwise fall back to the coordinator's
+    /// preferredScreen, then NSScreen.main.
+    private func resolvedScreenFrame(panel: NSPanel? = nil) -> NSRect {
+        let screen = panel?.screen ?? preferredScreen ?? NSScreen.main
+        return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+    }
+
+    /// Cap a panel y so the panel never extends past the visible screen.
+    /// `preferredCenterY` is the y the call site would normally pick (e.g.
+    /// `screenFrame.midY - panelHeight/2` for re-centering, or the existing
+    /// frame's y when preserving a user drag).
+    private func clampedPanelY(
+        preferredCenterY: CGFloat,
+        panelHeight: CGFloat,
+        screenFrame: NSRect
+    ) -> CGFloat {
+        let margin = Layout.screenSafetyMargin
+        let minY = screenFrame.minY + margin
+        let maxY = screenFrame.maxY - panelHeight - margin
+        if maxY < minY {
+            // Screen smaller than panel + margins (shouldn't happen if the
+            // caller clamped panelHeight against maxPanelHeight first, but
+            // be defensive): center on screen.
+            return screenFrame.midY - panelHeight / 2
+        }
+        return max(minY, min(preferredCenterY, maxY))
+    }
+
+    /// Maximum panel height that still leaves screenSafetyMargin top and
+    /// bottom on the target screen.
+    private func computeMaxPanelHeight(for screenFrame: NSRect) -> CGFloat {
+        max(0, screenFrame.height - 2 * Layout.screenSafetyMargin)
+    }
+
+    /// Build the NSScrollView used in overflowing mode. Hosts the summary
+    /// card and suggestion cards in its documentView; chrome is hidden so
+    /// only a soft fade mask marks the scroll edges. Returns the configured
+    /// scrollView; the caller still has to size it and populate the
+    /// documentView.
+    private func makeOverflowScrollView() -> NSScrollView {
+        let sv = NSScrollView(frame: .zero)
+        sv.hasVerticalScroller = false
+        sv.hasHorizontalScroller = false
+        sv.autohidesScrollers = true
+        sv.scrollerStyle = .overlay
+        sv.borderType = .noBorder
+        sv.drawsBackground = false
+        sv.contentView.drawsBackground = false
+        sv.verticalScrollElasticity = .allowed
+        sv.horizontalScrollElasticity = .none
+
+        let doc = NSView(frame: .zero)
+        doc.wantsLayer = true
+        doc.layer?.backgroundColor = NSColor.clear.cgColor
+        sv.documentView = doc
+
+        // Ensure clipView's layer exists so we can attach a mask.
+        sv.contentView.wantsLayer = true
+
+        return sv
+    }
+
+    /// Attach (or re-attach) the top/bottom fade mask on the scrollView's
+    /// clipView. Called after the scrollView is sized and whenever the
+    /// clipView's bounds change (size or scroll position).
+    private func refreshScrollFadeMask() {
+        guard let scrollContainer else {
+            scrollFadeMask = nil
+            return
+        }
+        let clip = scrollContainer.contentView
+        guard let clipLayer = clip.layer else { return }
+
+        let mask: CAGradientLayer
+        if let existing = scrollFadeMask {
+            mask = existing
+        } else {
+            mask = CAGradientLayer()
+            mask.colors = [
+                NSColor.clear.cgColor,
+                NSColor.black.cgColor,
+                NSColor.black.cgColor,
+                NSColor.clear.cgColor,
+            ]
+            // Anchor the gradient explicitly: location 0 at the visually
+            // upper edge of the clipView, location 1 at the visually lower
+            // edge. Removes any default-startPoint ambiguity across
+            // platforms / flipped views.
+            mask.startPoint = NSPoint(x: 0.5, y: 1.0)
+            mask.endPoint = NSPoint(x: 0.5, y: 0.0)
+            scrollFadeMask = mask
+        }
+
+        let bounds = clip.bounds
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.frame = bounds
+        let fade = min(Layout.scrollFadeHeight, bounds.height / 2)
+        let fadeFraction: CGFloat = bounds.height > 0 ? fade / bounds.height : 0
+        let docHeight = scrollContainer.documentView?.frame.height ?? bounds.height
+        // documentView is non-flipped (bottom-up). "Visual top" of the
+        // viewport = clipView showing the highest-y portion of documentView.
+        let atVisualTop = bounds.origin.y + bounds.height >= docHeight - 0.5
+        let atVisualBottom = bounds.origin.y <= 0.5
+        let topFade: CGFloat = atVisualTop ? 0 : fadeFraction
+        let bottomFade: CGFloat = atVisualBottom ? 0 : fadeFraction
+        mask.locations = [
+            0.0 as NSNumber,
+            topFade as NSNumber,
+            (1.0 - bottomFade) as NSNumber,
+            1.0 as NSNumber,
+        ]
+        clipLayer.mask = mask
+        CATransaction.commit()
+    }
+
+    /// Subscribe to clipView bounds changes so the fade mask follows the
+    /// scroll position. Idempotent and tied to the lifetime of the current
+    /// scrollContainer (cleared in `tearDownOverflowScroll`).
+    private func installScrollBoundsObserver() {
+        guard let scrollContainer, scrollBoundsObserver == nil else { return }
+        let clip = scrollContainer.contentView
+        clip.postsBoundsChangedNotifications = true
+        scrollBoundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clip,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshScrollFadeMask()
+        }
+    }
+
+    /// Compute the scroller frame height and panel height for a given
+    /// scrollable content height in scrolled mode. The scroller tight-fits
+    /// the content up to `maxScrollerHeight` (= maxPanelHeight − shadowBleeds
+    /// − pinned). The panel matches: `scrollerHeight + pinnedHeight + 2·bleed`.
+    private func scrolledLayoutHeights(
+        scrollerContentHeight: CGFloat,
+        pinnedHeight: CGFloat,
+        maxPanelHeight: CGFloat
+    ) -> (scrollerHeight: CGFloat, panelHeight: CGFloat) {
+        let maxScrollerH = max(0, maxPanelHeight - 2 * Layout.shadowBleed - pinnedHeight)
+        let scrollerH = min(scrollerContentHeight, maxScrollerH)
+        let panelH = scrollerH + pinnedHeight + 2 * Layout.shadowBleed
+        return (scrollerH, panelH)
+    }
+
+    /// Disassemble the scroll container after a re-layout decides we're
+    /// back in flat mode. Re-parents nothing here — callers move the
+    /// summary card and suggestion cards out before calling this.
+    private func tearDownOverflowScroll() {
+        if let observer = scrollBoundsObserver {
+            NotificationCenter.default.removeObserver(observer)
+            scrollBoundsObserver = nil
+        }
+        scrollContainer?.removeFromSuperview()
+        scrollContainer = nil
+        scrollDocumentView = nil
+        scrollFadeMask = nil
+        scrollerBaseHeight = 0
+        documentViewBaseHeight = 0
     }
 
     func show(tldr: String, suggestions: [String]) {
@@ -822,13 +1015,49 @@ final class SuggestionsOverlay: NSObject {
             + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
             + bottomHintBlockHeight
         let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
-        let panelHeight = contentHeight + Layout.shadowBleed * 2
+        let flatPanelHeight = contentHeight + Layout.shadowBleed * 2
+
+        // Overflow plan: the scrollable area is summary + suggestion stack;
+        // custom input and bottom hint stay pinned. `pinnedHeight` is the
+        // remainder of contentHeight (input + gaps + hint), which collapses
+        // to zero when neither is present. We compare against the worst-case
+        // scroller height (with one suggestion fully expanded) so that
+        // `expandSuggestion` doesn't have to transition flat→scrolled mid-flight.
+        let scrollerContentHeight = summaryHeight
+            + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
+        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+            expandedHeights[$0] - collapsedHeights[$0]
+        }.max() ?? 0
+        let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
 
         let targetScreen = preferredScreen ?? NSScreen.main
-        let screenFrame = targetScreen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let screenFrame = targetScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let computedMaxPanelHeight = computeMaxPanelHeight(for: screenFrame)
+        let maxScrollerHeight = max(0, computedMaxPanelHeight - 2 * Layout.shadowBleed - pinnedHeight)
+        let willScroll = (scrollerContentHeight + maxExpandDelta) > maxScrollerHeight && maxScrollerHeight > 0
+
+        // Even in scrolled mode, size the scrollView to the tight fit when
+        // collapsed content fits in the budget — only clamp at maxScrollerHeight
+        // when the content actually exceeds it. Without this, a long-suggestion
+        // panel that's still short in its collapsed state would render with
+        // empty space inside the scroller (the documentView sitting at the
+        // bottom of an oversized clipView in bottom-up coords).
+        let effectiveScrollerHeight: CGFloat = willScroll
+            ? min(scrollerContentHeight, maxScrollerHeight)
+            : scrollerContentHeight
+        let panelHeight: CGFloat = willScroll
+            ? (effectiveScrollerHeight + pinnedHeight + 2 * Layout.shadowBleed)
+            : flatPanelHeight
+
+        let preferredCenterY = screenFrame.midY - panelHeight / 2
+        let originY = clampedPanelY(
+            preferredCenterY: preferredCenterY,
+            panelHeight: panelHeight,
+            screenFrame: screenFrame
+        )
         let origin = NSPoint(
             x: screenFrame.midX - panelWidth / 2,
-            y: screenFrame.midY - panelHeight / 2
+            y: originY
         )
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
@@ -873,9 +1102,43 @@ final class SuggestionsOverlay: NSObject {
         content.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = content
 
-        let contentX = Layout.shadowBleed
-        let contentTop = panelHeight - Layout.shadowBleed
-        let summaryY = contentTop - summaryHeight
+        // Overflow mode: the summary card and suggestion cards live inside a
+        // scrollView's documentView; the custom input and bottom hint stay
+        // pinned in `content`. In flat mode `cardHost == content` and the
+        // coordinate math reduces to the original behavior.
+        let cardHost: NSView
+        let cardHostX: CGFloat
+        let cardHostTopY: CGFloat
+        if willScroll {
+            let scroller = makeOverflowScrollView()
+            // The scrollView spans the full panel width (including the
+            // shadowBleed margins) and the cards sit at x=shadowBleed inside
+            // the documentView — same offsets as flat mode. Without this, the
+            // NSClipView's horizontal bounds cut off the cards' drop shadows
+            // at their left/right edges.
+            scroller.frame = NSRect(
+                x: 0,
+                y: Layout.shadowBleed + pinnedHeight,
+                width: panelWidth,
+                height: effectiveScrollerHeight
+            )
+            let doc = scroller.documentView!
+            doc.frame = NSRect(x: 0, y: 0, width: panelWidth, height: scrollerContentHeight)
+            content.addSubview(scroller)
+            cardHost = doc
+            cardHostX = Layout.shadowBleed
+            cardHostTopY = scrollerContentHeight
+            scrollContainer = scroller
+            scrollDocumentView = doc
+        } else {
+            cardHost = content
+            cardHostX = Layout.shadowBleed
+            cardHostTopY = panelHeight - Layout.shadowBleed
+            tearDownOverflowScroll()
+        }
+
+        let contentX = cardHostX
+        let summaryY = cardHostTopY - summaryHeight
         let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
         let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
 
@@ -995,7 +1258,7 @@ final class SuggestionsOverlay: NSObject {
             )
         }
         summary.content.addSubview(summaryLabel)
-        content.addSubview(summary.outer)
+        cardHost.addSubview(summary.outer)
 
         var cards: [SuggestionCard] = []
         var y = summaryY - Layout.sectionGap
@@ -1014,7 +1277,7 @@ final class SuggestionsOverlay: NSObject {
                 detail: detail,
                 font: suggestionFont
             )
-            content.addSubview(card.outer)
+            cardHost.addSubview(card.outer)
             cards.append(SuggestionCard(
                 outer: card.outer,
                 content: card.content,
@@ -1051,13 +1314,22 @@ final class SuggestionsOverlay: NSObject {
         )?
         let customFrame: NSRect
         if showsCustomInput {
-            if !visibleSuggestions.isEmpty {
-                y -= Layout.suggestionGap
+            let customY: CGFloat
+            if willScroll {
+                // Pinned to the bottom of the panel, just above the bottom
+                // hint (if any). Sits in content-local panel coords, not the
+                // card host.
+                customY = Layout.shadowBleed + bottomHintBlockHeight
+            } else {
+                if !visibleSuggestions.isEmpty {
+                    y -= Layout.suggestionGap
+                }
+                y -= Layout.customInputMinHeight
+                customY = y
             }
-            y -= Layout.customInputMinHeight
             customFrame = NSRect(
-                x: contentX,
-                y: y,
+                x: Layout.shadowBleed,
+                y: customY,
                 width: contentWidth,
                 height: Layout.customInputMinHeight
             )
@@ -1072,11 +1344,17 @@ final class SuggestionsOverlay: NSObject {
         let bottomHint: NSTextField?
         let bottomHintFrame: NSRect
         if let bottomHintText {
-            y -= Layout.bottomHintTopGap
-            y -= Layout.bottomHintHeight
+            let hintY: CGFloat
+            if willScroll {
+                hintY = Layout.shadowBleed
+            } else {
+                y -= Layout.bottomHintTopGap
+                y -= Layout.bottomHintHeight
+                hintY = y
+            }
             bottomHintFrame = NSRect(
-                x: contentX + 24,
-                y: y,
+                x: Layout.shadowBleed + 24,
+                y: hintY,
                 width: contentWidth - 48,
                 height: Layout.bottomHintHeight
             )
@@ -1095,10 +1373,27 @@ final class SuggestionsOverlay: NSObject {
             bottomHintFrame = .zero
         }
 
+        if willScroll, let scroller = scrollContainer, let doc = scrollDocumentView {
+            // Scroll to the top of the document — clipView's bounds.origin.y
+            // moves to the high-y end of the bottom-up documentView so the
+            // summary card is visible on first show.
+            let clipHeight = scroller.contentView.bounds.height
+            scroller.contentView.scroll(
+                to: NSPoint(x: 0, y: max(0, doc.frame.height - clipHeight))
+            )
+            scroller.reflectScrolledClipView(scroller.contentView)
+            installScrollBoundsObserver()
+            refreshScrollFadeMask()
+        }
+
         self.panel = panel
         self.contentView = content
         self.basePanelHeight = panelHeight
         self.basePanelTopY = frame.maxY
+        self.maxPanelHeight = computedMaxPanelHeight
+        self.pinnedAreaHeight = pinnedHeight
+        self.scrollerBaseHeight = effectiveScrollerHeight
+        self.documentViewBaseHeight = scrollerContentHeight
         self.summaryCard = summary.outer
         self.summaryContent = summary.content
         self.summaryLabel = summaryLabel
@@ -1288,43 +1583,113 @@ final class SuggestionsOverlay: NSObject {
         )
         let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
         if summaryDelta > 0 {
-            let newPanelHeight = basePanelHeight + summaryDelta
-            // Recenter on each growth: origin shifts by half the delta
-            // while height grows by the full delta, so the panel
-            // expands smoothly outward from its visual center rather
-            // than hanging from a fixed top. (User drags during
-            // streaming are vanishingly rare; this matches the
-            // pre-PR behavior the user expects.)
-            let screenFrame = panel.screen?.frame
-                ?? NSScreen.main?.frame
-                ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            let newFrame = NSRect(
-                x: panel.frame.origin.x,
-                y: screenFrame.midY - newPanelHeight / 2,
-                width: panel.frame.width,
-                height: newPanelHeight
-            )
-            panel.setFrame(newFrame, display: true, animate: false)
-            basePanelTopY = panel.frame.maxY
-            contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
-            summaryCard.frame = NSRect(
-                x: summaryBaseFrame.origin.x,
-                y: summaryBaseFrame.origin.y,
-                width: summaryBaseFrame.width,
-                height: requiredSummaryHeight
-            )
-            summaryLabel.frame = NSRect(
-                x: 24,
-                y: summaryTextY,
-                width: labelWidth,
-                height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
-            )
-            if wasLoading {
-                // Anchor summaryBaseFrame and basePanelHeight to the new
-                // post-loading layout so subsequent grows compute from the
-                // right baseline.
-                summaryBaseFrame = summaryCard.frame
-                basePanelHeight = newPanelHeight
+            if let scroller = scrollContainer, let doc = scrollDocumentView {
+                // Scrolled mode: grow documentView and (where there's room
+                // in the budget) the scrollView + panel. Match the original
+                // delta-from-show-time semantics — keep summaryBaseFrame and
+                // documentViewBaseHeight anchored to the baseline. Include
+                // `currentHeightDelta` so a late updateSummary arriving while
+                // a card is expanded doesn't shrink the doc.
+                let newDocHeight = documentViewBaseHeight + summaryDelta + currentHeightDelta
+                let screenFrame = resolvedScreenFrame(panel: panel)
+                let computedMax = computeMaxPanelHeight(for: screenFrame)
+                let (newScrollerHeight, newPanelHeight) = scrolledLayoutHeights(
+                    scrollerContentHeight: newDocHeight,
+                    pinnedHeight: pinnedAreaHeight,
+                    maxPanelHeight: computedMax
+                )
+                // Resize panel (recenter on each grow, matching the pre-fix
+                // updateSummary behavior).
+                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
+                let originY = clampedPanelY(
+                    preferredCenterY: preferredCenterY,
+                    panelHeight: newPanelHeight,
+                    screenFrame: screenFrame
+                )
+                let newFrame = NSRect(
+                    x: panel.frame.origin.x,
+                    y: originY,
+                    width: panel.frame.width,
+                    height: newPanelHeight
+                )
+                panel.setFrame(newFrame, display: true, animate: false)
+                basePanelTopY = panel.frame.maxY
+                contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
+                scroller.frame = NSRect(
+                    x: scroller.frame.origin.x,
+                    y: Layout.shadowBleed + pinnedAreaHeight,
+                    width: scroller.frame.width,
+                    height: newScrollerHeight
+                )
+                doc.frame = NSRect(x: 0, y: 0, width: doc.frame.width, height: newDocHeight)
+
+                let newSummaryY = newDocHeight - requiredSummaryHeight
+                summaryCard.frame = NSRect(
+                    x: summaryBaseFrame.origin.x,
+                    y: newSummaryY,
+                    width: summaryBaseFrame.width,
+                    height: requiredSummaryHeight
+                )
+                summaryLabel.frame = NSRect(
+                    x: 24,
+                    y: summaryTextY,
+                    width: labelWidth,
+                    height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
+                )
+                if wasLoading {
+                    summaryBaseFrame = summaryCard.frame
+                    documentViewBaseHeight = newDocHeight
+                }
+                // Anchor the viewport to the top of the document so each
+                // streamed token stays visible (otherwise the doc grows above
+                // a fixed-origin clipView and the summary scrolls off the
+                // top).
+                let clipHeight = scroller.contentView.bounds.height
+                scroller.contentView.scroll(
+                    to: NSPoint(x: 0, y: max(0, newDocHeight - clipHeight))
+                )
+                scroller.reflectScrolledClipView(scroller.contentView)
+                refreshScrollFadeMask()
+            } else {
+                // Flat mode: existing behavior — panel grows. Apply y-clamp so
+                // the panel can't be positioned off-screen. Don't cap the
+                // panel height itself — the final `updateSuggestionDetails`
+                // re-evaluates the layout and transitions to scrolled mode if
+                // the full content exceeds the budget. Capping mid-stream
+                // would clip the summary against cards below it.
+                let screenFrame = resolvedScreenFrame(panel: panel)
+                let newPanelHeight = basePanelHeight + summaryDelta
+                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
+                let originY = clampedPanelY(
+                    preferredCenterY: preferredCenterY,
+                    panelHeight: newPanelHeight,
+                    screenFrame: screenFrame
+                )
+                let newFrame = NSRect(
+                    x: panel.frame.origin.x,
+                    y: originY,
+                    width: panel.frame.width,
+                    height: newPanelHeight
+                )
+                panel.setFrame(newFrame, display: true, animate: false)
+                basePanelTopY = panel.frame.maxY
+                contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
+                summaryCard.frame = NSRect(
+                    x: summaryBaseFrame.origin.x,
+                    y: summaryBaseFrame.origin.y,
+                    width: summaryBaseFrame.width,
+                    height: requiredSummaryHeight
+                )
+                summaryLabel.frame = NSRect(
+                    x: 24,
+                    y: summaryTextY,
+                    width: labelWidth,
+                    height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
+                )
+                if wasLoading {
+                    summaryBaseFrame = summaryCard.frame
+                    basePanelHeight = newPanelHeight
+                }
             }
         } else if wasLoading {
             // Even when the new text fits in summaryBaseFrame, the loading
@@ -1407,19 +1772,41 @@ final class SuggestionsOverlay: NSObject {
 
         let summaryHeight = summaryCard.frame.height
         let contentHeight = summaryHeight + Layout.sectionGap + stackHeight + bottomHintBlockHeight
+        let scrollerContentHeight = summaryHeight
+            + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
+        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+            expandedHeights[$0] - collapsedHeights[$0]
+        }.max() ?? 0
+        let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
+
+        let screenFrame = resolvedScreenFrame(panel: panel)
+        let computedMaxPanelHeight = computeMaxPanelHeight(for: screenFrame)
+        let maxScrollerHeight = max(0, computedMaxPanelHeight - 2 * Layout.shadowBleed - pinnedHeight)
+        let willScroll = (scrollerContentHeight + maxExpandDelta) > maxScrollerHeight && maxScrollerHeight > 0
+        // Tight-fit when collapsed content fits in budget; clamp only when it
+        // doesn't. See matching comment in `show(...)`.
+        let effectiveScrollerHeight: CGFloat = willScroll
+            ? min(scrollerContentHeight, maxScrollerHeight)
+            : scrollerContentHeight
         let newPanelWidth = panel.frame.width
-        let newPanelHeight = contentHeight + Layout.shadowBleed * 2
+        let flatPanelHeight = contentHeight + Layout.shadowBleed * 2
+        let newPanelHeight: CGFloat = willScroll
+            ? effectiveScrollerHeight + pinnedHeight + 2 * Layout.shadowBleed
+            : flatPanelHeight
 
         // Recenter on each suggestion-render. The pre-PR behavior; the
         // attempted "anchor current top to preserve user drag" was
         // wrong because the streaming-driven first render then walked
         // the panel down per-token instead of expanding from center.
-        let screenFrame = panel.screen?.frame
-            ?? NSScreen.main?.frame
-            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let preferredCenterY = screenFrame.midY - newPanelHeight / 2
+        let newOriginY = clampedPanelY(
+            preferredCenterY: preferredCenterY,
+            panelHeight: newPanelHeight,
+            screenFrame: screenFrame
+        )
         let newFrame = NSRect(
             x: panel.frame.origin.x,
-            y: screenFrame.midY - newPanelHeight / 2,
+            y: newOriginY,
             width: newPanelWidth,
             height: newPanelHeight
         )
@@ -1427,11 +1814,55 @@ final class SuggestionsOverlay: NSObject {
         basePanelTopY = panel.frame.maxY
         contentView.frame = NSRect(x: 0, y: 0, width: newPanelWidth, height: newPanelHeight)
 
-        let contentX = Layout.shadowBleed
-        let contentTop = newPanelHeight - Layout.shadowBleed
-        let summaryY = contentTop - summaryHeight
+        // Move summaryCard between flat and scrolled hosts as needed.
+        let cardHost: NSView
+        let cardHostX: CGFloat
+        let cardHostTopY: CGFloat
+        if willScroll {
+            let scroller: NSScrollView
+            let doc: NSView
+            if let existing = scrollContainer, let existingDoc = scrollDocumentView {
+                scroller = existing
+                doc = existingDoc
+            } else {
+                scroller = makeOverflowScrollView()
+                doc = scroller.documentView!
+                contentView.addSubview(scroller)
+                scrollContainer = scroller
+                scrollDocumentView = doc
+            }
+            // Span the full panel width so card shadows aren't horizontally
+            // clipped by the clipView. Cards sit at x=shadowBleed inside doc.
+            scroller.frame = NSRect(
+                x: 0,
+                y: Layout.shadowBleed + pinnedHeight,
+                width: newPanelWidth,
+                height: effectiveScrollerHeight
+            )
+            doc.frame = NSRect(x: 0, y: 0, width: newPanelWidth, height: scrollerContentHeight)
+            if summaryCard.superview !== doc {
+                summaryCard.removeFromSuperview()
+                doc.addSubview(summaryCard)
+            }
+            cardHost = doc
+            cardHostX = Layout.shadowBleed
+            cardHostTopY = scrollerContentHeight
+        } else {
+            if scrollContainer != nil {
+                if summaryCard.superview !== contentView {
+                    summaryCard.removeFromSuperview()
+                    contentView.addSubview(summaryCard)
+                }
+                tearDownOverflowScroll()
+            }
+            cardHost = contentView
+            cardHostX = Layout.shadowBleed
+            cardHostTopY = newPanelHeight - Layout.shadowBleed
+        }
+
+        let summaryY = cardHostTopY - summaryHeight
         summaryCard.frame = NSRect(
-            x: contentX,
+            x: cardHostX,
             y: summaryY,
             width: contentWidth,
             height: summaryHeight
@@ -1444,7 +1875,7 @@ final class SuggestionsOverlay: NSObject {
             let collapsedHeight = collapsedHeights[offset]
             y -= collapsedHeight
             let rowFrame = NSRect(
-                x: contentX,
+                x: cardHostX,
                 y: y,
                 width: contentWidth,
                 height: collapsedHeight
@@ -1455,7 +1886,7 @@ final class SuggestionsOverlay: NSObject {
                 detail: detail,
                 font: suggestionFont
             )
-            contentView.addSubview(card.outer)
+            cardHost.addSubview(card.outer)
             cards.append(SuggestionCard(
                 outer: card.outer,
                 content: card.content,
@@ -1480,13 +1911,19 @@ final class SuggestionsOverlay: NSObject {
             }
         }
 
-        if !visibleSuggestions.isEmpty {
-            y -= Layout.suggestionGap
+        let customY: CGFloat
+        if willScroll {
+            customY = Layout.shadowBleed + bottomHintBlockHeight
+        } else {
+            if !visibleSuggestions.isEmpty {
+                y -= Layout.suggestionGap
+            }
+            y -= Layout.customInputMinHeight
+            customY = y
         }
-        y -= Layout.customInputMinHeight
         let customFrame = NSRect(
-            x: contentX,
-            y: y,
+            x: Layout.shadowBleed,
+            y: customY,
             width: contentWidth,
             height: Layout.customInputMinHeight
         )
@@ -1496,11 +1933,17 @@ final class SuggestionsOverlay: NSObject {
         let bottomHint: NSTextField?
         let bottomHintFrame: NSRect
         if let bottomHintText {
-            y -= Layout.bottomHintTopGap
-            y -= Layout.bottomHintHeight
+            let hintY: CGFloat
+            if willScroll {
+                hintY = Layout.shadowBleed
+            } else {
+                y -= Layout.bottomHintTopGap
+                y -= Layout.bottomHintHeight
+                hintY = y
+            }
             bottomHintFrame = NSRect(
-                x: contentX + 24,
-                y: y,
+                x: Layout.shadowBleed + 24,
+                y: hintY,
                 width: contentWidth - 48,
                 height: Layout.bottomHintHeight
             )
@@ -1519,6 +1962,16 @@ final class SuggestionsOverlay: NSObject {
             bottomHintFrame = .zero
         }
 
+        if willScroll, let scroller = scrollContainer, let doc = scrollDocumentView {
+            let clipHeight = scroller.contentView.bounds.height
+            scroller.contentView.scroll(
+                to: NSPoint(x: 0, y: max(0, doc.frame.height - clipHeight))
+            )
+            scroller.reflectScrolledClipView(scroller.contentView)
+            installScrollBoundsObserver()
+            refreshScrollFadeMask()
+        }
+
         self.suggestionCards = cards
         self.customInputCard = customCard.outer
         self.customInputBaseFrame = customFrame
@@ -1535,6 +1988,10 @@ final class SuggestionsOverlay: NSObject {
         applyCustomInputModeVisuals()
         self.basePanelHeight = newPanelHeight
         self.basePanelTopY = panel.frame.maxY
+        self.maxPanelHeight = computedMaxPanelHeight
+        self.pinnedAreaHeight = pinnedHeight
+        self.scrollerBaseHeight = effectiveScrollerHeight
+        self.documentViewBaseHeight = scrollerContentHeight
         self.currentHeightDelta = 0
         self.customInputHeightDelta = 0
         let refreshArrivalViews = cards.map(\.outer)
@@ -1623,6 +2080,133 @@ final class SuggestionsOverlay: NSObject {
         return CGPoint(x: fieldRectInScreen.midX, y: fieldRectInScreen.midY)
     }
 
+    /// Per-card animation block shared by the flat and scrolled expansion
+    /// paths. The card frames in `card.collapsedFrame` are stored in the
+    /// host's coord space (panel-local in flat mode, documentView-local in
+    /// scrolled mode), so the same math works in both. Caller is responsible
+    /// for being inside an NSAnimationContext group.
+    private func animateExpandLayout(
+        targetIndex index: Int,
+        heightDelta: CGFloat,
+        suggestionFont: NSFont,
+        textWidth: CGFloat
+    ) {
+        for cardIndex in suggestionCards.indices {
+            let card = suggestionCards[cardIndex]
+            let isSelected = cardIndex == index
+            let collapsedHeight = card.collapsedFrame.height
+            let grows = isSelected && card.expandedHeight > collapsedHeight
+            let targetHeight = grows ? card.expandedHeight : collapsedHeight
+            // Cards above the selection shift up in host-local coords to make
+            // room; the selected card keeps its collapsed origin and grows
+            // downward; cards below keep their collapsed origin.
+            let targetY = card.collapsedFrame.origin.y
+                + (cardIndex < index ? heightDelta : 0)
+            let targetFrame = NSRect(
+                x: card.collapsedFrame.origin.x,
+                y: targetY,
+                width: card.collapsedFrame.width,
+                height: targetHeight
+            )
+            let labelHeight: CGFloat
+            let labelY: CGFloat
+            let numberY: CGFloat
+
+            if grows {
+                setLabelText(
+                    card.label,
+                    text: card.fullText,
+                    font: suggestionFont,
+                    color: .labelColor,
+                    lineSpacing: Layout.suggestionLineSpacing,
+                    singleLine: false
+                )
+                card.label.maximumNumberOfLines = 0
+                card.label.cell?.wraps = true
+                labelHeight = measureHeight(
+                    card.fullText,
+                    width: textWidth,
+                    font: suggestionFont,
+                    lineSpacing: Layout.suggestionLineSpacing
+                )
+                labelY = Layout.expandedBottomPadding(hasAttachments: !card.attachments.isEmpty)
+                card.tagIcon.alphaValue = 0
+                card.tagLabel.alphaValue = 0
+                let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
+                let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
+                numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
+            } else {
+                setLabelText(
+                    card.label,
+                    text: card.collapsedText,
+                    font: suggestionFont,
+                    color: .labelColor,
+                    lineSpacing: card.collapsedSingleLine ? 0 : 2,
+                    singleLine: card.collapsedSingleLine
+                )
+                card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
+                card.label.cell?.wraps = !card.collapsedSingleLine
+                labelHeight = card.collapsedLabelHeight
+                if card.hasTags {
+                    labelY = (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
+                        + Layout.suggestionTagHeight
+                        + Layout.suggestionTagGap
+                } else {
+                    labelY = (collapsedHeight - labelHeight) / 2
+                }
+                numberY = (collapsedHeight - Layout.suggestionNumberHeight) / 2
+                card.tagIcon.alphaValue = card.hasTags ? Layout.tagAlpha : 0
+                card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
+            }
+
+            card.tint.alphaValue = isSelected ? 1 : 0
+            card.enterHint.alphaValue = isSelected ? 1 : 0
+            let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
+            setCornerRadius(card.outer, optionCorner)
+            card.tint.layer?.cornerRadius = optionCorner
+            card.outer.animator().frame = targetFrame
+            card.number.animator().frame = NSRect(
+                x: Layout.suggestionNumberX,
+                y: numberY,
+                width: Layout.suggestionNumberWidth,
+                height: Layout.suggestionNumberHeight
+            )
+            card.label.animator().frame = NSRect(
+                x: Layout.suggestionTextX,
+                y: labelY,
+                width: textWidth,
+                height: labelHeight
+            )
+            let tagY = card.hasTags
+                ? max(0, labelY - Layout.suggestionTagGap - Layout.suggestionTagHeight)
+                : labelY
+            card.tagIcon.animator().frame = NSRect(
+                x: Layout.suggestionTextX,
+                y: tagY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
+                width: Layout.tagIconSize,
+                height: Layout.tagIconSize
+            )
+            card.tagLabel.animator().frame = NSRect(
+                x: Layout.suggestionTextX + Layout.tagIconSize + Layout.tagIconGap,
+                y: tagY,
+                width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
+                height: Layout.suggestionTagHeight
+            )
+            card.enterHint.animator().frame = NSRect(
+                x: targetFrame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
+                y: Layout.enterHintBottomInset,
+                width: Layout.enterHintWidth,
+                height: Layout.enterHintHeight
+            )
+
+            if let chips = card.attachmentChips {
+                let chipFrame = attachmentChipFrame(in: targetFrame, stack: chips)
+                chips.frame = chipFrame
+                chips.animator().alphaValue = (isSelected && grows) ? 1 : 0
+            }
+        }
+    }
+
     @discardableResult
     func expandSuggestion(index: Int) -> Bool {
         guard let panel, let contentView, index >= 0, index < suggestionCards.count else {
@@ -1631,21 +2215,107 @@ final class SuggestionsOverlay: NSObject {
 
         let selected = suggestionCards[index]
         let heightDelta = selected.expandedHeight - selected.collapsedFrame.height
-        // Going from a state with currentHeightDelta to one with heightDelta
-        // shifts panel.origin.y in screen coords by `heightDelta - current`
-        // (top edge stays pinned). Each card's local origin would visually
-        // jump by the same amount and the animator would pull it back —
-        // that's the flicker. Compensate synchronously so screen position is
-        // preserved across the resize, then let the animator transition to
-        // the final target frames.
+
+        let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let textWidth = Layout.panelWidth - Layout.suggestionTextX - Layout.cardPaddingX
+
+        if let scroller = scrollContainer, let doc = scrollDocumentView, let summaryCard {
+            // Scrolled mode: the documentView grows by `heightDelta`
+            // (relative to the collapsed baseline). The scrollView height
+            // and the panel grow with it up to `maxPanelHeight`; beyond
+            // that, the documentView exceeds the scrollView and scrolling
+            // activates. Cards above the selection shift up in
+            // documentView-local coords to make room; the selected card
+            // grows downward; cards below keep their collapsed origin.
+            let newDocHeight = documentViewBaseHeight + heightDelta
+            let screenFrame = resolvedScreenFrame(panel: panel)
+            let computedMax = computeMaxPanelHeight(for: screenFrame)
+            let (newScrollerHeight, newPanelHeight) = scrolledLayoutHeights(
+                scrollerContentHeight: newDocHeight,
+                pinnedHeight: pinnedAreaHeight,
+                maxPanelHeight: computedMax
+            )
+
+            // Resize panel + scrollView. Anchor to the panel's current top
+            // so user drags are preserved.
+            basePanelTopY = panel.frame.maxY
+            let preferredOriginY = basePanelTopY - newPanelHeight
+            let clampedOriginY = clampedPanelY(
+                preferredCenterY: preferredOriginY,
+                panelHeight: newPanelHeight,
+                screenFrame: screenFrame
+            )
+            let newPanelFrame = NSRect(
+                x: panel.frame.origin.x,
+                y: clampedOriginY,
+                width: panel.frame.width,
+                height: newPanelHeight
+            )
+            panel.setFrame(newPanelFrame, display: true, animate: false)
+            basePanelTopY = panel.frame.maxY
+            contentView.frame = NSRect(x: 0, y: 0, width: newPanelFrame.width, height: newPanelHeight)
+
+            // Scroller's bottom edge stays at `shadowBleed + pinnedHeight`;
+            // its height changes to fit. documentView grows to the new
+            // content height.
+            scroller.frame = NSRect(
+                x: scroller.frame.origin.x,
+                y: Layout.shadowBleed + pinnedAreaHeight,
+                width: scroller.frame.width,
+                height: newScrollerHeight
+            )
+            doc.frame = NSRect(x: 0, y: 0, width: doc.frame.width, height: newDocHeight)
+
+            // Move summary card synchronously to its post-expansion y in
+            // documentView coords. Its baseFrame stays at the collapsed
+            // anchor — we restore from it on collapse.
+            var summaryF = summaryBaseFrame
+            summaryF.origin.y += heightDelta
+            summaryCard.frame = summaryF
+
+            expandedSuggestionIndex = index
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Layout.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                animateExpandLayout(
+                    targetIndex: index,
+                    heightDelta: heightDelta,
+                    suggestionFont: suggestionFont,
+                    textWidth: textWidth
+                )
+                // Pinned input + hint are outside the scroller; they don't
+                // animate in this path.
+            }
+
+            currentHeightDelta = heightDelta
+            refreshScrollFadeMask()
+            // Scroll the selected card's full expanded height into view.
+            let visibleRect = NSRect(
+                x: 0,
+                y: selected.collapsedFrame.origin.y,
+                width: 1,
+                height: selected.expandedHeight
+            )
+            doc.scrollToVisible(visibleRect)
+            return true
+        }
+
+        // Flat mode: existing behavior — panel grows downward, card frames
+        // shift in panel-local coords.
         let panelDrop = heightDelta - currentHeightDelta
-        // Anchor against the panel's *current* top edge — user may have
-        // dragged the panel after show().
         basePanelTopY = panel.frame.maxY
         let newPanelHeight = basePanelHeight + heightDelta + customInputHeightDelta
+        let preferredOriginY = basePanelTopY - newPanelHeight
+        let screenFrame = resolvedScreenFrame(panel: panel)
+        let clampedOriginY = clampedPanelY(
+            preferredCenterY: preferredOriginY,
+            panelHeight: newPanelHeight,
+            screenFrame: screenFrame
+        )
         let newFrame = NSRect(
             x: panel.frame.origin.x,
-            y: basePanelTopY - newPanelHeight,
+            y: clampedOriginY,
             width: panel.frame.width,
             height: newPanelHeight
         )
@@ -1653,11 +2323,10 @@ final class SuggestionsOverlay: NSObject {
         contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
         expandedSuggestionIndex = index
 
-        let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
-        let textWidth = Layout.panelWidth - Layout.suggestionTextX - Layout.cardPaddingX
         let summaryFrame = summaryBaseFrame.offsetBy(dx: 0, dy: heightDelta)
 
         panel.setFrame(newFrame, display: true, animate: false)
+        basePanelTopY = panel.frame.maxY
         summaryCard?.frame = summaryFrame
 
         if panelDrop != 0 {
@@ -1682,125 +2351,12 @@ final class SuggestionsOverlay: NSObject {
             context.duration = Layout.animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
-            for cardIndex in suggestionCards.indices {
-                let card = suggestionCards[cardIndex]
-                let isSelected = cardIndex == index
-                let collapsedHeight = card.collapsedFrame.height
-                let grows = isSelected && card.expandedHeight > collapsedHeight
-                let targetHeight = grows ? card.expandedHeight : collapsedHeight
-                // Cards above the selection shift up in panel-local coords to
-                // compensate for the panel growing downward; the selected
-                // card keeps its collapsed origin and just gains height, so
-                // its top stays pinned in screen coords while it grows down.
-                let targetY = card.collapsedFrame.origin.y
-                    + (cardIndex < index ? heightDelta : 0)
-                let targetFrame = NSRect(
-                    x: card.collapsedFrame.origin.x,
-                    y: targetY,
-                    width: card.collapsedFrame.width,
-                    height: targetHeight
-                )
-                let labelHeight: CGFloat
-                let labelY: CGFloat
-                let numberY: CGFloat
-
-                if grows {
-                    setLabelText(
-                        card.label,
-                        text: card.fullText,
-                        font: suggestionFont,
-                        color: .labelColor,
-                        lineSpacing: Layout.suggestionLineSpacing,
-                        singleLine: false
-                    )
-                    card.label.maximumNumberOfLines = 0
-                    card.label.cell?.wraps = true
-                    labelHeight = measureHeight(
-                        card.fullText,
-                        width: textWidth,
-                        font: suggestionFont,
-                        lineSpacing: Layout.suggestionLineSpacing
-                    )
-                    labelY = Layout.expandedBottomPadding(hasAttachments: !card.attachments.isEmpty)
-                    card.tagIcon.alphaValue = 0
-                    card.tagLabel.alphaValue = 0
-                    let firstLineHeight = ceil(suggestionFont.ascender - suggestionFont.descender + suggestionFont.leading)
-                    let firstLineCenterY = labelY + labelHeight - firstLineHeight / 2
-                    numberY = firstLineCenterY - Layout.suggestionNumberHeight / 2
-                } else {
-                    setLabelText(
-                        card.label,
-                        text: card.collapsedText,
-                        font: suggestionFont,
-                        color: .labelColor,
-                        lineSpacing: card.collapsedSingleLine ? 0 : 2,
-                        singleLine: card.collapsedSingleLine
-                    )
-                    card.label.maximumNumberOfLines = card.collapsedSingleLine ? 1 : 2
-                    card.label.cell?.wraps = !card.collapsedSingleLine
-                    labelHeight = card.collapsedLabelHeight
-                    if card.hasTags {
-                        labelY = (collapsedHeight - labelHeight - Layout.suggestionTagHeight - Layout.suggestionTagGap) / 2
-                            + Layout.suggestionTagHeight
-                            + Layout.suggestionTagGap
-                    } else {
-                        labelY = (collapsedHeight - labelHeight) / 2
-                    }
-                    numberY = (collapsedHeight - Layout.suggestionNumberHeight) / 2
-                    card.tagIcon.alphaValue = card.hasTags ? Layout.tagAlpha : 0
-                    card.tagLabel.alphaValue = card.hasTags ? Layout.tagAlpha : 0
-                }
-
-                card.tint.alphaValue = isSelected ? 1 : 0
-                card.enterHint.alphaValue = isSelected ? 1 : 0
-                let optionCorner = Layout.optionCornerRadius(for: collapsedHeight)
-                setCornerRadius(card.outer, optionCorner)
-                card.tint.layer?.cornerRadius = optionCorner
-                card.outer.animator().frame = targetFrame
-                card.number.animator().frame = NSRect(
-                    x: Layout.suggestionNumberX,
-                    y: numberY,
-                    width: Layout.suggestionNumberWidth,
-                    height: Layout.suggestionNumberHeight
-                )
-                card.label.animator().frame = NSRect(
-                    x: Layout.suggestionTextX,
-                    y: labelY,
-                    width: textWidth,
-                    height: labelHeight
-                )
-                let tagY = card.hasTags
-                    ? max(0, labelY - Layout.suggestionTagGap - Layout.suggestionTagHeight)
-                    : labelY
-                card.tagIcon.animator().frame = NSRect(
-                    x: Layout.suggestionTextX,
-                    y: tagY + (Layout.suggestionTagHeight - Layout.tagIconSize) / 2,
-                    width: Layout.tagIconSize,
-                    height: Layout.tagIconSize
-                )
-                card.tagLabel.animator().frame = NSRect(
-                    x: Layout.suggestionTextX + Layout.tagIconSize + Layout.tagIconGap,
-                    y: tagY,
-                    width: textWidth - Layout.tagIconSize - Layout.tagIconGap,
-                    height: Layout.suggestionTagHeight
-                )
-                card.enterHint.animator().frame = NSRect(
-                    x: targetFrame.width - Layout.enterHintRightInset - Layout.enterHintWidth,
-                    y: Layout.enterHintBottomInset,
-                    width: Layout.enterHintWidth,
-                    height: Layout.enterHintHeight
-                )
-
-                // Attachment chips: visible only on the selected card while
-                // expanded. Positioned in card-local coords above the enter
-                // hint so they sit between the suggestion text and the bottom
-                // metadata row.
-                if let chips = card.attachmentChips {
-                    let chipFrame = attachmentChipFrame(in: targetFrame, stack: chips)
-                    chips.frame = chipFrame
-                    chips.animator().alphaValue = (isSelected && grows) ? 1 : 0
-                }
-            }
+            animateExpandLayout(
+                targetIndex: index,
+                heightDelta: heightDelta,
+                suggestionFont: suggestionFont,
+                textWidth: textWidth
+            )
 
             if let customInputCard {
                 customInputCard.animator().frame = customInputBaseFrame
@@ -1820,19 +2376,65 @@ final class SuggestionsOverlay: NSObject {
             return
         }
 
-        // Re-anchor against the panel's current top so user drags
-        // don't snap the panel back to its show-time origin.
-        basePanelTopY = panel.frame.maxY
-        let collapseHeight = basePanelHeight + customInputHeightDelta
-        let newFrame = NSRect(
-            x: panel.frame.origin.x,
-            y: basePanelTopY - collapseHeight,
-            width: panel.frame.width,
-            height: collapseHeight
-        )
-        contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: collapseHeight)
-        panel.setFrame(newFrame, display: true, animate: false)
-        summaryCard?.frame = summaryBaseFrame
+        if let scroller = scrollContainer, let doc = scrollDocumentView {
+            // Scrolled mode: shrink documentView back to its base height,
+            // restore summary's collapsed origin, and shrink the panel +
+            // scrollView back to the tight collapsed layout.
+            doc.frame = NSRect(x: 0, y: 0, width: doc.frame.width, height: documentViewBaseHeight)
+            summaryCard?.frame = summaryBaseFrame
+
+            let screenFrame = resolvedScreenFrame(panel: panel)
+            let computedMax = computeMaxPanelHeight(for: screenFrame)
+            let (newScrollerHeight, newPanelHeight) = scrolledLayoutHeights(
+                scrollerContentHeight: documentViewBaseHeight,
+                pinnedHeight: pinnedAreaHeight,
+                maxPanelHeight: computedMax
+            )
+            basePanelTopY = panel.frame.maxY
+            let preferredOriginY = basePanelTopY - newPanelHeight
+            let clampedOriginY = clampedPanelY(
+                preferredCenterY: preferredOriginY,
+                panelHeight: newPanelHeight,
+                screenFrame: screenFrame
+            )
+            let newFrame = NSRect(
+                x: panel.frame.origin.x,
+                y: clampedOriginY,
+                width: panel.frame.width,
+                height: newPanelHeight
+            )
+            contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: newPanelHeight)
+            panel.setFrame(newFrame, display: true, animate: false)
+            basePanelTopY = panel.frame.maxY
+            scroller.frame = NSRect(
+                x: scroller.frame.origin.x,
+                y: Layout.shadowBleed + pinnedAreaHeight,
+                width: scroller.frame.width,
+                height: newScrollerHeight
+            )
+        } else {
+            // Re-anchor against the panel's current top so user drags
+            // don't snap the panel back to its show-time origin.
+            basePanelTopY = panel.frame.maxY
+            let collapseHeight = basePanelHeight + customInputHeightDelta
+            let preferredOriginY = basePanelTopY - collapseHeight
+            let screenFrame = resolvedScreenFrame(panel: panel)
+            let clampedOriginY = clampedPanelY(
+                preferredCenterY: preferredOriginY,
+                panelHeight: collapseHeight,
+                screenFrame: screenFrame
+            )
+            let newFrame = NSRect(
+                x: panel.frame.origin.x,
+                y: clampedOriginY,
+                width: panel.frame.width,
+                height: collapseHeight
+            )
+            contentView.frame = NSRect(x: 0, y: 0, width: newFrame.width, height: collapseHeight)
+            panel.setFrame(newFrame, display: true, animate: false)
+            basePanelTopY = panel.frame.maxY
+            summaryCard?.frame = summaryBaseFrame
+        }
 
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
         let textWidth = Layout.panelWidth - Layout.suggestionTextX - Layout.cardPaddingX
@@ -1905,11 +2507,17 @@ final class SuggestionsOverlay: NSObject {
         }
         currentHeightDelta = 0
         expandedSuggestionIndex = nil
+        if scrollContainer != nil {
+            refreshScrollFadeMask()
+        }
     }
 
     func close() {
         emitVisibilityChange(false)
         tearDownLoadingState()
+        tearDownOverflowScroll()
+        maxPanelHeight = .greatestFiniteMagnitude
+        pinnedAreaHeight = 0
         softErrorPanel?.close()
         softErrorPanel = nil
         removeMouseMonitors()
@@ -2946,36 +3554,62 @@ final class SuggestionsOverlay: NSObject {
 
         field.scrollView.hasVerticalScroller = newCardHeight >= Layout.customInputMaxHeight
 
-        // Re-anchor against the panel's current top so user drags
-        // don't snap the panel back to its show-time origin.
-        basePanelTopY = panel.frame.maxY
-        let totalHeight = basePanelHeight + currentHeightDelta + customInputHeightDelta
-        let newPanelFrame = NSRect(
-            x: panel.frame.origin.x,
-            y: basePanelTopY - totalHeight,
-            width: panel.frame.width,
-            height: totalHeight
-        )
+        let cardTargetY: CGFloat
+        if let scroller = scrollContainer {
+            // Scrolled mode: the panel stays at maxPanelHeight. Input keeps
+            // its bottom edge fixed (just above the bottom hint); the card
+            // grows upward and steals vertical space from the scroller above.
+            cardTargetY = card.frame.origin.y
+            // Shrink the scroller's frame: top edge stays, bottom edge rises
+            // by panelDelta so the input has room. documentView contents
+            // don't move (summary + cards are anchored relative to doc).
+            var sf = scroller.frame
+            sf.origin.y += panelDelta
+            sf.size.height -= panelDelta
+            scroller.frame = sf
+            scrollerBaseHeight = sf.height
+            // Card grows upward (y stays, height increases). The animator
+            // below picks it up from `customInputBaseFrame`.
+        } else {
+            // Flat mode: existing behavior — the panel grows by panelDelta
+            // and everything shifts up to compensate. Also apply the y-clamp.
+            basePanelTopY = panel.frame.maxY
+            let totalHeight = basePanelHeight + currentHeightDelta + customInputHeightDelta
+            let preferredOriginY = basePanelTopY - totalHeight
+            let screenFrame = resolvedScreenFrame(panel: panel)
+            let clampedOriginY = clampedPanelY(
+                preferredCenterY: preferredOriginY,
+                panelHeight: totalHeight,
+                screenFrame: screenFrame
+            )
+            let newPanelFrame = NSRect(
+                x: panel.frame.origin.x,
+                y: clampedOriginY,
+                width: panel.frame.width,
+                height: totalHeight
+            )
 
-        contentView.frame = NSRect(x: 0, y: 0, width: newPanelFrame.width, height: totalHeight)
-        panel.setFrame(newPanelFrame, display: true, animate: false)
+            contentView.frame = NSRect(x: 0, y: 0, width: newPanelFrame.width, height: totalHeight)
+            panel.setFrame(newPanelFrame, display: true, animate: false)
+            basePanelTopY = panel.frame.maxY
 
-        let cardTargetY = card.frame.origin.y
+            cardTargetY = card.frame.origin.y
 
-        if panelDelta != 0 {
-            if let sc = summaryCard {
-                sc.frame = sc.frame.offsetBy(dx: 0, dy: panelDelta)
+            if panelDelta != 0 {
+                if let sc = summaryCard {
+                    sc.frame = sc.frame.offsetBy(dx: 0, dy: panelDelta)
+                }
+                summaryBaseFrame = summaryBaseFrame.offsetBy(dx: 0, dy: panelDelta)
+                for i in suggestionCards.indices {
+                    suggestionCards[i].outer.frame = suggestionCards[i].outer.frame.offsetBy(dx: 0, dy: panelDelta)
+                    suggestionCards[i].collapsedFrame = suggestionCards[i].collapsedFrame.offsetBy(dx: 0, dy: panelDelta)
+                }
+                if let bl = bottomHintLabel {
+                    bl.frame = bl.frame.offsetBy(dx: 0, dy: panelDelta)
+                }
+                bottomHintBaseFrame = bottomHintBaseFrame.offsetBy(dx: 0, dy: panelDelta)
+                card.frame = card.frame.offsetBy(dx: 0, dy: panelDelta)
             }
-            summaryBaseFrame = summaryBaseFrame.offsetBy(dx: 0, dy: panelDelta)
-            for i in suggestionCards.indices {
-                suggestionCards[i].outer.frame = suggestionCards[i].outer.frame.offsetBy(dx: 0, dy: panelDelta)
-                suggestionCards[i].collapsedFrame = suggestionCards[i].collapsedFrame.offsetBy(dx: 0, dy: panelDelta)
-            }
-            if let bl = bottomHintLabel {
-                bl.frame = bl.frame.offsetBy(dx: 0, dy: panelDelta)
-            }
-            bottomHintBaseFrame = bottomHintBaseFrame.offsetBy(dx: 0, dy: panelDelta)
-            card.frame = card.frame.offsetBy(dx: 0, dy: panelDelta)
         }
 
         customInputBaseFrame = NSRect(
