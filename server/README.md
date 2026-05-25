@@ -21,7 +21,7 @@ See also:
 
 ## Endpoints
 
-### `GET /healthz`
+### `GET /v1/healthz`
 
 Returns:
 
@@ -219,7 +219,7 @@ server/.venv/bin/uvicorn server.main:app --reload
 Then verify:
 
 ```bash
-curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/v1/healthz
 curl -X POST \
   -H "Authorization: Bearer <token>" \
   -F 'request={"request_id":"local-1","input_mode":"screenshot"};type=application/json' \
@@ -254,7 +254,7 @@ or existing Railway service, the remaining one-time dashboard wiring is:
    `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 6. Optional for response caching and reroll thread continuity: attach Redis and set
    `REDIS_URL=${{Redis.REDIS_URL}}`.
-7. Deploy and confirm `GET /healthz` returns `200`.
+7. Deploy and confirm `GET /v1/healthz` returns `200`.
 8. Point `BLINK_PROXY_URL` at the deployed URL for dogfood clients.
 
 Postgres does not need a manual migration step for v1. When `DATABASE_URL` is

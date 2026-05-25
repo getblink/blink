@@ -1,0 +1,53 @@
+name: Deploy server to Cloud Run
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - "server/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: blink-497308
+  GCP_REGION: us-west1
+  SERVICE_NAME: blink-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses Workload Identity Federation. To switch to a JSON key, replace
+      # `workload_identity_provider` + `service_account` with `credentials_json`.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE_NAME" \
+            --source server/ \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --min-instances=1 \
+            --max-instances=10 \
+            --timeout=300 \
+            --concurrency=80 \
+            --cpu=1 \
+            --memory=512Mi \
+            --set-env-vars="GIT_COMMIT=${{ github.sha }},BLINK_TRUST_PROXY_HEADERS=true" \
+            --set-secrets="DATABASE_URL=database-url:latest,REDIS_URL=redis-url:latest,GEMINI_API_KEY=gemini-api-key:latest,BLINK_BOOTSTRAP_TOKEN=blink-bootstrap-token:latest,BLINK_API_TOKENS=blink-api-tokens:latest,BLINK_IP_HASH_SALT=blink-ip-hash-salt:latest,POSTHOG_API_KEY=posthog-api-key:latest,BLINK_DISCORD_SIGNUP_WEBHOOK_URL=blink-discord-signup-webhook:latest" \
+            --quiet

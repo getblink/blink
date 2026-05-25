@@ -1123,8 +1123,11 @@ def _record_request(
         )
 
 
-@app.get("/healthz")
+@app.get("/v1/healthz")
 def healthz() -> dict[str, Any]:
+    # The bare path /healthz is reserved by Google Frontend on Cloud Run
+    # (returns a Google-branded 404 before reaching the container), so the
+    # health route is namespaced under /v1/.
     return {"ok": True, "version": _version()}
 
 
