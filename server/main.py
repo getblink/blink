@@ -113,6 +113,14 @@ app.add_middleware(
     allow_headers=["content-type", "authorization"],
     allow_credentials=False,
 )
+# Route blink.tldr.* INFO logs to stderr so Cloud Run / Railway capture them.
+# Uvicorn configures its own access logger but does not touch the root logger
+# or our application loggers, so `logger.info(...)` was being silently dropped.
+logging.basicConfig(
+    level=os.environ.get("BLINK_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 logger = logging.getLogger("blink.tldr.server")
 _DEPRECATION_WARNED: set[str] = set()
 REDACTED_CONTENT_KEYS = {

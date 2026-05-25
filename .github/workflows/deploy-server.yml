@@ -36,7 +36,7 @@ jobs:
             echo "secrets=DATABASE_URL=database-url:latest,REDIS_URL=redis-url:latest,GEMINI_API_KEY=gemini-api-key:latest,BLINK_BOOTSTRAP_TOKEN=blink-bootstrap-token:latest,BLINK_API_TOKENS=blink-api-tokens:latest,BLINK_IP_HASH_SALT=blink-ip-hash-salt:latest,POSTHOG_API_KEY=posthog-api-key:latest,BLINK_DISCORD_SIGNUP_WEBHOOK_URL=blink-discord-signup-webhook:latest" >> "$GITHUB_OUTPUT"
           else
             echo "service=blink-server-staging" >> "$GITHUB_OUTPUT"
-            echo "min_instances=0" >> "$GITHUB_OUTPUT"
+            echo "min_instances=1" >> "$GITHUB_OUTPUT"
             echo "max_instances=5" >> "$GITHUB_OUTPUT"
             echo "secrets=DATABASE_URL=database-url-staging:latest,REDIS_URL=redis-url:latest,GEMINI_API_KEY=gemini-api-key:latest,BLINK_BOOTSTRAP_TOKEN=blink-bootstrap-token-staging:latest,BLINK_API_TOKENS=blink-api-tokens-staging:latest,BLINK_IP_HASH_SALT=blink-ip-hash-salt-staging:latest,POSTHOG_API_KEY=posthog-api-key:latest,BLINK_DISCORD_SIGNUP_WEBHOOK_URL=blink-discord-signup-webhook:latest" >> "$GITHUB_OUTPUT"
           fi
