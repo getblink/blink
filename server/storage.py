@@ -1,14 +1,52 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
-from dataclasses import dataclass
-from typing import Any
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Iterator
 
 try:
     import psycopg
 except ImportError:  # pragma: no cover - optional dependency for local dev
     psycopg = None  # type: ignore[assignment]
+
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:  # pragma: no cover - optional dependency for local dev
+    ConnectionPool = None  # type: ignore[assignment]
+
+
+# One pool per distinct DATABASE_URL, shared across all TelemetryStore
+# instances in the process. Cloud Run keeps Python state alive across many
+# requests on the same instance — without a pool every request paid ~50-150ms
+# for a fresh TCP+TLS+Postgres-auth handshake to Neon's pgbouncer. With the
+# pool, only the first request per worker pays that cost; subsequent ones
+# borrow a warm connection in microseconds.
+_POOL_CACHE: dict[str, "ConnectionPool"] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def _shared_pool(database_url: str) -> "ConnectionPool | None":
+    if ConnectionPool is None:
+        return None
+    pool = _POOL_CACHE.get(database_url)
+    if pool is not None:
+        return pool
+    with _POOL_LOCK:
+        pool = _POOL_CACHE.get(database_url)
+        if pool is None:
+            pool = ConnectionPool(
+                database_url,
+                min_size=1,
+                max_size=10,
+                open=True,
+            )
+            _POOL_CACHE[database_url] = pool
+            atexit.register(pool.close)
+        return pool
 
 
 REQUESTS_SCHEMA = """
@@ -152,11 +190,30 @@ class TelemetryStore:
         enabled = bool(database_url and psycopg is not None)
         return cls(database_url=database_url or None, enabled=enabled)
 
+    @contextmanager
+    def _connection(self) -> "Iterator[Any]":
+        """Yield a Postgres connection, preferring the shared pool.
+
+        Falls back to a per-call ``psycopg.connect()`` if ``psycopg_pool`` is
+        not installed (local dev / minimal envs) so the storage path keeps
+        working. Either way, callers use the same ``with`` shape and should
+        still ``conn.commit()`` explicitly to preserve behavior.
+        """
+        assert self.database_url is not None
+        assert psycopg is not None
+        pool = _shared_pool(self.database_url)
+        if pool is not None:
+            with pool.connection() as conn:
+                yield conn
+        else:  # pragma: no cover - exercised only when psycopg_pool missing
+            with self._connection() as conn:
+                yield conn
+
     def _ensure_schema(self) -> None:
         if not self.enabled or self.database_url is None or self.schema_ready:
             return
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 # Drop the view before any table migrations so REQUESTS_SCHEMA's
                 # `ADD COLUMN IF NOT EXISTS` calls can shift the column layout
@@ -181,7 +238,7 @@ class TelemetryStore:
             return
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -292,7 +349,7 @@ class TelemetryStore:
             return None
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -340,7 +397,7 @@ class TelemetryStore:
             return False
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -370,7 +427,7 @@ class TelemetryStore:
             raise RuntimeError("device token storage is not configured")
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -402,7 +459,7 @@ class TelemetryStore:
             return False
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -431,7 +488,7 @@ class TelemetryStore:
             raise RuntimeError("beta signup storage is not configured")
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -465,7 +522,7 @@ class TelemetryStore:
             return None
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -491,7 +548,7 @@ class TelemetryStore:
             return None
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -510,7 +567,7 @@ class TelemetryStore:
             return 0
         self._ensure_schema()
         assert psycopg is not None
-        with psycopg.connect(self.database_url) as conn:
+        with self._connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

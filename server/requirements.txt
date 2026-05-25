@@ -3,6 +3,7 @@ google-genai>=1.11.0
 httpx
 posthog>=6,<7
 psycopg[binary]
+psycopg_pool
 pypdf
 python-multipart
 redis
