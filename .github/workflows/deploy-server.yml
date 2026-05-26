@@ -67,6 +67,6 @@ jobs:
             --concurrency=80 \
             --cpu=1 \
             --memory=512Mi \
-            --set-env-vars="GIT_COMMIT=${{ github.sha }},BLINK_TRUST_PROXY_HEADERS=true" \
+            --set-env-vars="^|^GIT_COMMIT=${{ github.sha }}|BLINK_TRUST_PROXY_HEADERS=true|BLINK_ALLOWED_MODELS=gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gemini-3.1-pro-preview" \
             --set-secrets="${{ steps.env.outputs.secrets }}" \
             --quiet
