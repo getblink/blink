@@ -213,14 +213,14 @@ class PromptParityTests(unittest.TestCase):
                     "age_seconds": 312,
                     "app_bundle_id": "com.apple.mail",
                     "app_name": "Mail",
-                    "match_mode": "window_match",
+                    "scope": "same_post",
                 },
                 {
                     "instruction": "keep it under 3 sentences",
                     "age_seconds": 3600 + 120,
                     "app_bundle_id": "com.apple.mail",
                     "app_name": "Mail",
-                    "match_mode": "bundle_match",
+                    "scope": "same_app",
                 },
             ],
         }
@@ -232,13 +232,35 @@ class PromptParityTests(unittest.TestCase):
         self.assertIn("<recent_follow_up_guidance>", rendered)
         self.assertIn("</recent_follow_up_guidance>", rendered)
         self.assertIn(
-            '- 5m ago, in Mail: "use proper email format with a greeting and sign-off"',
+            '- [same post] 5m ago: "use proper email format with a greeting and sign-off"',
             rendered,
         )
-        self.assertIn('- 1h ago, in Mail: "keep it under 3 sentences"', rendered)
+        self.assertIn(
+            '- [different surface, same app] 1h ago, in Mail: "keep it under 3 sentences"',
+            rendered,
+        )
         # The block must not introduce a <stateful_context> heading when
         # there is no voice/preference/surface signal alongside it.
         self.assertNotIn("<stateful_context>", rendered)
+
+    def test_follow_up_history_renders_same_window_scope(self) -> None:
+        stateful = {
+            "recent_follow_up_instructions": [
+                {
+                    "instruction": "my take is harnesses are a waste of energy",
+                    "age_seconds": 90,
+                    "app_bundle_id": "com.microsoft.edgemac",
+                    "app_name": "Microsoft Edge",
+                    "scope": "same_window",
+                }
+            ],
+        }
+        rendered = blink_once.prompt_with_context("BASE PROMPT", stateful)
+        self.assertEqual(rendered, gemini.prompt_with_context("BASE PROMPT", stateful))
+        self.assertIn(
+            '- [different post, same window] 1m ago, in Microsoft Edge: "my take is harnesses are a waste of energy"',
+            rendered,
+        )
 
     def test_follow_up_history_empty_keeps_prompt_unchanged(self) -> None:
         for value in (
@@ -322,6 +344,31 @@ class PromptParityTests(unittest.TestCase):
             "<stateful_context>",
             blink_once.prompt_with_context("BASE PROMPT", None, reroll_context),
         )
+
+
+    def test_follow_up_history_in_reroll_context_matches_parity(self) -> None:
+        reroll_context = {
+            "schema_version": 1,
+            "follow_up_instruction": "now give me pushback options",
+            "follow_up_history": [
+                {
+                    "instruction": "what are they actually asking?",
+                    "tldr": "Sarah wants the migration estimate by 4pm.",
+                    "suggestions": ["Got it.", "Can you push to Friday?", "I'll have it by 3."],
+                }
+            ],
+        }
+        rendered_blink = blink_once.prompt_with_context("BASE PROMPT", None, reroll_context)
+        rendered_gemini = gemini.prompt_with_context("BASE PROMPT", None, reroll_context)
+        self.assertEqual(rendered_blink, rendered_gemini)
+        self.assertIn("<follow_up_history>", rendered_blink)
+        self.assertIn("what are they actually asking?", rendered_blink)
+        self.assertIn('<turn index="1">', rendered_blink)
+        # Each suggestion gets its own <suggestion> child so semicolons inside
+        # suggestion text don't alias the delimiter.
+        self.assertIn("<suggestion>Got it.</suggestion>", rendered_blink)
+        self.assertIn("<suggestion>Can you push to Friday?</suggestion>", rendered_blink)
+        self.assertIn("<suggestion>I'll have it by 3.</suggestion>", rendered_blink)
 
 
 if __name__ == "__main__":

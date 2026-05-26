@@ -538,6 +538,34 @@ def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
     follow_up_instruction = str(value.get("follow_up_instruction") or "").strip()
     if follow_up_instruction:
         normalized["follow_up_instruction"] = follow_up_instruction[: gemini.FOLLOW_UP_INSTRUCTION_MAX_CHARS]
+    raw_history = value.get("follow_up_history")
+    if isinstance(raw_history, list) and raw_history:
+        bounded_history = []
+        for turn in raw_history:
+            if not isinstance(turn, dict):
+                continue
+            instruction = str(turn.get("instruction") or "").strip()[:gemini.FOLLOW_UP_INSTRUCTION_MAX_CHARS]
+            tldr = str(turn.get("tldr") or "").strip()[:gemini.FOLLOW_UP_HISTORY_TLDR_MAX_CHARS]
+            raw_suggs = turn.get("suggestions")
+            suggestions = []
+            if isinstance(raw_suggs, list):
+                for item in raw_suggs:
+                    text = str(item or "").strip()[:gemini.FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS]
+                    if text:
+                        suggestions.append(text)
+                    if len(suggestions) >= 3:
+                        break
+            turn_entry: dict[str, Any] = {}
+            if instruction:
+                turn_entry["instruction"] = instruction
+            if tldr:
+                turn_entry["tldr"] = tldr
+            if suggestions:
+                turn_entry["suggestions"] = suggestions
+            if turn_entry:
+                bounded_history.append(turn_entry)
+        if bounded_history:
+            normalized["follow_up_history"] = bounded_history
     return normalized
 
 
@@ -1078,6 +1106,19 @@ def _store_thread_success(
     cache = _thread_cache()
     if not cache.enabled:
         return
+    # When suggestions are unchanged, backfill from the most recent prior model
+    # turn so the thread history never stores an empty suggestions entry, which
+    # would corrupt Gemini's multi-turn conversation context on the next reroll.
+    if payload.get("suggestions_unchanged") and thread_context is not None:
+        prior_turns = _valid_thread_turns(thread_context.get("thread") or {})
+        for turn in reversed(prior_turns):
+            if turn.get("role") == "model" and turn.get("suggestions"):
+                payload = dict(payload)
+                payload["suggestions"] = turn["suggestions"]
+                payload["suggestion_details"] = turn.get("suggestion_details") or [
+                    {"text": s, "tags": []} for s in turn["suggestions"]
+                ]
+                break
     request_id = str(envelope["request_id"])
     if thread_context is None:
         root_request_id = request_id
@@ -1428,6 +1469,7 @@ async def _run_tldr_request(
                     images=images,
                     conversation_turns=conversation_turns,
                     user_message_suffix=selection_block,
+                    is_followup=isinstance(envelope.get("reroll_context"), dict),
                 ):
                     event_name = str(event.get("event") or "message")
                     data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -1579,6 +1621,7 @@ async def _run_tldr_request(
             conversation_turns=conversation_turns,
             supports_attachments=settings.get("supports_attachments", False),
             user_message_suffix=selection_block,
+            is_followup=isinstance(envelope.get("reroll_context"), dict),
         )
     except Exception as exc:
         detail = f"Gemini upstream error: {_sanitized_error_message(exc)}"

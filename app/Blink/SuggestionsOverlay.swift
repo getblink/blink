@@ -331,6 +331,55 @@ final class CustomReplyField: NSView, NSTextViewDelegate {
     }
 }
 
+private final class TLDRPagerView: NSView {
+    var dotCount: Int = 1 { didSet { needsDisplay = true } }
+    var currentIndex: Int = 0 { didSet { needsDisplay = true } }
+    var onDotTapped: ((Int) -> Void)?
+
+    private static let dotDiameter: CGFloat = 6
+    private static let dotSpacing: CGFloat = 10
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard dotCount > 1 else { return }
+        let d = TLDRPagerView.dotDiameter
+        let spacing = TLDRPagerView.dotSpacing
+        let totalWidth = CGFloat(dotCount) * d + CGFloat(dotCount - 1) * (spacing - d)
+        let startX = (bounds.width - totalWidth) / 2
+        let centerY = bounds.height / 2
+        for i in 0..<dotCount {
+            let x = startX + CGFloat(i) * spacing
+            let rect = NSRect(x: x, y: centerY - d / 2, width: d, height: d)
+            let path = NSBezierPath(ovalIn: rect)
+            if i == currentIndex {
+                NSColor.labelColor.withAlphaComponent(0.55).setFill()
+            } else {
+                NSColor.labelColor.withAlphaComponent(0.18).setFill()
+            }
+            path.fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard dotCount > 1 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let d = TLDRPagerView.dotDiameter
+        let spacing = TLDRPagerView.dotSpacing
+        let totalWidth = CGFloat(dotCount) * d + CGFloat(dotCount - 1) * (spacing - d)
+        let startX = (bounds.width - totalWidth) / 2
+        // Slop = half the inter-dot spacing minus 1px so adjacent dots'
+        // hit regions never overlap. With spacing=10 this gives a 4px slop
+        // and a 2px dead zone centered on each midpoint.
+        let hitSlop: CGFloat = spacing / 2 - 1
+        for i in 0..<dotCount {
+            let centerX = startX + CGFloat(i) * spacing + d / 2
+            if abs(point.x - centerX) <= hitSlop {
+                onDotTapped?(i)
+                return
+            }
+        }
+    }
+}
+
 private final class SuggestionCardClickTarget: NSObject {
     let index: Int
     let onClick: (Int) -> Void
@@ -557,6 +606,8 @@ final class SuggestionsOverlay: NSObject {
     private var pinButton: NSButton?
     private var summaryHintLabel: NSTextField?
     private var summaryHintBaseText: String?
+    private var tldrPagerView: TLDRPagerView?
+    var onTLDRDotTapped: ((Int) -> Void)?
 
     var onCustomInputFocusChanged: ((Bool) -> Void)?
     var onCustomInsert: ((String) -> Void)?
@@ -907,6 +958,33 @@ final class SuggestionsOverlay: NSObject {
         hint.alignment = .center
         host.addSubview(hint)
         self.summaryHintLabel = hint
+    }
+
+    func setPager(count: Int, currentIndex: Int) {
+        guard count > 1 else {
+            tldrPagerView?.isHidden = true
+            return
+        }
+        guard let host = summaryContent else { return }
+        let pager = installTLDRPagerIfNeeded(in: host)
+        pager.dotCount = count
+        pager.currentIndex = currentIndex
+        pager.isHidden = false
+    }
+
+    private func installTLDRPagerIfNeeded(in host: NSView) -> TLDRPagerView {
+        if let existing = tldrPagerView { return existing }
+        let pager = TLDRPagerView(frame: NSRect(x: 0, y: 4, width: host.bounds.width, height: 10))
+        // Keep the pager spanning the host's width and pinned to the bottom
+        // so layout changes (panel resize, host re-layout) don't strand it.
+        pager.autoresizingMask = [.width, .maxYMargin]
+        pager.isHidden = true
+        pager.onDotTapped = { [weak self] index in
+            self?.onTLDRDotTapped?(index)
+        }
+        host.addSubview(pager)
+        tldrPagerView = pager
+        return pager
     }
 
     func showLoading(tldr: String) {
@@ -2547,6 +2625,7 @@ final class SuggestionsOverlay: NSObject {
         bottomHintLabel = nil
         bottomHintBaseFrame = .zero
         pinButton = nil
+        tldrPagerView = nil
         showsTldrHeader = false
         expandedSuggestionIndex = nil
         currentHeightDelta = 0
@@ -3785,6 +3864,12 @@ final class SuggestionsOverlay: NSObject {
 
     private func handleMouseDownForDismiss(_ event: NSEvent) {
         guard let panel else { return }
+        // Pin means "stay open until I say otherwise." Esc still
+        // dismisses; outside-click does not.
+        if isPinned {
+            lastOutsideClickAt = 0
+            return
+        }
         let location = NSEvent.mouseLocation
         guard !panel.frame.contains(location) else {
             lastOutsideClickAt = 0

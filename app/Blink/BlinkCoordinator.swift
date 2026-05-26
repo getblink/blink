@@ -54,6 +54,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         var run: PythonRunner.StreamingRun?
     }
 
+    private struct FollowUpTurn {
+        let instruction: String
+        let tldr: String
+        let suggestions: [SuggestionDetail]
+    }
+
+    private struct TLDREntry {
+        let tldr: String
+    }
+
     private struct ChimeLatencyDetails {
         let segmentAMS: Int
         let segmentBMS: Int
@@ -94,6 +104,9 @@ final class BlinkCoordinator: @unchecked Sendable {
     private var currentSuggestionDetails: [SuggestionDetail] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    private var followUpHistory: [FollowUpTurn] = []
+    private var tldrHistory: [TLDREntry] = []
+    private var currentTldrIndex: Int = 0
     // Tracks the request ID for which a terminal event (copied / inserted /
     // paste_failed flow) has already been emitted, so a follow-on dismissOverlay
     // call during the close/insert animation does not emit a redundant
@@ -1471,6 +1484,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.currentSuggestions = []
                 self.currentSuggestionDetails = []
                 self.currentBundleDir = nil
+                self.followUpHistory = []
+                self.tldrHistory = []
+                self.currentTldrIndex = 0
                 self.resetChoiceState(
                     suggestionCount: 0,
                     allowsCustomInput: false,
@@ -1652,6 +1668,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                         suggestionDetails: self.currentSuggestionDetails
                     )
                 }
+                // Seed TL;DR history with the initial capture (pager hidden since count=1).
+                self.tldrHistory = [TLDREntry(tldr: result.tldr)]
+                self.currentTldrIndex = 0
+                self.overlay.setPager(count: 1, currentIndex: 0)
+                self.overlay.onTLDRDotTapped = { [weak self] index in
+                    guard let self, index >= 0, index < self.tldrHistory.count else { return }
+                    self.currentTldrIndex = index
+                    self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                    self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
+                }
                 self.soundEffects.play(.resultReady)
                 if result.tldr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && self.currentSuggestions.isEmpty {
@@ -1742,6 +1768,13 @@ final class BlinkCoordinator: @unchecked Sendable {
             status("reroll failed")
             return
         }
+        // Snap to head of TL;DR history before issuing request so any
+        // scrolled-back view snaps to the latest entry.
+        if !tldrHistory.isEmpty && currentTldrIndex != tldrHistory.count - 1 {
+            currentTldrIndex = tldrHistory.count - 1
+            overlay.updateSummary(tldrHistory[currentTldrIndex].tldr)
+            overlay.setPager(count: tldrHistory.count, currentIndex: currentTldrIndex)
+        }
         let priorSuggestions = currentSuggestionDetails.isEmpty
             ? currentSuggestions.map(SuggestionDetail.plain)
             : currentSuggestionDetails
@@ -1773,6 +1806,15 @@ final class BlinkCoordinator: @unchecked Sendable {
             ]
             if let followUpInstruction, !followUpInstruction.isEmpty {
                 rerollContext["follow_up_instruction"] = followUpInstruction
+            }
+            if !followUpHistory.isEmpty {
+                rerollContext["follow_up_history"] = followUpHistory.map { turn in
+                    [
+                        "instruction": turn.instruction,
+                        "tldr": turn.tldr,
+                        "suggestions": turn.suggestions.map(\.text),
+                    ] as [String: Any]
+                }
             }
             requestEnvelope["reroll_context"] = rerollContext
             try JSONFiles.writeObject(
@@ -1928,12 +1970,18 @@ final class BlinkCoordinator: @unchecked Sendable {
 
                 DispatchQueue.main.async {
                     guard self.currentRequestID == requestID else { return }
-                    self.currentSuggestionDetails = self.normalizedSuggestionDetails(
-                        result.suggestionDetails,
-                        fallbackSuggestions: result.suggestions,
-                        draft: ""
-                    )
-                    self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
+                    let suggestionDetailsUnchanged = result.suggestions.isEmpty
+                    if suggestionDetailsUnchanged {
+                        self.currentSuggestions = priorSuggestions.map(\.text)
+                        self.currentSuggestionDetails = priorSuggestions
+                    } else {
+                        self.currentSuggestionDetails = self.normalizedSuggestionDetails(
+                            result.suggestionDetails,
+                            fallbackSuggestions: result.suggestions,
+                            draft: ""
+                        )
+                        self.currentSuggestions = self.currentSuggestionDetails.map(\.text)
+                    }
                     self.currentBundleDir = bundleDir
                     self.resetChoiceState(suggestionCount: self.currentSuggestions.count)
                     self.overlay.onCustomInputFocusChanged = { [weak self] active in
@@ -1980,13 +2028,39 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self.overlay.onOutsideClickDismiss = { [weak self] in
                         self?.dismissOverlay(implicit: true)
                     }
+                    // Append this turn to model follow-up history (for next request's context).
+                    let turnInstruction = followUpInstruction ?? ""
+                    self.followUpHistory.append(FollowUpTurn(
+                        instruction: turnInstruction,
+                        tldr: result.tldr,
+                        suggestions: self.currentSuggestionDetails
+                    ))
+                    // Append to TL;DR display history only when TL;DR actually changed.
+                    let previousTldr = self.tldrHistory.last?.tldr ?? ""
+                    if result.tldr != previousTldr {
+                        self.tldrHistory.append(TLDREntry(tldr: result.tldr))
+                        self.currentTldrIndex = self.tldrHistory.count - 1
+                    }
+                    // Apply TL;DR at completion only (Option A — no streaming partials).
                     if self.overlay.isStreamingActive {
-                        self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
+                        if result.tldr != self.overlay.summaryFullText {
+                            self.overlay.updateSummary(result.tldr)
+                        }
+                        if !suggestionDetailsUnchanged {
+                            self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
+                        }
                     } else {
                         self.overlay.show(
                             tldr: result.tldr,
                             suggestionDetails: self.currentSuggestionDetails
                         )
+                    }
+                    self.overlay.setPager(count: self.tldrHistory.count, currentIndex: self.currentTldrIndex)
+                    self.overlay.onTLDRDotTapped = { [weak self] index in
+                        guard let self, index >= 0, index < self.tldrHistory.count else { return }
+                        self.currentTldrIndex = index
+                        self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                        self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
                     }
                     self.soundEffects.play(.resultReady)
                     self.status("ready - press 1/2/3 to expand")
