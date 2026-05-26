@@ -71,7 +71,7 @@ class MainTests(unittest.TestCase):
         self.env.stop()
 
     def test_healthz_returns_ok(self) -> None:
-        response = self.client.get("/healthz")
+        response = self.client.get("/v1/healthz")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 

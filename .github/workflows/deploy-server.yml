@@ -1,0 +1,72 @@
+name: Deploy server to Cloud Run
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "server/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: blink-497308
+  GCP_REGION: us-west1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve environment
+        id: env
+        # Branch → environment mapping:
+        #   main    → production (blink-server)
+        #   staging → staging    (blink-server-staging)
+        # Both branches normally point at the same tip after a release; the
+        # two jobs are idempotent so a no-op redeploy is harmless.
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "service=blink-server" >> "$GITHUB_OUTPUT"
+            echo "min_instances=1" >> "$GITHUB_OUTPUT"
+            echo "max_instances=10" >> "$GITHUB_OUTPUT"
+            echo "secrets=DATABASE_URL=database-url:latest,REDIS_URL=redis-url:latest,GEMINI_API_KEY=gemini-api-key:latest,BLINK_BOOTSTRAP_TOKEN=blink-bootstrap-token:latest,BLINK_API_TOKENS=blink-api-tokens:latest,BLINK_IP_HASH_SALT=blink-ip-hash-salt:latest,POSTHOG_API_KEY=posthog-api-key:latest,BLINK_DISCORD_SIGNUP_WEBHOOK_URL=blink-discord-signup-webhook:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "service=blink-server-staging" >> "$GITHUB_OUTPUT"
+            echo "min_instances=1" >> "$GITHUB_OUTPUT"
+            echo "max_instances=5" >> "$GITHUB_OUTPUT"
+            echo "secrets=DATABASE_URL=database-url-staging:latest,REDIS_URL=redis-url:latest,GEMINI_API_KEY=gemini-api-key:latest,BLINK_BOOTSTRAP_TOKEN=blink-bootstrap-token-staging:latest,BLINK_API_TOKENS=blink-api-tokens-staging:latest,BLINK_IP_HASH_SALT=blink-ip-hash-salt-staging:latest,POSTHOG_API_KEY=posthog-api-key:latest,BLINK_DISCORD_SIGNUP_WEBHOOK_URL=blink-discord-signup-webhook:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Uses Workload Identity Federation. To switch to a JSON key, replace
+      # `workload_identity_provider` + `service_account` with `credentials_json`.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${{ steps.env.outputs.service }}" \
+            --source server/ \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --min-instances=${{ steps.env.outputs.min_instances }} \
+            --max-instances=${{ steps.env.outputs.max_instances }} \
+            --timeout=300 \
+            --concurrency=80 \
+            --cpu=1 \
+            --memory=512Mi \
+            --set-env-vars="^|^GIT_COMMIT=${{ github.sha }}|BLINK_TRUST_PROXY_HEADERS=true|BLINK_ALLOWED_MODELS=gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gemini-3.1-pro-preview" \
+            --set-secrets="${{ steps.env.outputs.secrets }}" \
+            --quiet

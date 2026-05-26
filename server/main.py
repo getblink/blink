@@ -113,6 +113,14 @@ app.add_middleware(
     allow_headers=["content-type", "authorization"],
     allow_credentials=False,
 )
+# Route blink.tldr.* INFO logs to stderr so Cloud Run / Railway capture them.
+# Uvicorn configures its own access logger but does not touch the root logger
+# or our application loggers, so `logger.info(...)` was being silently dropped.
+logging.basicConfig(
+    level=os.environ.get("BLINK_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 logger = logging.getLogger("blink.tldr.server")
 _DEPRECATION_WARNED: set[str] = set()
 REDACTED_CONTENT_KEYS = {
@@ -182,6 +190,50 @@ def _thread_cache() -> ThreadCache:
 @lru_cache(maxsize=1)
 def _telemetry_store() -> TelemetryStore:
     return TelemetryStore.from_env()
+
+
+@app.on_event("startup")
+def _warmup_dependencies() -> None:
+    """Pay cold-start costs during container boot, not on the first user request.
+
+    The Cloud Run startup probe gates traffic on this function returning, so
+    anything we do here runs before any /v1/tldr hits the service. Measured
+    in dogfood (revision 00009-jwx, ttft_ms=9266 on first request vs ~2500
+    warm), the dominant cold cost is the first httpx TLS session to
+    generativelanguage.googleapis.com plus Google's frontend session affinity
+    needing to warm — both move off the user path with one throwaway call.
+
+    All steps are wrapped in try/except: a transient network blip should not
+    block the container from starting. Each failure logs but does not raise,
+    so the container still serves traffic (just with a slightly cold first
+    request, same as before this hook existed).
+    """
+    # Postgres: open the shared psycopg_pool connection and run schema
+    # migrations now so the first request doesn't pay schema-init cost
+    # (~1-1.5s on Neon cold compute).
+    try:
+        store = _telemetry_store()
+        if store.enabled:
+            store._ensure_schema()
+            logger.info("warmup: postgres pool + schema ready")
+    except Exception as exc:  # noqa: BLE001 - non-fatal, container should still start
+        logger.warning("warmup: postgres failed: %s", exc)
+
+    # Gemini: list models to force one round-trip to
+    # generativelanguage.googleapis.com. This establishes the TLS session
+    # cache and primes Google's frontend session affinity. Costs no tokens.
+    # Note: this warms the metadata endpoint, which is on the same edge as
+    # the inference endpoint, so the TLS session ticket carries over.
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            client = gemini.create_client(api_key)
+            # Force at least one HTTPS round-trip; the pager is lazy otherwise.
+            for _ in client.models.list():
+                break
+            logger.info("warmup: gemini client ready")
+    except Exception as exc:  # noqa: BLE001 - non-fatal
+        logger.warning("warmup: gemini failed: %s", exc)
 
 
 async def _notify_discord_signup(
@@ -294,12 +346,24 @@ def _log_request(
     status_name: str,
     duration_ms: Any,
     usage_tokens: Any,
+    ttft_ms: Any = None,
+    stream_ms: Any = None,
+    cached_tokens: Any = None,
 ) -> None:
+    # ttft_ms/stream_ms only populated on streaming success paths; cached
+    # hits, validation errors, and the non-streaming /tldr fallback log
+    # them as None. ttft_ms is Gemini's input-processing time (time to
+    # first chunk); stream_ms is duration_ms - ttft_ms (output streaming).
+    # cached_tokens is Gemini's cached_content_token_count — nonzero means
+    # implicit (or explicit) prefix-cache hit on this request.
     logger.info(
-        "tldr_request token_id=%s status=%s duration_ms=%s usage_tokens=%s",
+        "tldr_request token_id=%s status=%s duration_ms=%s ttft_ms=%s stream_ms=%s cached_tokens=%s usage_tokens=%s",
         token_id,
         status_name,
         duration_ms,
+        ttft_ms,
+        stream_ms,
+        cached_tokens,
         usage_tokens,
     )
 
@@ -441,12 +505,21 @@ def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="reroll_context must be a JSON object",
         )
-    source_request_id = str(value.get("source_request_id") or "").strip()
+    raw_source = value.get("source_request_id")
+    source_request_id = str(raw_source or "").strip()
     if (
         not source_request_id
         or len(source_request_id) > 64
         or UUID_RE.fullmatch(source_request_id) is None
     ):
+        # Diagnostic: capture what the client actually sent (truncated to
+        # 80 chars) so we can debug client-side reroll bugs from logs.
+        # Without this the 422 surfaces in the app but the bad value is lost.
+        logger.warning(
+            "reroll_context.source_request_id rejected: type=%s repr=%r",
+            type(raw_source).__name__,
+            (source_request_id[:80] if source_request_id else raw_source),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="reroll_context.source_request_id must be a UUID",
@@ -1123,8 +1196,11 @@ def _record_request(
         )
 
 
-@app.get("/healthz")
+@app.get("/v1/healthz")
 def healthz() -> dict[str, Any]:
+    # The bare path /healthz is reserved by Google Frontend on Cloud Run
+    # (returns a Google-branded 404 before reaching the container), so the
+    # health route is namespaced under /v1/.
     return {"ok": True, "version": _version()}
 
 
@@ -1363,6 +1439,9 @@ async def _run_tldr_request(
                                 status_name="ok",
                                 duration_ms=data.get("duration_ms"),
                                 usage_tokens=usage_tokens,
+                                ttft_ms=data.get("ttft_ms"),
+                                stream_ms=data.get("stream_ms"),
+                                cached_tokens=data.get("cached_tokens"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1416,6 +1495,9 @@ async def _run_tldr_request(
                                 status_name=status_name,
                                 duration_ms=data.get("duration_ms"),
                                 usage_tokens=usage_tokens,
+                                ttft_ms=data.get("ttft_ms"),
+                                stream_ms=data.get("stream_ms"),
+                                cached_tokens=data.get("cached_tokens"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1555,6 +1637,9 @@ async def _run_tldr_request(
         status_name=str(payload.get("status")),
         duration_ms=payload.get("duration_ms"),
         usage_tokens=usage_tokens,
+        ttft_ms=payload.get("ttft_ms"),
+        stream_ms=payload.get("stream_ms"),
+        cached_tokens=payload.get("cached_tokens"),
     )
 
     if payload.get("status") == "ok":

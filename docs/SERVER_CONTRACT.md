@@ -7,7 +7,7 @@ The product is Blink, but v1 protocol identifiers intentionally keep their
 original `tldr` names for compatibility: endpoint paths, Postgres tables/view,
 cache prefix, device-token prefix, and JSON fields such as `tldr`.
 
-## `GET /healthz`
+## `GET /v1/healthz`
 
 Response:
 
