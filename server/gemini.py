@@ -670,6 +670,23 @@ def usage_thoughts_token_count(usage: Any) -> int | None:
     return None
 
 
+def usage_cached_tokens(usage: Any) -> int | None:
+    """Pull `cached_content_token_count` out of Gemini's usage metadata.
+
+    Nonzero means Gemini's implicit (or explicit) prefix cache hit on this
+    request — that portion was billed at 25% input rate and skipped re-encoding
+    on the inference side. Lets us observe whether the system_instruction
+    portion of our prompt is being auto-cached without us configuring anything.
+    """
+    if not isinstance(usage, dict):
+        return None
+    for key in ("cached_content_token_count", "cachedContentTokenCount", "cached_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
 def extract_partial_suggestions(raw_text: str) -> list[str]:
     marker = '"suggestions"'
     marker_index = raw_text.find(marker)
@@ -1132,6 +1149,7 @@ def generate_tldr_and_suggestions_streaming(
         "raw": raw_final,
         "usage": usage_dict,
         "thoughts_token_count": usage_thoughts_token_count(usage_dict),
+        "cached_tokens": usage_cached_tokens(usage_dict),
         "duration_ms": duration_ms,
         "ttft_ms": ttft_ms,
         "stream_ms": stream_ms,
@@ -1421,6 +1439,7 @@ def generate_tldr_and_suggestions_streaming_tags(
         "raw": raw_final,
         "usage": usage_dict,
         "thoughts_token_count": usage_thoughts_token_count(usage_dict),
+        "cached_tokens": usage_cached_tokens(usage_dict),
         "duration_ms": duration_ms,
         "ttft_ms": ttft_ms,
         "stream_ms": stream_ms,

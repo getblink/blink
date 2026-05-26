@@ -348,18 +348,22 @@ def _log_request(
     usage_tokens: Any,
     ttft_ms: Any = None,
     stream_ms: Any = None,
+    cached_tokens: Any = None,
 ) -> None:
     # ttft_ms/stream_ms only populated on streaming success paths; cached
     # hits, validation errors, and the non-streaming /tldr fallback log
     # them as None. ttft_ms is Gemini's input-processing time (time to
     # first chunk); stream_ms is duration_ms - ttft_ms (output streaming).
+    # cached_tokens is Gemini's cached_content_token_count — nonzero means
+    # implicit (or explicit) prefix-cache hit on this request.
     logger.info(
-        "tldr_request token_id=%s status=%s duration_ms=%s ttft_ms=%s stream_ms=%s usage_tokens=%s",
+        "tldr_request token_id=%s status=%s duration_ms=%s ttft_ms=%s stream_ms=%s cached_tokens=%s usage_tokens=%s",
         token_id,
         status_name,
         duration_ms,
         ttft_ms,
         stream_ms,
+        cached_tokens,
         usage_tokens,
     )
 
@@ -1437,6 +1441,7 @@ async def _run_tldr_request(
                                 usage_tokens=usage_tokens,
                                 ttft_ms=data.get("ttft_ms"),
                                 stream_ms=data.get("stream_ms"),
+                                cached_tokens=data.get("cached_tokens"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1492,6 +1497,7 @@ async def _run_tldr_request(
                                 usage_tokens=usage_tokens,
                                 ttft_ms=data.get("ttft_ms"),
                                 stream_ms=data.get("stream_ms"),
+                                cached_tokens=data.get("cached_tokens"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1633,6 +1639,7 @@ async def _run_tldr_request(
         usage_tokens=usage_tokens,
         ttft_ms=payload.get("ttft_ms"),
         stream_ms=payload.get("stream_ms"),
+        cached_tokens=payload.get("cached_tokens"),
     )
 
     if payload.get("status") == "ok":
