@@ -192,6 +192,50 @@ def _telemetry_store() -> TelemetryStore:
     return TelemetryStore.from_env()
 
 
+@app.on_event("startup")
+def _warmup_dependencies() -> None:
+    """Pay cold-start costs during container boot, not on the first user request.
+
+    The Cloud Run startup probe gates traffic on this function returning, so
+    anything we do here runs before any /v1/tldr hits the service. Measured
+    in dogfood (revision 00009-jwx, ttft_ms=9266 on first request vs ~2500
+    warm), the dominant cold cost is the first httpx TLS session to
+    generativelanguage.googleapis.com plus Google's frontend session affinity
+    needing to warm — both move off the user path with one throwaway call.
+
+    All steps are wrapped in try/except: a transient network blip should not
+    block the container from starting. Each failure logs but does not raise,
+    so the container still serves traffic (just with a slightly cold first
+    request, same as before this hook existed).
+    """
+    # Postgres: open the shared psycopg_pool connection and run schema
+    # migrations now so the first request doesn't pay schema-init cost
+    # (~1-1.5s on Neon cold compute).
+    try:
+        store = _telemetry_store()
+        if store.enabled:
+            store._ensure_schema()
+            logger.info("warmup: postgres pool + schema ready")
+    except Exception as exc:  # noqa: BLE001 - non-fatal, container should still start
+        logger.warning("warmup: postgres failed: %s", exc)
+
+    # Gemini: list models to force one round-trip to
+    # generativelanguage.googleapis.com. This establishes the TLS session
+    # cache and primes Google's frontend session affinity. Costs no tokens.
+    # Note: this warms the metadata endpoint, which is on the same edge as
+    # the inference endpoint, so the TLS session ticket carries over.
+    try:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            client = gemini.create_client(api_key)
+            # Force at least one HTTPS round-trip; the pager is lazy otherwise.
+            for _ in client.models.list():
+                break
+            logger.info("warmup: gemini client ready")
+    except Exception as exc:  # noqa: BLE001 - non-fatal
+        logger.warning("warmup: gemini failed: %s", exc)
+
+
 async def _notify_discord_signup(
     *,
     email_original: str,
