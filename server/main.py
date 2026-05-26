@@ -457,12 +457,21 @@ def _normalize_reroll_context(value: Any) -> dict[str, Any] | None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="reroll_context must be a JSON object",
         )
-    source_request_id = str(value.get("source_request_id") or "").strip()
+    raw_source = value.get("source_request_id")
+    source_request_id = str(raw_source or "").strip()
     if (
         not source_request_id
         or len(source_request_id) > 64
         or UUID_RE.fullmatch(source_request_id) is None
     ):
+        # Diagnostic: capture what the client actually sent (truncated to
+        # 80 chars) so we can debug client-side reroll bugs from logs.
+        # Without this the 422 surfaces in the app but the bad value is lost.
+        logger.warning(
+            "reroll_context.source_request_id rejected: type=%s repr=%r",
+            type(raw_source).__name__,
+            (source_request_id[:80] if source_request_id else raw_source),
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="reroll_context.source_request_id must be a UUID",
