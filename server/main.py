@@ -302,12 +302,20 @@ def _log_request(
     status_name: str,
     duration_ms: Any,
     usage_tokens: Any,
+    ttft_ms: Any = None,
+    stream_ms: Any = None,
 ) -> None:
+    # ttft_ms/stream_ms only populated on streaming success paths; cached
+    # hits, validation errors, and the non-streaming /tldr fallback log
+    # them as None. ttft_ms is Gemini's input-processing time (time to
+    # first chunk); stream_ms is duration_ms - ttft_ms (output streaming).
     logger.info(
-        "tldr_request token_id=%s status=%s duration_ms=%s usage_tokens=%s",
+        "tldr_request token_id=%s status=%s duration_ms=%s ttft_ms=%s stream_ms=%s usage_tokens=%s",
         token_id,
         status_name,
         duration_ms,
+        ttft_ms,
+        stream_ms,
         usage_tokens,
     )
 
@@ -1374,6 +1382,8 @@ async def _run_tldr_request(
                                 status_name="ok",
                                 duration_ms=data.get("duration_ms"),
                                 usage_tokens=usage_tokens,
+                                ttft_ms=data.get("ttft_ms"),
+                                stream_ms=data.get("stream_ms"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1427,6 +1437,8 @@ async def _run_tldr_request(
                                 status_name=status_name,
                                 duration_ms=data.get("duration_ms"),
                                 usage_tokens=usage_tokens,
+                                ttft_ms=data.get("ttft_ms"),
+                                stream_ms=data.get("stream_ms"),
                             )
                             _record_request(
                                 token_id=token_id,
@@ -1566,6 +1578,8 @@ async def _run_tldr_request(
         status_name=str(payload.get("status")),
         duration_ms=payload.get("duration_ms"),
         usage_tokens=usage_tokens,
+        ttft_ms=payload.get("ttft_ms"),
+        stream_ms=payload.get("stream_ms"),
     )
 
     if payload.get("status") == "ok":

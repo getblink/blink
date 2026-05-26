@@ -1083,6 +1083,7 @@ def generate_tldr_and_suggestions_streaming(
 
     config = _generate_config(types, settings, prompt_text)
     started = time.perf_counter()
+    first_chunk_at: float | None = None
     raw_text = ""
     usage = None
     last_partial = ""
@@ -1094,6 +1095,8 @@ def generate_tldr_and_suggestions_streaming(
     ):
         text = getattr(chunk, "text", None) or ""
         if text:
+            if first_chunk_at is None:
+                first_chunk_at = time.perf_counter()
             raw_text += text
             partial = extract_partial_tldr(raw_text)
             if partial and partial != last_partial:
@@ -1110,7 +1113,18 @@ def generate_tldr_and_suggestions_streaming(
         if chunk_usage is not None:
             usage = chunk_usage
 
-    duration_ms = int(round((time.perf_counter() - started) * 1000))
+    finished = time.perf_counter()
+    duration_ms = int(round((finished - started) * 1000))
+    ttft_ms = (
+        int(round((first_chunk_at - started) * 1000))
+        if first_chunk_at is not None
+        else None
+    )
+    stream_ms = (
+        int(round((finished - first_chunk_at) * 1000))
+        if first_chunk_at is not None
+        else None
+    )
     raw_final = raw_text.strip()
     parsed, parse_error = _parse_json_response(raw_final)
     usage_dict = plain_data(usage)
@@ -1119,6 +1133,8 @@ def generate_tldr_and_suggestions_streaming(
         "usage": usage_dict,
         "thoughts_token_count": usage_thoughts_token_count(usage_dict),
         "duration_ms": duration_ms,
+        "ttft_ms": ttft_ms,
+        "stream_ms": stream_ms,
         "parse_error": parse_error,
         "model": settings["model"],
     }
@@ -1340,6 +1356,7 @@ def generate_tldr_and_suggestions_streaming_tags(
 
     config = _generate_config_tags(types, settings, prompt_text)
     started = time.perf_counter()
+    first_chunk_at: float | None = None
     raw_text = ""
     usage = None
     last_partial = ""
@@ -1351,6 +1368,8 @@ def generate_tldr_and_suggestions_streaming_tags(
     ):
         text = getattr(chunk, "text", None) or ""
         if text:
+            if first_chunk_at is None:
+                first_chunk_at = time.perf_counter()
             raw_text += text
             partial = extract_partial_tldr_tags(raw_text)
             if partial and partial != last_partial:
@@ -1368,7 +1387,18 @@ def generate_tldr_and_suggestions_streaming_tags(
         if chunk_usage is not None:
             usage = chunk_usage
 
-    duration_ms = int(round((time.perf_counter() - started) * 1000))
+    finished = time.perf_counter()
+    duration_ms = int(round((finished - started) * 1000))
+    ttft_ms = (
+        int(round((first_chunk_at - started) * 1000))
+        if first_chunk_at is not None
+        else None
+    )
+    stream_ms = (
+        int(round((finished - first_chunk_at) * 1000))
+        if first_chunk_at is not None
+        else None
+    )
     raw_final = raw_text.strip()
     usage_dict = plain_data(usage)
 
@@ -1392,6 +1422,8 @@ def generate_tldr_and_suggestions_streaming_tags(
         "usage": usage_dict,
         "thoughts_token_count": usage_thoughts_token_count(usage_dict),
         "duration_ms": duration_ms,
+        "ttft_ms": ttft_ms,
+        "stream_ms": stream_ms,
         "parse_error": None,
         "model": settings["model"],
         "output_format": "tags",
