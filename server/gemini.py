@@ -36,9 +36,16 @@ SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4
-# Style/format guidance ages slower than concrete surface state, so the
-# follow-up-instruction window is longer than the surface-history window.
-FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS = 6 * 60 * 60
+# Mirror of blink_once: same-post follow-ups stay valid longer than
+# cross-post-same-app ones, and cross-bundle is dropped at scope time on
+# the client. The outer hard cap is the same-post window.
+FOLLOW_UP_SAME_POST_WINDOW_SECONDS = 30 * 60
+FOLLOW_UP_OTHER_SURFACE_WINDOW_SECONDS = 10 * 60
+FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS = FOLLOW_UP_SAME_POST_WINDOW_SECONDS
+# Mirror of blink_once: TL;DRs in follow-up history can be multi-beat so the
+# bound is generous compared to PREFERENCE_TEXT_MAX_CHARS.
+FOLLOW_UP_HISTORY_TLDR_MAX_CHARS = 1024
+FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS = 500
 RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
 SUGGESTION_TAG_MAX_CHARS = 24
@@ -111,6 +118,13 @@ def _format_relative_time(age_seconds: Any) -> str:
     return f"{seconds // 86400}d ago"
 
 
+_FOLLOW_UP_SCOPE_LABELS = {
+    "same_post": "same post",
+    "same_window": "different post, same window",
+    "same_app": "different surface, same app",
+}
+
+
 def _follow_up_history_lines(history: Any) -> list[str]:
     if not isinstance(history, list):
         return []
@@ -123,10 +137,12 @@ def _follow_up_history_lines(history: Any) -> list[str]:
             continue
         relative = _format_relative_time(item.get("age_seconds"))
         app_label = _bounded_text(item.get("app_name"), 80) or _bounded_text(item.get("app_bundle_id"), 80)
-        if app_label:
-            lines.append(f'- {relative}, in {app_label}: "{instruction}"')
+        scope_label = _FOLLOW_UP_SCOPE_LABELS.get(str(item.get("scope") or ""))
+        prefix = f"[{scope_label}] " if scope_label else ""
+        if app_label and scope_label != "same post":
+            lines.append(f'- {prefix}{relative}, in {app_label}: "{instruction}"')
         else:
-            lines.append(f'- {relative}: "{instruction}"')
+            lines.append(f'- {prefix}{relative}: "{instruction}"')
     return lines
 
 
@@ -193,6 +209,37 @@ def _bounded_text(value: Any, limit: int) -> str | None:
     return text[:limit]
 
 
+def _render_follow_up_turn(index: int, turn: dict[str, Any]) -> str:
+    sugg_xml = "".join(f"<suggestion>{s}</suggestion>" for s in turn.get("suggestions", []))
+    return (
+        f'<turn index="{index}"><instruction>{turn["instruction"]}</instruction>'
+        f"<tldr>{turn['tldr']}</tldr><suggestions>{sugg_xml}</suggestions></turn>"
+    )
+
+
+def _bounded_follow_up_turns(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    result = []
+    for turn in raw:
+        if not isinstance(turn, dict):
+            continue
+        instruction = _bounded_text(turn.get("instruction"), FOLLOW_UP_INSTRUCTION_MAX_CHARS) or ""
+        tldr = _bounded_text(turn.get("tldr"), FOLLOW_UP_HISTORY_TLDR_MAX_CHARS) or ""
+        raw_suggs = turn.get("suggestions")
+        suggestions = [
+            text
+            for text in (
+                _bounded_text(item, FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS)
+                for item in (raw_suggs if isinstance(raw_suggs, list) else [])
+            )
+            if text
+        ][:3]
+        if instruction or tldr or suggestions:
+            result.append({"instruction": instruction, "tldr": tldr, "suggestions": suggestions})
+    return result
+
+
 def reroll_content_text(follow_up_instruction: Any = None) -> str:
     instruction = _bounded_text(follow_up_instruction, FOLLOW_UP_INSTRUCTION_MAX_CHARS)
     if not instruction:
@@ -239,6 +286,7 @@ def prompt_with_context(
         reroll_context.get("follow_up_instruction"),
         FOLLOW_UP_INSTRUCTION_MAX_CHARS,
     )
+    follow_up_turns = _bounded_follow_up_turns(reroll_context.get("follow_up_history"))
     style_text = style_block(style)
     if (
         not voice_samples
@@ -248,6 +296,7 @@ def prompt_with_context(
         and not style_text
         and not follow_up_instruction
         and not follow_up_history_lines
+        and not follow_up_turns
     ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
@@ -280,6 +329,11 @@ def prompt_with_context(
         blocks.append("\n".join(block_lines))
     if previous_suggestion_texts:
         block_lines = ["<reroll_instructions>"]
+        if follow_up_turns:
+            block_lines.append("<follow_up_history>")
+            for idx, turn in enumerate(follow_up_turns, start=1):
+                block_lines.append(_render_follow_up_turn(idx, turn))
+            block_lines.append("</follow_up_history>")
         if follow_up_instruction:
             block_lines.extend(
                 [
@@ -294,13 +348,21 @@ def prompt_with_context(
             block_lines.append(f"- {suggestion}")
         block_lines.append("</reroll_instructions>")
         blocks.append("\n".join(block_lines))
-    elif follow_up_instruction:
-        block_lines = [
-            "<reroll_instructions>",
-            f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
-            "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
-            "</reroll_instructions>",
-        ]
+    elif follow_up_instruction or follow_up_turns:
+        block_lines = ["<reroll_instructions>"]
+        if follow_up_turns:
+            block_lines.append("<follow_up_history>")
+            for idx, turn in enumerate(follow_up_turns, start=1):
+                block_lines.append(_render_follow_up_turn(idx, turn))
+            block_lines.append("</follow_up_history>")
+        if follow_up_instruction:
+            block_lines.extend(
+                [
+                    f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
+                    "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
+                ]
+            )
+        block_lines.append("</reroll_instructions>")
         blocks.append("\n".join(block_lines))
     if preference_examples:
         valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
@@ -435,7 +497,7 @@ def create_client(api_key: str | None, settings: dict[str, Any] | None = None) -
     )
 
 
-def response_schema_contract(supports_attachments: bool = False) -> dict[str, Any]:
+def response_schema_contract(supports_attachments: bool = False, is_followup: bool = False) -> dict[str, Any]:
     suggestion_properties: dict[str, Any] = {
         "text": {
             "type": "string",
@@ -483,7 +545,7 @@ def response_schema_contract(supports_attachments: bool = False) -> dict[str, An
             },
             "suggestions": {
                 "type": "array",
-                "min_items": 3,
+                "min_items": 0 if is_followup else 3,
                 "max_items": 3,
                 "items": {
                     "type": "object",
@@ -496,10 +558,10 @@ def response_schema_contract(supports_attachments: bool = False) -> dict[str, An
     }
 
 
-def _schema(supports_attachments: bool = False) -> types.Schema:
+def _schema(supports_attachments: bool = False, is_followup: bool = False) -> types.Schema:
     from google.genai import types
 
-    contract = response_schema_contract(supports_attachments=supports_attachments)
+    contract = response_schema_contract(supports_attachments=supports_attachments, is_followup=is_followup)
     suggestion_item_contract = contract["properties"]["suggestions"]["items"]
     suggestion_required = suggestion_item_contract["required"]
     suggestion_ordering = suggestion_item_contract["property_ordering"]
@@ -548,7 +610,7 @@ def _schema(supports_attachments: bool = False) -> types.Schema:
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
-                minItems=3,
+                minItems=0 if is_followup else 3,
                 maxItems=3,
                 items=types.Schema(
                     type=types.Type.OBJECT,
@@ -934,7 +996,7 @@ def _conversation_contents(
     return contents
 
 
-def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> Any:
+def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str, is_followup: bool = False) -> Any:
     model = settings.get("model", "")
     max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
     supports_attachments = bool(settings.get("supports_attachments", False))
@@ -944,7 +1006,7 @@ def _generate_config(types: Any, settings: dict[str, Any], prompt_text: str) -> 
         max_output_tokens=max_tokens,
         media_resolution=media_resolution_for_model(model, settings["media_resolution"]),
         response_mime_type="application/json",
-        response_schema=_schema(supports_attachments=supports_attachments),
+        response_schema=_schema(supports_attachments=supports_attachments, is_followup=is_followup),
     )
     override = settings.get("thinking_level")
     if isinstance(override, str) and override == "off" and _is_thinking_model(model):
@@ -970,6 +1032,7 @@ def generate_tldr_and_suggestions(
     conversation_turns: list[dict[str, Any]] | None = None,
     supports_attachments: bool = False,
     user_message_suffix: str = "",
+    is_followup: bool = False,
 ) -> dict[str, Any]:
     from google.genai import types
 
@@ -984,7 +1047,7 @@ def generate_tldr_and_suggestions(
     if not contents:
         raise ValueError("No screenshot was provided.")
 
-    config = _generate_config(types, settings, prompt_text)
+    config = _generate_config(types, settings, prompt_text, is_followup=is_followup)
 
     started = time.perf_counter()
     response = client.models.generate_content(
@@ -1016,6 +1079,18 @@ def generate_tldr_and_suggestions(
         return payload
 
     tldr, suggestions, suggestion_details = _normalize_payload(parsed)
+    if is_followup and len(suggestions) == 0:
+        payload.update(
+            {
+                "status": "ok",
+                "schema_version": RESPONSE_SCHEMA_VERSION,
+                "tldr": tldr,
+                "suggestions": [],
+                "suggestion_details": [],
+                "suggestions_unchanged": True,
+            }
+        )
+        return payload
     if len(suggestions) != 3:
         payload.update(
             {
@@ -1084,6 +1159,7 @@ def generate_tldr_and_suggestions_streaming(
     mime_type: str = "image/png",
     conversation_turns: list[dict[str, Any]] | None = None,
     user_message_suffix: str = "",
+    is_followup: bool = False,
 ) -> Iterator[dict[str, Any]]:
     from google.genai import types
 
@@ -1098,7 +1174,7 @@ def generate_tldr_and_suggestions_streaming(
     if not contents:
         raise ValueError("No screenshot was provided.")
 
-    config = _generate_config(types, settings, prompt_text)
+    config = _generate_config(types, settings, prompt_text, is_followup=is_followup)
     started = time.perf_counter()
     first_chunk_at: float | None = None
     raw_text = ""
@@ -1166,7 +1242,18 @@ def generate_tldr_and_suggestions_streaming(
         )
     else:
         tldr, suggestions, suggestion_details = _normalize_payload(parsed)
-        if len(suggestions) != 3:
+        if is_followup and len(suggestions) == 0:
+            final.update(
+                {
+                    "status": "ok",
+                    "schema_version": RESPONSE_SCHEMA_VERSION,
+                    "tldr": tldr,
+                    "suggestions": [],
+                    "suggestion_details": [],
+                    "suggestions_unchanged": True,
+                }
+            )
+        elif len(suggestions) != 3:
             final.update(
                 {
                     "status": "schema_mismatch",

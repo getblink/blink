@@ -66,7 +66,7 @@ def media_resolution_for_model(model: str, base: str) -> str:
     return base
 
 
-def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any]):
+def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any], is_followup: bool = False):
     model = settings.get("model", "")
     max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
     media_resolution = media_resolution_for_model(model, settings["media_resolution"])
@@ -76,7 +76,7 @@ def build_generate_config(types_module, prompt_text: str, settings: dict[str, An
         max_output_tokens=max_tokens,
         media_resolution=media_resolution,
         response_mime_type="application/json",
-        response_schema=response_schema(),
+        response_schema=response_schema(is_followup=is_followup),
     )
     level = thinking_level_for_model(model)
     if level is not None:
@@ -105,9 +105,19 @@ SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4
-# Style/format guidance ages slower than concrete surface state, so the
-# follow-up-instruction window is longer than SURFACE_CONTEXT_WINDOW_SECONDS.
-FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS = 6 * 60 * 60
+# Multi-beat TL;DRs separate beats with literal \n\n and can run 2–3 beats
+# × ~200 chars each, so the per-turn TL;DR bound for follow-up history is
+# generous compared to PREFERENCE_TEXT_MAX_CHARS (360), which is tuned for
+# short cross-capture takeaways.
+FOLLOW_UP_HISTORY_TLDR_MAX_CHARS = 1024
+FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS = 500
+# Two windows, scope-aware. A follow-up given on the same post stays valid
+# longer than one given elsewhere in the same app; cross-bundle follow-ups
+# are dropped outright at the scope step. The outer hard cap is the
+# same-post window since it is the longest-lived class.
+FOLLOW_UP_SAME_POST_WINDOW_SECONDS = 30 * 60
+FOLLOW_UP_OTHER_SURFACE_WINDOW_SECONDS = 10 * 60
+FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS = FOLLOW_UP_SAME_POST_WINDOW_SECONDS
 SURFACE_CONTEXT_WINDOW_SECONDS = 15 * 60
 RESPONSE_SCHEMA_VERSION = 2
 SUGGESTION_TAG_LIMIT = 2
@@ -162,6 +172,13 @@ def _format_relative_time(age_seconds: Any) -> str:
     return f"{seconds // 86400}d ago"
 
 
+_FOLLOW_UP_SCOPE_LABELS = {
+    "same_post": "same post",
+    "same_window": "different post, same window",
+    "same_app": "different surface, same app",
+}
+
+
 def _follow_up_history_lines(history: Any) -> list[str]:
     if not isinstance(history, list):
         return []
@@ -174,10 +191,12 @@ def _follow_up_history_lines(history: Any) -> list[str]:
             continue
         relative = _format_relative_time(item.get("age_seconds"))
         app_label = _bounded_text(item.get("app_name"), 80) or _bounded_text(item.get("app_bundle_id"), 80)
-        if app_label:
-            lines.append(f'- {relative}, in {app_label}: "{instruction}"')
+        scope_label = _FOLLOW_UP_SCOPE_LABELS.get(str(item.get("scope") or ""))
+        prefix = f"[{scope_label}] " if scope_label else ""
+        if app_label and scope_label != "same post":
+            lines.append(f'- {prefix}{relative}, in {app_label}: "{instruction}"')
         else:
-            lines.append(f'- {relative}: "{instruction}"')
+            lines.append(f'- {prefix}{relative}: "{instruction}"')
     return lines
 
 
@@ -456,6 +475,37 @@ def _bounded_text(value: Any, limit: int) -> str | None:
     return text[:limit]
 
 
+def _render_follow_up_turn(index: int, turn: dict[str, Any]) -> str:
+    sugg_xml = "".join(f"<suggestion>{s}</suggestion>" for s in turn.get("suggestions", []))
+    return (
+        f'<turn index="{index}"><instruction>{turn["instruction"]}</instruction>'
+        f"<tldr>{turn['tldr']}</tldr><suggestions>{sugg_xml}</suggestions></turn>"
+    )
+
+
+def _bounded_follow_up_turns(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    result = []
+    for turn in raw:
+        if not isinstance(turn, dict):
+            continue
+        instruction = _bounded_text(turn.get("instruction"), FOLLOW_UP_INSTRUCTION_MAX_CHARS) or ""
+        tldr = _bounded_text(turn.get("tldr"), FOLLOW_UP_HISTORY_TLDR_MAX_CHARS) or ""
+        raw_suggs = turn.get("suggestions")
+        suggestions = [
+            text
+            for text in (
+                _bounded_text(item, FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS)
+                for item in (raw_suggs if isinstance(raw_suggs, list) else [])
+            )
+            if text
+        ][:3]
+        if instruction or tldr or suggestions:
+            result.append({"instruction": instruction, "tldr": tldr, "suggestions": suggestions})
+    return result
+
+
 def _parse_iso(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -561,6 +611,48 @@ def _surface_match(
     return "bundle_match", None
 
 
+def _window_title_of(envelope: dict[str, Any]) -> str | None:
+    frontmost = envelope.get("frontmost_app") if isinstance(envelope, dict) else None
+    if not isinstance(frontmost, dict):
+        return None
+    return _bounded_text(frontmost.get("window_title"), 240)
+
+
+def _follow_up_scope(
+    current_envelope: dict[str, Any],
+    previous_request_log: dict[str, Any],
+) -> str:
+    """Classify a follow-up's source surface relative to the current capture.
+
+    Returns one of:
+      "same_post"   — bundle + window_id match, and (titles match or one side
+                      is missing a title; we have no reason to think the
+                      surface within the window has changed).
+      "same_window" — bundle + window_id match, but the window titles are
+                      both populated and differ. Captures the X.com /
+                      Reddit-tab case where window_id is too coarse.
+      "same_app"    — bundle matches, window_id differs or is unknown.
+      "other"       — bundle mismatch; dropped before reaching the model.
+    """
+    current_key = _surface_key(current_envelope)
+    previous_key = _surface_key(previous_request_log)
+    current_bundle = current_key.get("bundle_id")
+    previous_bundle = previous_key.get("bundle_id")
+    if not current_bundle or not previous_bundle or current_bundle != previous_bundle:
+        return "other"
+    current_window = current_key.get("window_id")
+    previous_window = previous_key.get("window_id")
+    if not (isinstance(current_window, int) and isinstance(previous_window, int)):
+        return "same_app"
+    if current_window != previous_window:
+        return "same_app"
+    current_title = _window_title_of(current_envelope)
+    previous_title = _window_title_of(previous_request_log)
+    if current_title and previous_title and current_title != previous_title:
+        return "same_window"
+    return "same_post"
+
+
 def build_stateful_context(
     runs_dir: Path,
     current_envelope: dict[str, Any],
@@ -580,6 +672,16 @@ def build_stateful_context(
         run_log, request_log = pair
         run_pairs.append((run_dir, run_log, request_log, _run_sort_time(run_dir, run_log)))
     run_pairs.sort(key=lambda item: item[3], reverse=True)
+
+    # Moved-on events ordered newest-first. Each entry is (sort_time,
+    # previous_request_log_envelope). Used for the action-based follow-up
+    # TTL: a follow-up given on post A is stale once the user inserts or
+    # types a reply on post B without re-asserting it.
+    moved_on_events: list[tuple[datetime, dict[str, Any]]] = []
+    for run_dir, run_log, request_log, sort_time in run_pairs:
+        chosen_action = str(run_log.get("chosen_action") or "")
+        if chosen_action in ("inserted", "user_typed"):
+            moved_on_events.append((sort_time, request_log))
 
     voice_candidates: list[dict[str, Any]] = []
     seen_voice: set[str] = set()
@@ -639,19 +741,15 @@ def build_stateful_context(
             )
             seen_voice.add(custom_text)
 
-        # Follow-up instructions are durable style preferences (format, tone,
-        # register). They're carried regardless of surface match — each entry
-        # is annotated with the app it came from, and the model decides
-        # relevance per entry against the current capture. This avoids the
-        # bundle_id gate's two failure modes: (a) false negative across
-        # apps that mean the same thing semantically (Mail.app vs Gmail in
-        # Chrome), and (b) false positive across tabs that share a bundle
-        # (Gmail in Chrome vs GitHub in Chrome). Only the recency window
-        # and the dedupe-by-instruction-text gates still apply.
-        if (
-            age_seconds <= FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS
-            and len(follow_up_history) < FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT
-        ):
+        # Follow-up instructions are scoped against the current capture by
+        # source surface, not just bundle. A take given on tweet A bleeds
+        # into tweets B, C, D when bundle alone is the gate (window_id is
+        # too coarse on tab-heavy apps like X.com). We tag each entry with
+        # a scope (same_post / same_window / same_app) computed from the
+        # source surface, drop cross-bundle entries entirely, apply a
+        # scope-aware time window, and drop stale entries once the user
+        # has moved on (inserted/typed) on a different post.
+        if len(follow_up_history) < FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT:
             reroll = request_log.get("reroll_context") if isinstance(request_log.get("reroll_context"), dict) else None
             follow_up = (
                 _bounded_text(reroll.get("follow_up_instruction"), FOLLOW_UP_INSTRUCTION_MAX_CHARS)
@@ -659,23 +757,44 @@ def build_stateful_context(
                 else None
             )
             if follow_up and follow_up not in seen_follow_up:
-                frontmost = request_log.get("frontmost_app")
-                if not isinstance(frontmost, dict):
-                    frontmost = {}
-                follow_up_history.append(
-                    {
-                        "instruction": follow_up,
-                        "created_at": (
-                            request_log.get("created_at")
-                            or run_log.get("started_at")
-                            or run_log.get("finished_at")
-                        ),
-                        "age_seconds": int(age_seconds),
-                        "app_bundle_id": frontmost.get("bundle_id"),
-                        "app_name": frontmost.get("app_name"),
-                    }
+                scope = _follow_up_scope(current_envelope, request_log)
+                scope_window = (
+                    FOLLOW_UP_SAME_POST_WINDOW_SECONDS
+                    if scope == "same_post"
+                    else FOLLOW_UP_OTHER_SURFACE_WINDOW_SECONDS
                 )
-                seen_follow_up.add(follow_up)
+                # Drop cross-bundle outright and respect the scope-aware
+                # time window. The newer "moved on elsewhere" check below
+                # gives us action-based eviction on top of the time gate.
+                stale_by_action = any(
+                    event_time > sort_time
+                    and _follow_up_scope(event_envelope, request_log) != "same_post"
+                    for event_time, event_envelope in moved_on_events
+                )
+                if (
+                    scope != "other"
+                    and age_seconds <= scope_window
+                    and not stale_by_action
+                ):
+                    frontmost = request_log.get("frontmost_app")
+                    if not isinstance(frontmost, dict):
+                        frontmost = {}
+                    follow_up_history.append(
+                        {
+                            "instruction": follow_up,
+                            "created_at": (
+                                request_log.get("created_at")
+                                or run_log.get("started_at")
+                                or run_log.get("finished_at")
+                            ),
+                            "age_seconds": int(age_seconds),
+                            "app_bundle_id": frontmost.get("bundle_id"),
+                            "app_name": frontmost.get("app_name"),
+                            "scope": scope,
+                            "source_window_title": _window_title_of(request_log),
+                        }
+                    )
+                    seen_follow_up.add(follow_up)
 
         if match_mode is None:
             reason = skipped_reason or "no_match"
@@ -808,6 +927,7 @@ def prompt_with_context(
         reroll_context.get("follow_up_instruction"),
         FOLLOW_UP_INSTRUCTION_MAX_CHARS,
     )
+    follow_up_turns = _bounded_follow_up_turns(reroll_context.get("follow_up_history"))
     style_text = style_block(style)
     if (
         not voice_samples
@@ -817,6 +937,7 @@ def prompt_with_context(
         and not style_text
         and not follow_up_instruction
         and not follow_up_history_lines
+        and not follow_up_turns
     ):
         return prompt_text
     has_stateful_context = bool(voice_samples or preference_examples or surface_history)
@@ -849,6 +970,11 @@ def prompt_with_context(
         blocks.append("\n".join(block_lines))
     if previous_suggestion_texts:
         block_lines = ["<reroll_instructions>"]
+        if follow_up_turns:
+            block_lines.append("<follow_up_history>")
+            for idx, turn in enumerate(follow_up_turns, start=1):
+                block_lines.append(_render_follow_up_turn(idx, turn))
+            block_lines.append("</follow_up_history>")
         if follow_up_instruction:
             block_lines.extend(
                 [
@@ -863,13 +989,21 @@ def prompt_with_context(
             block_lines.append(f"- {suggestion}")
         block_lines.append("</reroll_instructions>")
         blocks.append("\n".join(block_lines))
-    elif follow_up_instruction:
-        block_lines = [
-            "<reroll_instructions>",
-            f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
-            "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
-            "</reroll_instructions>",
-        ]
+    elif follow_up_instruction or follow_up_turns:
+        block_lines = ["<reroll_instructions>"]
+        if follow_up_turns:
+            block_lines.append("<follow_up_history>")
+            for idx, turn in enumerate(follow_up_turns, start=1):
+                block_lines.append(_render_follow_up_turn(idx, turn))
+            block_lines.append("</follow_up_history>")
+        if follow_up_instruction:
+            block_lines.extend(
+                [
+                    f"<follow_up_instruction>{follow_up_instruction}</follow_up_instruction>",
+                    "Apply this instruction to a fresh set of suggestions for the same capture while still using only visible evidence.",
+                ]
+            )
+        block_lines.append("</reroll_instructions>")
         blocks.append("\n".join(block_lines))
     if preference_examples:
         valid_pref_examples: list[tuple[dict[str, Any], str, list[str]]] = []
@@ -967,7 +1101,7 @@ def prompt_with_stateful_context(prompt_text: str, stateful_context: dict[str, A
     return prompt_with_context(prompt_text, stateful_context)
 
 
-def response_schema_contract(supports_attachments: bool = False) -> dict[str, Any]:
+def response_schema_contract(supports_attachments: bool = False, is_followup: bool = False) -> dict[str, Any]:
     suggestion_properties: dict[str, Any] = {
         "text": {
             "type": "string",
@@ -1015,7 +1149,7 @@ def response_schema_contract(supports_attachments: bool = False) -> dict[str, An
             },
             "suggestions": {
                 "type": "array",
-                "min_items": 3,
+                "min_items": 0 if is_followup else 3,
                 "max_items": 3,
                 "items": {
                     "type": "object",
@@ -1028,10 +1162,10 @@ def response_schema_contract(supports_attachments: bool = False) -> dict[str, An
     }
 
 
-def response_schema(supports_attachments: bool = False):
+def response_schema(supports_attachments: bool = False, is_followup: bool = False):
     from google.genai import types
 
-    contract = response_schema_contract(supports_attachments=supports_attachments)
+    contract = response_schema_contract(supports_attachments=supports_attachments, is_followup=is_followup)
     suggestion_item_contract = contract["properties"]["suggestions"]["items"]
     suggestion_required = suggestion_item_contract["required"]
     suggestion_ordering = suggestion_item_contract["property_ordering"]
@@ -1080,7 +1214,7 @@ def response_schema(supports_attachments: bool = False):
             ),
             "suggestions": types.Schema(
                 type=types.Type.ARRAY,
-                minItems=3,
+                minItems=0 if is_followup else 3,
                 maxItems=3,
                 items=types.Schema(
                     type=types.Type.OBJECT,
@@ -1187,6 +1321,7 @@ def build_response_payload(
     usage: Any,
     duration_ms: int,
     image_diagnostics: dict[str, Any] | None = None,
+    is_followup: bool = False,
 ) -> dict[str, Any]:
     parsed, parse_error = parse_json_response(raw_text)
     usage_dict = plain_data(usage)
@@ -1227,6 +1362,18 @@ def build_response_payload(
         )
         return payload
     tldr, suggestions, suggestion_details = normalize_payload(parsed)
+    if is_followup and len(suggestions) == 0:
+        payload.update(
+            {
+                "status": "ok",
+                "schema_version": RESPONSE_SCHEMA_VERSION,
+                "tldr": tldr,
+                "suggestions": [],
+                "suggestion_details": [],
+                "suggestions_unchanged": True,
+            }
+        )
+        return payload
     if len(suggestions) != 3:
         payload.update(
             {
@@ -1964,6 +2111,11 @@ def request_payload_for_proxy(request_payload: dict[str, Any]) -> dict[str, Any]
             )
             if follow_up_instruction:
                 trimmed_reroll_context["follow_up_instruction"] = follow_up_instruction
+            raw_history = reroll_context.get("follow_up_history")
+            if isinstance(raw_history, list) and raw_history:
+                bounded_history = _bounded_follow_up_turns(raw_history)
+                if bounded_history:
+                    trimmed_reroll_context["follow_up_history"] = bounded_history
             payload["reroll_context"] = trimmed_reroll_context
         else:
             payload.pop("reroll_context", None)
@@ -1982,6 +2134,7 @@ def generate(
     screenshot_paths: list[Path],
     prompt_text: str,
     settings: dict[str, Any],
+    is_followup: bool = False,
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
@@ -1991,7 +2144,7 @@ def generate(
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
     image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings)
+    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
     started = time.perf_counter()
     response = client.models.generate_content(
         model=settings["model"],
@@ -2005,6 +2158,7 @@ def generate(
         usage=getattr(response, "usage_metadata", None),
         duration_ms=duration_ms,
         image_diagnostics=image_diagnostics,
+        is_followup=is_followup,
     )
 
 
@@ -2012,6 +2166,7 @@ def generate_streaming(
     screenshot_paths: list[Path],
     prompt_text: str,
     settings: dict[str, Any],
+    is_followup: bool = False,
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
@@ -2021,7 +2176,7 @@ def generate_streaming(
         http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
     )
     image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings)
+    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
     started = time.perf_counter()
     raw_text = ""
     usage = None
@@ -2059,6 +2214,7 @@ def generate_streaming(
         usage=usage,
         duration_ms=duration_ms,
         image_diagnostics=image_diagnostics,
+        is_followup=is_followup,
     )
     if first_token_perf is not None:
         ttft_ms = int(round((first_token_perf - started) * 1000))
@@ -2123,6 +2279,7 @@ def main(argv: list[str] | None = None) -> int:
         else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
     )
     reroll_context = request_payload.get("reroll_context") if isinstance(request_payload.get("reroll_context"), dict) else None
+    is_followup = reroll_context is not None
     if style:
         request_payload["style"] = style
     model_prompt_text = (
@@ -2251,9 +2408,9 @@ def main(argv: list[str] | None = None) -> int:
                 if not os.environ.get("GEMINI_API_KEY"):
                     raise RuntimeError("Set GEMINI_API_KEY in ~/.blink/.env or the launch environment.")
                 if args.stream_events and generation_path == "local_gemini":
-                    response = generate_streaming(screenshot_outputs, model_prompt_text, settings)
+                    response = generate_streaming(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
                 else:
-                    response = generate(screenshot_outputs, model_prompt_text, settings)
+                    response = generate(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
                 response["request_id"] = request_payload.get("request_id")
                 response["warnings"] = []
                 response["model"] = settings["model"]

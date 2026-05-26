@@ -558,6 +558,13 @@ class BlinkOnceTests(unittest.TestCase):
                     "previous_suggestion_details": [
                         {"text": "secret local text", "tags": ["Reply"]}
                     ],
+                    "follow_up_history": [
+                        {
+                            "instruction": "what are they asking?",
+                            "tldr": "Sarah wants the doc by Friday.",
+                            "suggestions": ["Got it, Friday works.", "Can you push to Monday?", "On it."],
+                        }
+                    ],
                 },
             }
         )
@@ -568,8 +575,65 @@ class BlinkOnceTests(unittest.TestCase):
                 "schema_version": 1,
                 "source_request_id": "11111111-1111-4111-8111-111111111111",
                 "follow_up_instruction": "make these shorter",
+                "follow_up_history": [
+                    {
+                        "instruction": "what are they asking?",
+                        "tldr": "Sarah wants the doc by Friday.",
+                        "suggestions": ["Got it, Friday works.", "Can you push to Monday?", "On it."],
+                    }
+                ],
             },
         )
+
+    def test_response_payload_followup_suggestions_unchanged(self) -> None:
+        raw = json.dumps({
+            "schema_version": 2,
+            "tldr": "Sarah is asking for the migration estimate.",
+            "suggestions": [],
+        })
+        payload = blink_once.build_response_payload(raw, None, 100, is_followup=True)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["suggestions"], [])
+        self.assertTrue(payload.get("suggestions_unchanged"))
+        self.assertEqual(payload["tldr"], "Sarah is asking for the migration estimate.")
+
+    def test_response_payload_followup_partial_suggestions_still_schema_mismatch(self) -> None:
+        raw = json.dumps({
+            "schema_version": 2,
+            "tldr": "Something.",
+            "suggestions": [{"text": "only one", "tags": ["Reply"]}],
+        })
+        payload = blink_once.build_response_payload(raw, None, 100, is_followup=True)
+        self.assertEqual(payload["status"], "schema_mismatch")
+
+    def test_response_payload_non_followup_empty_suggestions_still_schema_mismatch(self) -> None:
+        raw = json.dumps({
+            "schema_version": 2,
+            "tldr": "Something.",
+            "suggestions": [],
+        })
+        payload = blink_once.build_response_payload(raw, None, 100, is_followup=False)
+        self.assertEqual(payload["status"], "schema_mismatch")
+
+    def test_prompt_renders_follow_up_history_block(self) -> None:
+        reroll_context = {
+            "schema_version": 1,
+            "follow_up_instruction": "now give me pushback options",
+            "follow_up_history": [
+                {
+                    "instruction": "what are they actually asking?",
+                    "tldr": "Sarah wants the migration estimate by her 4pm sync.",
+                    "suggestions": ["Got it.", "Can you extend?", "I'll have it by 3."],
+                }
+            ],
+        }
+        rendered = blink_once.prompt_with_context("BASE PROMPT", None, reroll_context)
+        self.assertIn("<follow_up_history>", rendered)
+        self.assertIn("</follow_up_history>", rendered)
+        self.assertIn('<turn index="1">', rendered)
+        self.assertIn("what are they actually asking?", rendered)
+        self.assertIn("Sarah wants the migration estimate", rendered)
+        self.assertIn("<reroll_instructions>", rendered)
 
     def test_args_screenshot_cap(self) -> None:
         with self.assertRaisesRegex(ValueError, "At most 8 screenshots"):
@@ -1832,7 +1896,12 @@ class BlinkOnceTests(unittest.TestCase):
             (recent / "request.json").write_text(
                 json.dumps(
                     {
-                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "frontmost_app": {
+                            "bundle_id": "com.apple.mail",
+                            "app_name": "Mail",
+                            "window_id": 42,
+                            "window_title": "Inbox — Mail",
+                        },
                         "reroll_context": {
                             "schema_version": 1,
                             "source_request_id": "abc-123",
@@ -1852,7 +1921,12 @@ class BlinkOnceTests(unittest.TestCase):
             (older / "request.json").write_text(
                 json.dumps(
                     {
-                        "frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"},
+                        "frontmost_app": {
+                            "bundle_id": "com.apple.mail",
+                            "app_name": "Mail",
+                            "window_id": 42,
+                            "window_title": "Inbox — Mail",
+                        },
                         "reroll_context": {
                             "schema_version": 1,
                             "source_request_id": "def-456",
@@ -1869,7 +1943,14 @@ class BlinkOnceTests(unittest.TestCase):
 
             context = blink_once.build_stateful_context(
                 runs,
-                {"frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"}},
+                {
+                    "frontmost_app": {
+                        "bundle_id": "com.apple.mail",
+                        "app_name": "Mail",
+                        "window_id": 42,
+                        "window_title": "Inbox — Mail",
+                    }
+                },
                 now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
             )
 
@@ -1880,19 +1961,20 @@ class BlinkOnceTests(unittest.TestCase):
         self.assertEqual(history[0]["instruction"], "use proper email format")
         self.assertEqual(history[0]["app_bundle_id"], "com.apple.mail")
         self.assertEqual(history[0]["app_name"], "Mail")
+        self.assertEqual(history[0]["scope"], "same_post")
         # Recent entry is ~2 minutes old (05:00 - 03:05 = 1m55s).
         self.assertLess(history[0]["age_seconds"], 180)
         self.assertEqual(history[1]["instruction"], "keep it under 3 sentences")
-        # Older entry is ~25 minutes old.
+        self.assertEqual(history[1]["scope"], "same_post")
+        # Older entry is ~25 minutes old, inside the same_post window (30m).
         self.assertGreater(history[1]["age_seconds"], 60 * 20)
         self.assertEqual(context["follow_up_history_count"], 2)
 
-    def test_build_stateful_context_carries_follow_up_instructions_across_surfaces(self) -> None:
-        # Cross-surface follow-up instructions are carried with their app
-        # annotation so the model can judge relevance per entry. This
-        # avoids the bundle_id gate's failure modes (Mail.app vs Gmail in
-        # Chrome looking like unrelated apps; every Chrome tab looking
-        # like the same app).
+    def test_build_stateful_context_drops_follow_up_instructions_across_bundles(self) -> None:
+        # Cross-bundle follow-up instructions are dropped: a take given in
+        # Mail has no business influencing a Messages reply, and the model
+        # has no way to distinguish style instructions from content takes
+        # on its own.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runs = root / "runs"
@@ -1923,19 +2005,144 @@ class BlinkOnceTests(unittest.TestCase):
                 now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
             )
 
+        # Cross-bundle: build_stateful_context may legitimately return None
+        # (nothing useful collected) or an envelope with an empty list.
+        # Both outcomes mean the follow-up was dropped, which is what we
+        # care about here.
+        if context is None:
+            return
+        self.assertEqual(context.get("recent_follow_up_instructions", []), [])
+        self.assertEqual(context.get("follow_up_history_count", 0), 0)
+
+    def test_build_stateful_context_scope_same_window_for_different_title(self) -> None:
+        # A follow-up given on tweet A in Edge must be scoped as
+        # "same_window" (not "same_post") when the current capture is on
+        # tweet B inside the same Edge window — exactly the X.com case
+        # window_id alone can't tell apart.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            prior = runs / "20260503-120300-000"
+            prior.mkdir(parents=True)
+            (prior / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {
+                            "bundle_id": "com.microsoft.edgemac",
+                            "app_name": "Microsoft Edge",
+                            "window_id": 85232,
+                            "window_title": 'Author A on X: "tweet about prompt tuning" / X',
+                        },
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "follow_up_instruction": "my take is harnesses are a waste of energy",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (prior / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T12:03:30+00:00"}),
+                encoding="utf-8",
+            )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {
+                    "frontmost_app": {
+                        "bundle_id": "com.microsoft.edgemac",
+                        "app_name": "Microsoft Edge",
+                        "window_id": 85232,
+                        "window_title": 'Author B on X: "different tweet about Linux" / X',
+                    }
+                },
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
         self.assertIsNotNone(context)
         assert context is not None
         history = context["recent_follow_up_instructions"]
         self.assertEqual(len(history), 1)
-        self.assertEqual(history[0]["instruction"], "use proper email format")
-        # Annotation preserved so the model can judge relevance against
-        # the current iMessage capture.
-        self.assertEqual(history[0]["app_bundle_id"], "com.apple.mail")
-        self.assertEqual(history[0]["app_name"], "Mail")
-        # match_mode is no longer recorded on follow-up entries since the
-        # surface gate was removed.
-        self.assertNotIn("match_mode", history[0])
-        self.assertEqual(context["follow_up_history_count"], 1)
+        self.assertEqual(history[0]["scope"], "same_window")
+
+    def test_build_stateful_context_drops_follow_up_after_insert_on_different_post(self) -> None:
+        # Action-based TTL: once the user inserts a suggestion on a
+        # different post, the follow-up from the prior post is stale.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / "runs"
+
+            # Oldest: follow-up given on tweet A.
+            follow_up_run = runs / "20260503-120000-000"
+            follow_up_run.mkdir(parents=True)
+            (follow_up_run / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {
+                            "bundle_id": "com.microsoft.edgemac",
+                            "app_name": "Microsoft Edge",
+                            "window_id": 85232,
+                            "window_title": 'Author A on X: "tweet A" / X',
+                        },
+                        "reroll_context": {
+                            "schema_version": 1,
+                            "follow_up_instruction": "my take is harnesses are a waste of energy",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (follow_up_run / "run.json").write_text(
+                json.dumps({"finished_at": "2026-05-03T12:00:00+00:00"}),
+                encoding="utf-8",
+            )
+
+            # Middle: user inserted a suggestion on tweet B (different
+            # title, same window). This is the "moved on" event.
+            moved_on_run = runs / "20260503-120100-000"
+            moved_on_run.mkdir(parents=True)
+            (moved_on_run / "request.json").write_text(
+                json.dumps(
+                    {
+                        "frontmost_app": {
+                            "bundle_id": "com.microsoft.edgemac",
+                            "app_name": "Microsoft Edge",
+                            "window_id": 85232,
+                            "window_title": 'Author B on X: "tweet B" / X',
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (moved_on_run / "run.json").write_text(
+                json.dumps(
+                    {
+                        "finished_at": "2026-05-03T12:01:00+00:00",
+                        "chosen_action": "inserted",
+                        "chosen_at": "2026-05-03T12:01:30+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            context = blink_once.build_stateful_context(
+                runs,
+                {
+                    "frontmost_app": {
+                        "bundle_id": "com.microsoft.edgemac",
+                        "app_name": "Microsoft Edge",
+                        "window_id": 85232,
+                        "window_title": 'Author C on X: "yet another tweet" / X',
+                    }
+                },
+                now=blink_once._parse_iso("2026-05-03T12:05:00+00:00"),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(context["recent_follow_up_instructions"], [])
+        self.assertEqual(context["follow_up_history_count"], 0)
 
     def test_build_stateful_context_drops_follow_up_instructions_past_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1962,7 +2169,7 @@ class BlinkOnceTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            # Now is ~7 hours later; FOLLOW_UP_INSTRUCTION_HISTORY_WINDOW_SECONDS is 6h.
+            # Now is ~7 hours later; FOLLOW_UP_SAME_POST_WINDOW_SECONDS is 30m.
             context = blink_once.build_stateful_context(
                 runs,
                 {"frontmost_app": {"bundle_id": "com.apple.mail", "app_name": "Mail"}},
