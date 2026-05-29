@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controlWindow: ControlWindowController?
     private var settingsWindow: SettingsWindowController?
     private var onboardingSampleWindow: OnboardingChatMockWindowController?
+    private var onboardingDemoCard: OnboardingDemoCardWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
@@ -75,6 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         coordinator.onPermissionsNeeded = { [weak self] in
             self?.showPermissionsWindow()
+        }
+        coordinator.onSummaryCompleted = { [weak self] success in
+            self?.onboardingDemoCard?.noteSummaryCompleted(success: success)
+        }
+        coordinator.onSuggestionPicked = { [weak self] index in
+            self?.onboardingDemoCard?.noteSuggestionPicked(index: index)
         }
 
         menubar = MenubarController(
@@ -136,9 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
             isOverlayPinned: { [weak coordinator] in coordinator?.isOverlayPinned ?? false },
-            onSummarize: { [weak coordinator, weak nudges] pressedAt in
+            onSummarize: { [weak coordinator, weak nudges, weak self] pressedAt in
                 let summarizeEnteredAt = DispatchTime.now()
-                Task { @MainActor in nudges?.noteHotkeyInvoked() }
+                Task { @MainActor in
+                    nudges?.noteHotkeyInvoked()
+                    self?.onboardingDemoCard?.noteHotkeyInvoked()
+                }
                 coordinator?.summarizeFrontmostWindow(
                     pressedAt: pressedAt,
                     summarizeEnteredAt: summarizeEnteredAt
@@ -234,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys?.stop()
         nudgeCoordinator?.stop()
         firstHotkeyOverlay.close(userClicked: false, animated: false)
+        onboardingDemoCard?.noteAppWillTerminate()
     }
 
     func showPermissionsWindow() {
@@ -251,18 +262,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 onFinished: { [weak self] in
                     self?.startHotkeysIfNeeded()
-                    self?.runOnboardingSample()
+                    self?.runOnboardingDemo()
                 }
             )
         }
         permissionsWindow?.show()
     }
 
-    /// Opens the chat-mock demo window and lets the user press the real
-    /// summary hotkey themselves — the demo's job is to teach them the key
-    /// they'll use forever. Permissions are guaranteed granted at this
-    /// point; the control window opens once the user closes the mock.
-    private func runOnboardingSample() {
+    /// Opens the first-run demo card and waits for the user to press the real
+    /// summary hotkey themselves on a window of their choice. The chat-mock
+    /// is preserved as a "Try a sample" escape hatch for users who don't have
+    /// a good window handy.
+    private func runOnboardingDemo() {
+        if let existing = onboardingDemoCard {
+            existing.show()
+            return
+        }
+        let card = OnboardingDemoCardWindowController(
+            hotkeyDisplay: coordinator.currentHotkey.displayString,
+            eventClient: eventClient,
+            allowLogging: { [weak runtimeStore] in
+                runtimeStore?.allowEventLogging ?? false
+            },
+            clientMetadata: {
+                BlinkCoordinator.clientMetadata()
+            },
+            onOutcome: { [weak self] outcome in
+                guard let self else { return }
+                self.onboardingDemoCard = nil
+                switch outcome {
+                case .firstHotkeyLanded, .skipped:
+                    // The card is itself the first-hotkey nudge — mark the
+                    // marker so the legacy 4-second toast doesn't fire next.
+                    Paths.markFirstHotkeyNudgeShown()
+                    self.showControlWindow()
+                case .sampleRequested:
+                    self.runOnboardingSampleMock()
+                }
+            }
+        )
+        onboardingDemoCard = card
+        card.show()
+    }
+
+    /// Legacy chat-mock demo window. Preserved as the "Try a sample" fallback
+    /// from the demo card for users who don't have a good window to try Blink
+    /// on themselves. Kept verbatim from the previous `runOnboardingSample`.
+    private func runOnboardingSampleMock() {
         guard onboardingSampleWindow == nil else {
             onboardingSampleWindow?.show()
             return
@@ -281,10 +327,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         onboardingSampleWindow = mock
         mock.show()
-        // System Settings may still be the OS-level frontmost app from the
-        // last auto-chain hop. Re-activate Blink right after the mock opens
-        // so the global hotkey, when the user presses it, captures the
-        // mock window and not whatever Settings.app left behind.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
             self?.onboardingSampleWindow?.bringToFront()

@@ -204,6 +204,13 @@ final class BlinkCoordinator: @unchecked Sendable {
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
     var onPermissionsNeeded: (() -> Void)?
+    /// Fires when a summary completes its overlay-shown moment (success) or
+    /// hits a user-visible failure. Used by the onboarding demo card to know
+    /// whether the user's first hotkey press actually produced a result.
+    var onSummaryCompleted: ((Bool) -> Void)?
+    /// Fires when the user picks a suggestion (1/2/3 / equivalent). Index is
+    /// zero-based. Used by the onboarding demo card to record first-paste.
+    var onSuggestionPicked: ((Int) -> Void)?
 
     /// Combine subject for surfaces that want to subscribe rather than own
     /// the callback (the menubar already owns `onStatusChange`). Mirrors what
@@ -1690,6 +1697,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     clientMetadata: clientMetadata,
                     details: ["suggestion_count": self.currentSuggestions.count]
                 )
+                self.onSummaryCompleted?(true)
             }
         } catch {
             let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
@@ -1716,6 +1724,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 ]
             )
             PendingRunStore.finish(requestID: requestID)
+            DispatchQueue.main.async { [weak self] in
+                self?.onSummaryCompleted?(false)
+            }
             reportFailure(
                 title: "Blink Failed",
                 statusText: "failed: \(shortErrorSummary(error))",
@@ -2246,12 +2257,14 @@ final class BlinkCoordinator: @unchecked Sendable {
         switch applyChoiceNumber(index) {
         case .ignored:
             return
-        case .expand(let index):
+        case .expand(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            expandSuggestion(index: index)
-        case .commit(let index):
+            expandSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
+        case .commit(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            insertSuggestion(index: index)
+            insertSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
         case .focusInput:
             overlay.focusCustomInput()
             status("type your own reply")
