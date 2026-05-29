@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: SettingsWindowController?
     private var onboardingSampleWindow: OnboardingChatMockWindowController?
     private var onboardingDemoCard: OnboardingDemoCardWindowController?
+    private var welcomeWindow: WelcomeWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
@@ -185,7 +186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 
-        if shouldShowPermissionSetup() {
+        if Paths.requiresFirstRunOnboarding() {
+            // True first run: show the animated welcome slideshow, then hand
+            // off to the permissions wizard (which owns the onboarded marker).
+            // Gated on the marker, not permissions, so a later permission
+            // revocation re-runs the wizard without replaying the intro.
+            runWelcomeSlideshow()
+        } else if shouldShowPermissionSetup() {
+            // Onboarded already, but permissions are missing — straight to
+            // the wizard, no intro.
             showPermissionsWindow()
         } else {
             showControlWindow()
@@ -267,6 +276,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         permissionsWindow?.show()
+    }
+
+    /// First-run only: the animated welcome slideshow. On completion — or if
+    /// the user closes it early — it hands off to the permissions wizard.
+    private func runWelcomeSlideshow() {
+        if let welcomeWindow {
+            welcomeWindow.show()
+            return
+        }
+        let welcome = WelcomeWindowController(onComplete: { [weak self] in
+            self?.welcomeWindow = nil
+            self?.showPermissionsWindow()
+        })
+        welcomeWindow = welcome
+        welcome.show()
     }
 
     /// Opens the first-run demo card and waits for the user to press the real
