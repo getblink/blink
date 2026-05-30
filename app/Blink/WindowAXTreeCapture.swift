@@ -27,6 +27,19 @@ enum WindowAXTreeCapture {
     static let defaultMaxNodes = 4000
     static let defaultMaxDepth = 60
     static let defaultMaxValueChars = 500
+    /// Per-node value clamp used when a node's value SUBSUMES a pure-text
+    /// subtree we collapse into it (see `walk`). More generous than the inline
+    /// leaf clamp so a normal chat paragraph survives collapse intact; a
+    /// pathological single-node value (a whole file in one AXValue) exceeds it
+    /// and keeps its children instead of being cut.
+    static let defaultCollapseValueChars = 1200
+
+    /// Raw AX roles (post-`shortenRole`) whose nodes are plain-text leaves:
+    /// their content lives entirely in value/title, with no URLs or interactive
+    /// affordances. When ALL of a container's children are these, the
+    /// container's own AXValue is just their concatenation — so we collapse the
+    /// subtree into one value line rather than print the text twice.
+    private static let plainTextLeafRoles: Set<String> = ["StaticText", "ListMarker"]
 
     /// Attributes fetched per node in a single batched IPC call. Ordered so the
     /// returned array indexes line up with the locals in `walk`.
@@ -54,44 +67,70 @@ enum WindowAXTreeCapture {
         var nodeCount = 0
         var truncated = false
 
-        func walk(_ element: AXUIElement, depth: Int, indent: Int) {
+        // `attrs` is pre-fetched by the caller (the root fetches its own) so the
+        // collapse decision and the recursive descent share one IPC per node.
+        func walk(_ element: AXUIElement, _ attrs: [CFTypeRef?], depth: Int, indent: Int) {
             if nodeCount >= maxNodes {
                 truncated = true
                 return
             }
             nodeCount += 1
-            let attrs = copyMultiple(element, nodeAttributes)
             let role = shortenRole(attrs[0] as? String)
             let roleDesc = (attrs[1] as? String)?.nonBlank
             let title = (attrs[2] as? String)?.nonBlank
             let desc = (attrs[3] as? String)?.nonBlank
-            let value = stringValue(attrs[4])?.clamped(to: maxValueChars)
-
+            let rawValue = stringValue(attrs[4])
             let name = title ?? desc
+
+            // Fetch children + their attributes once; reused for both the
+            // collapse decision below and the recursive descent (no double IPC).
+            let children = depth < maxDepth ? childrenOf(element) : []
+            let childAttrs = children.map { copyMultiple($0, nodeAttributes) }
+            let childrenAllPlainText = !children.isEmpty && childAttrs.allSatisfy {
+                guard let childRole = shortenRole($0[0] as? String) else { return false }
+                return plainTextLeafRoles.contains(childRole)
+            }
+
+            // De-duplication: a container's AXValue is the concatenation of its
+            // text descendants, so emitting BOTH the value line and the child
+            // text lines doubles the tokens (observed ~2x on chat/article
+            // surfaces). When the children are all plain text, collapse the
+            // subtree into the single value line; if the value is too long to
+            // hold safely, drop the redundant value and let the children carry
+            // the full text instead (no content loss either way).
+            var value = rawValue
+            var descend = true
+            if rawValue != nil, childrenAllPlainText {
+                if rawValue!.count <= defaultCollapseValueChars {
+                    descend = false
+                } else {
+                    value = nil
+                }
+            }
+            let clampedValue = value?.clamped(to: descend ? maxValueChars : defaultCollapseValueChars)
+
             // Collapse empty structural wrappers: a node with no name and no
-            // value carries no semantic content of its own, so emit nothing and
-            // keep its children at the current indent. This is the "collapse
-            // empty containers" projection that drives most of the token win.
-            let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: value, indent: indent)
+            // value carries no content of its own, so emit nothing and keep its
+            // children at the current indent.
             let childIndent: Int
-            if let line {
+            if let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: clampedValue, indent: indent) {
                 lines.append(line)
                 childIndent = indent + 1
             } else {
                 childIndent = indent
             }
 
-            guard depth < maxDepth else { return }
-            for child in childrenOf(element) {
+            guard descend else { return }
+            for (child, childAttr) in zip(children, childAttrs) {
                 if nodeCount >= maxNodes {
                     truncated = true
                     break
                 }
-                walk(child, depth: depth + 1, indent: childIndent)
+                walk(child, childAttr, depth: depth + 1, indent: childIndent)
             }
         }
 
-        walk(root, depth: 0, indent: 0)
+        walk(root, copyMultiple(root, nodeAttributes), depth: 0, indent: 0)
 
         guard !lines.isEmpty else { return nil }
         if truncated {
