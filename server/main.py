@@ -441,6 +441,38 @@ def _build_selection_block(selection: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_ax_tree_block(ax_text: Any) -> str:
+    """Build the <ax_tree> block for the user-role capture turn.
+
+    The accessibility tree carries the active window's full structure —
+    including content above and below the visible viewport — so it's the
+    capture path that gives the model scrolling context the viewport-bound
+    screenshot can't. The client already clamps the walk (node + per-node
+    value caps); here we apply the server-owned character budget
+    (`AX_TREE_MAX_CHARS`) and mark the block truncated when it trips so the
+    model knows to fall back on the screenshot for the cut region. Self-
+    describing header keeps the hybrid instruction out of the byte-parity-
+    locked system prompt for now.
+    """
+    if not isinstance(ax_text, str):
+        return ""
+    text = ax_text.strip()
+    if not text:
+        return ""
+    truncated = False
+    if len(text) > gemini.AX_TREE_MAX_CHARS:
+        text = text[: gemini.AX_TREE_MAX_CHARS].rstrip()
+        truncated = True
+    header = (
+        "Accessibility tree of the active window, including content above "
+        "and below the visible viewport. The screenshot shows only what is "
+        "currently on screen; use this tree for off-screen context and exact "
+        "text, and the screenshot for layout and visual salience."
+    )
+    attrs = f" truncated={_xml_attr('true' if truncated else 'false')}"
+    return f"<ax_tree{attrs}>\n{header}\n\n{text}\n</ax_tree>\n"
+
+
 def _build_catalog_block(catalog: list[dict[str, Any]]) -> str:
     """Build the attachments catalog block for injection into the prompt.
 
@@ -625,6 +657,11 @@ def _privacy_safe_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
         envelope.get("focused_context"),
         allow_content_retention=allow_content_retention,
     )
+    # NOTE: `ax_tree` is intentionally NOT redacted here because it is never
+    # persisted — `_record_request` does not read it, so the only copy lives in
+    # the live envelope the model sees. It is the most content-rich field in the
+    # request (the full off-screen window text). If you ever start storing it,
+    # redact it here when retention is off, the same as focused_context/selection.
     # The selection text is the user's *explicit* input — it's always sent
     # to the model. Only redact from telemetry storage when retention is
     # off, mirroring how focused_context.value is handled.
@@ -709,6 +746,7 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "image_diagnostics": _dict_or_none(payload.get("image_diagnostics")),
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
+        "ax_tree": (str(payload["ax_tree"]) if isinstance(payload.get("ax_tree"), str) else None),
         "selection": _dict_or_none(payload.get("selection")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
@@ -758,6 +796,7 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "image_diagnostics": None,
         "ocr_packet": None,
         "focused_context": None,
+        "ax_tree": None,
         "selection": None,
         "stateful_context": None,
         "reroll_context": None,
@@ -826,6 +865,7 @@ def _request_cache_key(envelope: dict[str, Any], image_bytes_list: list[bytes]) 
         "frontmost_app": envelope.get("frontmost_app"),
         "ocr_packet": envelope.get("ocr_packet"),
         "focused_context": envelope.get("focused_context"),
+        "ax_tree": envelope.get("ax_tree"),
         "selection": envelope.get("selection"),
         "stateful_context": envelope.get("stateful_context"),
         "reroll_context": envelope.get("reroll_context"),
@@ -1444,6 +1484,12 @@ async def _run_tldr_request(
     # not in the stable system instruction. The <selection_signal> rules
     # in prompt.txt teach the model how to interpret it.
     selection_block = _build_selection_block(envelope.get("selection")).rstrip()
+    # Capture-turn text part: AX tree first (window context, incl. off-screen),
+    # then the user's explicit <selection> last so the instruction keeps recency.
+    ax_tree_block = _build_ax_tree_block(envelope.get("ax_tree")).rstrip()
+    capture_suffix = "\n\n".join(
+        part for part in (ax_tree_block, selection_block) if part
+    )
     prompt_text = gemini.prompt_with_context(
         base_prompt,
         model_envelope.get("stateful_context"),
@@ -1468,7 +1514,7 @@ async def _run_tldr_request(
                     prompt_text=prompt_text,
                     images=images,
                     conversation_turns=conversation_turns,
-                    user_message_suffix=selection_block,
+                    user_message_suffix=capture_suffix,
                     is_followup=isinstance(envelope.get("reroll_context"), dict),
                 ):
                     event_name = str(event.get("event") or "message")
@@ -1620,7 +1666,7 @@ async def _run_tldr_request(
             images=images,
             conversation_turns=conversation_turns,
             supports_attachments=settings.get("supports_attachments", False),
-            user_message_suffix=selection_block,
+            user_message_suffix=capture_suffix,
             is_followup=isinstance(envelope.get("reroll_context"), dict),
         )
     except Exception as exc:
