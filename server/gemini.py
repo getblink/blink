@@ -37,6 +37,12 @@ PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
 SURFACE_TEXT_MAX_CHARS = 500
+# Server-owned budget for the accessibility-tree text part. The client caps
+# the walk (node count + per-node value length) for memory/upload safety; this
+# is the final token-budget clamp the model actually sees, tunable via deploy
+# without an app release. ~40k chars ≈ 10k tokens. When it trips, the block is
+# marked truncated so the model leans on the screenshot for the cut region.
+AX_TREE_MAX_CHARS = 40000
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4

@@ -1323,6 +1323,10 @@ final class BlinkCoordinator: @unchecked Sendable {
             // matches the existing pattern at the top of captureFrame
             // (line ~788) for NSWorkspace.shared.frontmostApplication.
             let mouseLocation: CGPoint = DispatchQueue.main.sync { NSEvent.mouseLocation }
+            // Full-window AX tree (off-screen included) so the server can give
+            // the model scrolling context the viewport screenshot lacks. Walk
+            // is clamped (node/value caps); nil when AX is denied or empty.
+            let axTreeText = WindowAXTreeCapture.capture()?.text
             var focusedContext = focusedSnapshot.uploadPayload
             // Annotate every frame in place before the runner reads them.
             // Each frame carries its own captureRect, so the marker math
@@ -1422,6 +1426,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 screenshotMeta: firstFrame.screenshotMeta,
                 diagnostics: firstFrame.imageDiagnostics,
                 focusedContext: focusedContext,
+                axTree: axTreeText,
                 mouseScreenPoint: mouseLocation,
                 captureMode: captureMode,
                 frames: active.frames,
@@ -2844,6 +2849,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         screenshotMeta: [String: Any],
         diagnostics: [String: Any],
         focusedContext: [String: Any],
+        axTree: String? = nil,
         mouseScreenPoint: CGPoint? = nil,
         captureMode: String = "frontmost_window",
         frames: [CapturedFrame] = [],
@@ -2870,6 +2876,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "allow_content_retention": runtime.allowContentRetention,
             ],
         ]
+        if let axTree, !axTree.isEmpty {
+            envelope["ax_tree"] = axTree
+        }
         if !attachmentsCatalog.isEmpty {
             envelope["attachments_catalog"] = attachmentsCatalog
         }

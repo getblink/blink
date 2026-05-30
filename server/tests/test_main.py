@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from server import gemini
 from server.main import (
+    _build_ax_tree_block,
     _build_selection_block,
     _privacy_safe_envelope,
     _selected_settings,
@@ -2079,6 +2080,28 @@ class MainTests(unittest.TestCase):
         sanitized = _privacy_safe_envelope(envelope)
         self.assertEqual(sanitized["selection"]["text"], "highlighted")
         self.assertNotIn("text_redacted", sanitized["selection"])
+
+    def test_build_ax_tree_block_wraps_text_with_header(self) -> None:
+        block = _build_ax_tree_block('window "Inbox"\n  button "Reply"')
+        self.assertIn("<ax_tree ", block)
+        self.assertIn("</ax_tree>", block)
+        self.assertIn('truncated="false"', block)
+        self.assertIn("above and below the visible viewport", block)
+        self.assertIn('button "Reply"', block)
+
+    def test_build_ax_tree_block_clamps_and_marks_truncated(self) -> None:
+        # "Z" never appears in the descriptive header, so counting it isolates
+        # the clamped tree body from the surrounding markup.
+        big = "Z" * (gemini.AX_TREE_MAX_CHARS + 5000)
+        block = _build_ax_tree_block(big)
+        self.assertIn('truncated="true"', block)
+        self.assertEqual(block.count("Z"), gemini.AX_TREE_MAX_CHARS)
+
+    def test_build_ax_tree_block_returns_empty_for_invalid_inputs(self) -> None:
+        self.assertEqual(_build_ax_tree_block(None), "")
+        self.assertEqual(_build_ax_tree_block(""), "")
+        self.assertEqual(_build_ax_tree_block("   \n  "), "")
+        self.assertEqual(_build_ax_tree_block(123), "")
 
     def test_build_selection_block_returns_empty_for_invalid_inputs(self) -> None:
         self.assertEqual(_build_selection_block(None), "")
