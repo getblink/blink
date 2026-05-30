@@ -1490,6 +1490,19 @@ async def _run_tldr_request(
     capture_suffix = "\n\n".join(
         part for part in (ax_tree_block, selection_block) if part
     )
+    # Observability for the AX-tree rollout: a correlated line (same token_id /
+    # request_id as the tldr_request line) carrying the raw capture size and
+    # whether the server budget clamp tripped. Lets us measure AX size → token
+    # cost without threading a new field through every _log_request call site.
+    _ax_tree_raw = envelope.get("ax_tree")
+    _ax_tree_chars = len(_ax_tree_raw) if isinstance(_ax_tree_raw, str) else 0
+    logger.info(
+        "tldr_ax_tree token_id=%s request_id=%s ax_tree_chars=%s clamped=%s",
+        token_id,
+        envelope.get("request_id"),
+        _ax_tree_chars,
+        _ax_tree_chars > gemini.AX_TREE_MAX_CHARS,
+    )
     prompt_text = gemini.prompt_with_context(
         base_prompt,
         model_envelope.get("stateful_context"),
