@@ -4,6 +4,75 @@ import XCTest
 @testable import Blink
 
 final class FocusedContextCaptureTests: XCTestCase {
+    func testAXTreeAnchoredWindowLeavesSmallTreesUnchanged() {
+        let lines = [
+            "window \"Demo\"",
+            "  group \"Thread\"",
+            "    text \"hello\"",
+        ]
+
+        let selected = WindowAXTreeCapture.anchoredWindowText(
+            for: lines,
+            anchorIndex: 2,
+            budget: 10_000
+        )
+
+        XCTAssertFalse(selected.truncated)
+        XCTAssertEqual(selected.text, lines.joined(separator: "\n"))
+    }
+
+    func testAXTreeAnchoredWindowKeepsAnchorAndAncestorsWhenOversized() {
+        var lines = ["window \"Demo\"", "  group \"Thread\""]
+        lines.append(contentsOf: (0..<120).map { "    text \"item \($0)\"" })
+        let anchorIndex = 2 + 90
+
+        let selected = WindowAXTreeCapture.anchoredWindowText(
+            for: lines,
+            anchorIndex: anchorIndex,
+            budget: 360
+        )
+
+        XCTAssertTrue(selected.truncated)
+        XCTAssertTrue(selected.text.contains("window \"Demo\""))
+        XCTAssertTrue(selected.text.contains("  group \"Thread\""))
+        XCTAssertTrue(selected.text.contains("    text \"item 90\""))
+        XCTAssertTrue(selected.text.contains("[..."))
+        XCTAssertFalse(selected.text.contains("    text \"item 0\""))
+    }
+
+    func testAXTreeAnchoredWindowFallsBackToTailWhenAnchorMissing() {
+        var lines = ["window \"Demo\""]
+        lines.append(contentsOf: (0..<80).map { "  text \"item \($0)\"" })
+
+        let selected = WindowAXTreeCapture.anchoredWindowText(
+            for: lines,
+            anchorIndex: nil,
+            budget: 220
+        )
+
+        XCTAssertTrue(selected.truncated)
+        XCTAssertTrue(selected.text.contains("  text \"item 79\""))
+        XCTAssertFalse(selected.text.contains("  text \"item 0\""))
+    }
+
+    func testAXTreeAnchoredWindowPreservesRequiredTruncationMarker() {
+        var lines = ["window \"Demo\"", "  group \"Thread\""]
+        lines.append(contentsOf: (0..<120).map { "    text \"item \($0)\"" })
+        lines.append("[… tree truncated at 4000 nodes]")
+        let markerIndex = lines.count - 1
+
+        let selected = WindowAXTreeCapture.anchoredWindowText(
+            for: lines,
+            anchorIndex: 2 + 60,
+            budget: 360,
+            requiredIndexes: [markerIndex]
+        )
+
+        XCTAssertTrue(selected.truncated)
+        XCTAssertTrue(selected.text.contains("    text \"item 60\""))
+        XCTAssertTrue(selected.text.contains("[… tree truncated at 4000 nodes]"))
+    }
+
     func testPasteTargetDecisionAcceptsTextRoles() {
         XCTAssertEqual(
             FocusedContextCapture.textTargetDecision(focusedRole: "AXTextArea", descendantRoles: []),
