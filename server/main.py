@@ -747,6 +747,8 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         "ocr_packet": _dict_or_none(payload.get("ocr_packet")),
         "focused_context": _dict_or_none(payload.get("focused_context")),
         "ax_tree": (str(payload["ax_tree"]) if isinstance(payload.get("ax_tree"), str) else None),
+        "ax_tree_nodes": (payload["ax_tree_nodes"] if isinstance(payload.get("ax_tree_nodes"), int) else None),
+        "ax_tree_truncated": bool(payload.get("ax_tree_truncated")),
         "selection": _dict_or_none(payload.get("selection")),
         "stateful_context": _dict_or_none(payload.get("stateful_context")),
         "reroll_context": _normalize_reroll_context(payload.get("reroll_context")),
@@ -797,6 +799,8 @@ def _make_legacy_request_envelope() -> dict[str, Any]:
         "ocr_packet": None,
         "focused_context": None,
         "ax_tree": None,
+        "ax_tree_nodes": None,
+        "ax_tree_truncated": False,
         "selection": None,
         "stateful_context": None,
         "reroll_context": None,
@@ -1496,11 +1500,16 @@ async def _run_tldr_request(
     # cost without threading a new field through every _log_request call site.
     _ax_tree_raw = envelope.get("ax_tree")
     _ax_tree_chars = len(_ax_tree_raw) if isinstance(_ax_tree_raw, str) else 0
+    # nodes = client walk size; walk_truncated = client hit the node cap (vs
+    # clamped = server hit the char budget). Together they tell us which limit
+    # binds first on a massive page.
     logger.info(
-        "tldr_ax_tree token_id=%s request_id=%s ax_tree_chars=%s clamped=%s",
+        "tldr_ax_tree token_id=%s request_id=%s ax_tree_chars=%s ax_tree_nodes=%s walk_truncated=%s clamped=%s",
         token_id,
         envelope.get("request_id"),
         _ax_tree_chars,
+        envelope.get("ax_tree_nodes"),
+        bool(envelope.get("ax_tree_truncated")),
         _ax_tree_chars > gemini.AX_TREE_MAX_CHARS,
     )
     prompt_text = gemini.prompt_with_context(

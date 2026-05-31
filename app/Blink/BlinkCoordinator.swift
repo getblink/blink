@@ -1326,7 +1326,9 @@ final class BlinkCoordinator: @unchecked Sendable {
             // Full-window AX tree (off-screen included) so the server can give
             // the model scrolling context the viewport screenshot lacks. Walk
             // is clamped (node/value caps); nil when AX is denied or empty.
-            let axTreeText = WindowAXTreeCapture.capture()?.text
+            // nodeCount + truncated are surfaced for rollout observability so we
+            // can tell the client node cap apart from the server char clamp.
+            let axTreeResult = WindowAXTreeCapture.capture()
             var focusedContext = focusedSnapshot.uploadPayload
             // Annotate every frame in place before the runner reads them.
             // Each frame carries its own captureRect, so the marker math
@@ -1426,7 +1428,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 screenshotMeta: firstFrame.screenshotMeta,
                 diagnostics: firstFrame.imageDiagnostics,
                 focusedContext: focusedContext,
-                axTree: axTreeText,
+                axTree: axTreeResult?.text,
+                axTreeNodes: axTreeResult?.nodeCount,
+                axTreeTruncated: axTreeResult?.truncated ?? false,
                 mouseScreenPoint: mouseLocation,
                 captureMode: captureMode,
                 frames: active.frames,
@@ -2844,6 +2848,8 @@ final class BlinkCoordinator: @unchecked Sendable {
         diagnostics: [String: Any],
         focusedContext: [String: Any],
         axTree: String? = nil,
+        axTreeNodes: Int? = nil,
+        axTreeTruncated: Bool = false,
         mouseScreenPoint: CGPoint? = nil,
         captureMode: String = "frontmost_window",
         frames: [CapturedFrame] = [],
@@ -2872,6 +2878,12 @@ final class BlinkCoordinator: @unchecked Sendable {
         ]
         if let axTree, !axTree.isEmpty {
             envelope["ax_tree"] = axTree
+            if let axTreeNodes {
+                envelope["ax_tree_nodes"] = axTreeNodes
+            }
+            // True when the client node cap stopped the walk — distinguishes
+            // "tree genuinely small" from "tree hit the 4000-node ceiling".
+            envelope["ax_tree_truncated"] = axTreeTruncated
         }
         if !attachmentsCatalog.isEmpty {
             envelope["attachments_catalog"] = attachmentsCatalog
