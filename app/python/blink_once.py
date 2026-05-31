@@ -280,6 +280,8 @@ Signal = what the user does not already know that changes their next move (a blo
 
 Novelty filter: subtract anything the user, or an agent acting on their behalf, just produced or witnessed in the visible session. Subtract app chrome, channel names, their own outgoing messages, and what they just typed.
 
+Latest state wins. If a later visible message resolves or supersedes an earlier blocker, caveat, or next step, do not repeat the old blocker as current and do not suggest doing already-completed work.
+
 When the remaining signal is zero, the TL;DR is one short status sentence acknowledging there's nothing new. That is correct, not a failure.
 </rule_3_novelty>
 

@@ -41,6 +41,8 @@ class PromptParityTests(unittest.TestCase):
         self.assertIn(r"\n\n---\n\n", blink_once.DEFAULT_PROMPT)
         self.assertIn("more than one paragraph or more than one beat", prompt_text)
         self.assertIn("more than one paragraph or more than one beat", blink_once.DEFAULT_PROMPT)
+        self.assertIn("Latest state wins", prompt_text)
+        self.assertIn("Latest state wins", blink_once.DEFAULT_PROMPT)
 
     def test_shared_model_content_text_matches(self) -> None:
         self.assertEqual(blink_once.MODEL_CONTENT_TEXT, gemini.MODEL_CONTENT_TEXT)

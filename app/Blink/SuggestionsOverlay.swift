@@ -1044,6 +1044,7 @@ final class SuggestionsOverlay: NSObject {
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let contentWidth = Layout.panelWidth
         let summaryLabelWidth = contentWidth - 48
+        let summaryDisplayText = TLDROverlayText.displayText(for: tldr)
         let hintBlockHeight = hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap
         let thumbBlockHeight = thumbnails.isEmpty ? 0 : Layout.thumbStripHeight + Layout.summaryHintGap
         let summaryTextY = Layout.summaryBottomInset + hintBlockHeight + thumbBlockHeight
@@ -1058,7 +1059,7 @@ final class SuggestionsOverlay: NSObject {
         let fullSummaryTextHeight: CGFloat = isLoading
             ? 0
             : measureHeight(
-                tldr,
+                summaryDisplayText,
                 width: summaryLabelWidth,
                 font: summaryFont,
                 lineSpacing: Layout.summaryLineSpacing,
@@ -1331,7 +1332,7 @@ final class SuggestionsOverlay: NSObject {
                     width: contentWidth - 48,
                     height: summaryHeight - summaryTextY - Layout.summaryTopInset
                 ),
-                text: tldr,
+                text: summaryDisplayText,
                 font: summaryFont,
                 color: .labelColor,
                 lineSpacing: Layout.summaryLineSpacing,
@@ -1665,6 +1666,7 @@ final class SuggestionsOverlay: NSObject {
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let labelWidth = Layout.panelWidth - 48
+        let displayText = TLDROverlayText.displayText(for: text)
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
         // multi-line content has the normal breathing room.
@@ -1674,7 +1676,7 @@ final class SuggestionsOverlay: NSObject {
         let floor = (wasLoading || allowsShrink) ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
             floor,
-            measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
+            measureHeight(displayText, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
                 + summaryTextY
                 + Layout.summaryTopInset
         )
@@ -1805,7 +1807,7 @@ final class SuggestionsOverlay: NSObject {
         }
         setLabelText(
             summaryLabel,
-            text: text,
+            text: displayText,
             font: font,
             color: .labelColor,
             lineSpacing: Layout.summaryLineSpacing,
