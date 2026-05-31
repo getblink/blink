@@ -15,6 +15,36 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertFalse(ScreenCapture.shouldUseDisplayFallback(windowFrame: frame, scale: 2))
     }
 
+    func testCappedPixelSizeDownscalesFullDisplayPreservingAspect() {
+        // 6016×3384 (6K @2x) fullscreen Conductor grab → longest side clamped
+        // to 1600, aspect preserved.
+        let capped = ScreenCapture.cappedPixelSize(width: 6016, height: 3384, max: 1600)
+
+        XCTAssertEqual(capped.width, 1600)
+        XCTAssertEqual(capped.height, 900) // 3384 * (1600/6016) = 900.0
+    }
+
+    func testCappedPixelSizeLeavesSmallSizesUnchanged() {
+        let capped = ScreenCapture.cappedPixelSize(width: 1200, height: 800, max: 1600)
+
+        XCTAssertEqual(capped.width, 1200)
+        XCTAssertEqual(capped.height, 800)
+    }
+
+    func testCappedPixelSizeCapsTallSideToo() {
+        let capped = ScreenCapture.cappedPixelSize(width: 1000, height: 3200, max: 1600)
+
+        XCTAssertEqual(capped.height, 1600)
+        XCTAssertEqual(capped.width, 500) // 1000 * (1600/3200)
+    }
+
+    func testCappedPixelSizeClampsDegenerateInputToAtLeastOne() {
+        let capped = ScreenCapture.cappedPixelSize(width: 0, height: 0, max: 1600)
+
+        XCTAssertEqual(capped.width, 1)
+        XCTAssertEqual(capped.height, 1)
+    }
+
     func testPreferredCaptureSizePrefersAxWhenAvailable() {
         // The Chrome-on-X bug case: SCK reports a wide-short strip frame
         // while AX reports the actual window dims. Trust AX.

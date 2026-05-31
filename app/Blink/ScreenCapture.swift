@@ -52,6 +52,54 @@ enum ScreenCapture {
         }
     }
 
+    // MARK: - Prewarm
+
+    private static let prewarmLock = NSLock()
+    private static var lastPrewarmAt: Date?
+    /// SCK stays warm for a while after a fetch, so re-warming more often than
+    /// this just spams the daemon. App-activation can fire rapidly when the user
+    /// alt-tabs; this debounces it.
+    private static let prewarmMinInterval: TimeInterval = 3.0
+
+    /// Warm the ScreenCaptureKit XPC connection ahead of a real capture.
+    ///
+    /// The first `SCShareableContent` fetch / `captureImage` after launch (or a
+    /// long idle) establishes the connection to the capture daemon and costs
+    /// ~0.8s more than a warm one (measured: 1.30s cold vs 0.49s warm on a
+    /// Conductor capture). This does a throwaway content fetch and discards it;
+    /// the real capture still re-fetches fresh content because the window list
+    /// must be current at capture time.
+    ///
+    /// Permission-gated via preflight so a background warm (e.g. on every app
+    /// switch) can never trigger a surprise Screen Recording prompt — if it's
+    /// not granted yet we simply skip, and the real capture surfaces the prompt.
+    /// Debounced and safe to call from any thread.
+    static func prewarm() {
+        guard CGPreflightScreenCaptureAccess() else { return }
+
+        prewarmLock.lock()
+        if let last = lastPrewarmAt, Date().timeIntervalSince(last) < prewarmMinInterval {
+            prewarmLock.unlock()
+            return
+        }
+        lastPrewarmAt = Date()
+        prewarmLock.unlock()
+
+        Task.detached(priority: .utility) {
+            let started = Date()
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(
+                    false, onScreenWindowsOnly: false
+                )
+                TCCDiagnostics.log(
+                    "screen_capture_prewarm_ok elapsed_ms=\(Int(Date().timeIntervalSince(started) * 1000))"
+                )
+            } catch {
+                logSCKError("screen_capture_prewarm_failed", error: error)
+            }
+        }
+    }
+
     /// Capture the frontmost on-screen window of the frontmost application.
     ///
     /// Blink now runs as `.regular` so its own Control window can be frontmost
@@ -93,14 +141,18 @@ enum ScreenCapture {
         TCCDiagnostics.log("screen_capture_owner pid=\(pid) owner_name=\(ownerName ?? "nil")")
 
         let content: SCShareableContent
+        let contentStartedAt = Date()
         do {
             content = try await shareableContent(
                 preferred: cachedContent,
                 pid: pid,
                 preferredGlobalRect: preferredGlobalRect
             )
+            // elapsed_ms isolates the SCShareableContent cost (the cold-start
+            // suspect prewarm() targets) from the rest of the capture. Reused
+            // content (multi-frame) should report ~0ms; a cold fetch ~hundreds.
             TCCDiagnostics.log(
-                "shareable_content_success pid=\(pid) windows=\(content.windows.count) displays=\(content.displays.count)"
+                "shareable_content_success pid=\(pid) windows=\(content.windows.count) displays=\(content.displays.count) elapsed_ms=\(Int(Date().timeIntervalSince(contentStartedAt) * 1000))"
             )
         } catch {
             logSCKError("shareable_content_failed", error: error)
@@ -237,6 +289,38 @@ enum ScreenCapture {
     }
 
     enum CaptureSizingSource { case ax, sck }
+
+    /// Cap on the captured pixel buffer's longest side. `image_prep.py`
+    /// downscales every upload to `request_image_max_dimension` (1600) before it
+    /// reaches Gemini, so capturing larger — e.g. a full 6016×3384 display for a
+    /// fullscreen app — burns capture *and* PNG-encode time on pixels we
+    /// immediately throw away (a 20MP grab + encode dominated warm-capture
+    /// latency on fullscreen Conductor). Sizing the SCStreamConfiguration buffer
+    /// to this cap makes ScreenCaptureKit scale on the GPU (`scalesToFit`), so
+    /// both the grab and the encode shrink, with no change to what the model
+    /// sees (the upload was already 1600px; `media_resolution=LOW` caps image
+    /// tokens regardless; the AX tree carries the text). Keep in sync with
+    /// image_prep.py's `request_image_max_dimension` default.
+    static let maxCaptureDimension = 1600
+
+    /// Aspect-preserving downscale of a pixel size so its longest side is at
+    /// most `maxDim`. Returns the input unchanged (clamped ≥ 1) when already
+    /// within the cap. Pure for testing.
+    static func cappedPixelSize(
+        width: Int,
+        height: Int,
+        max maxDim: Int = maxCaptureDimension
+    ) -> (width: Int, height: Int) {
+        let longest = Swift.max(width, height)
+        guard longest > maxDim, longest > 0, maxDim > 0 else {
+            return (Swift.max(1, width), Swift.max(1, height))
+        }
+        let ratio = CGFloat(maxDim) / CGFloat(longest)
+        return (
+            Swift.max(1, Int((CGFloat(width) * ratio).rounded())),
+            Swift.max(1, Int((CGFloat(height) * ratio).rounded()))
+        )
+    }
 
     // Pick the size we should ask SCK to render into. AX dims are preferred
     // when available because SCK's window.frame can lie (e.g. Chrome surfaces
@@ -612,18 +696,23 @@ enum ScreenCapture {
         // for some Chrome window states (reports a wide-short strip while
         // Chrome's content layer is normally proportioned), and the AX rect
         // — when available — is a more faithful source for window dims.
-        config.width = max(1, Int(captureSize.width) * scale)
-        config.height = max(1, Int(captureSize.height) * scale)
+        let capped = cappedPixelSize(
+            width: max(1, Int(captureSize.width) * scale),
+            height: max(1, Int(captureSize.height) * scale)
+        )
+        config.width = capped.width
+        config.height = capped.height
         config.showsCursor = false
         config.scalesToFit = true
 
+        let captureStartedAt = Date()
         do {
             let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
             TCCDiagnostics.log(
-                "window_capture_success window_id=\(window.windowID) width=\(image.width) height=\(image.height)"
+                "window_capture_success window_id=\(window.windowID) width=\(image.width) height=\(image.height) elapsed_ms=\(Int(Date().timeIntervalSince(captureStartedAt) * 1000))"
             )
             return image
         } catch {
@@ -642,19 +731,30 @@ enum ScreenCapture {
         }
         let scale = await MainActor.run { backingScaleFactor(for: display.frame) }
         let config = SCStreamConfiguration()
-        config.width = max(1, display.width * scale)
-        config.height = max(1, display.height * scale)
+        // Cap the buffer to the upload size and let SCK scale on the GPU. The
+        // capped dims preserve the display's aspect ratio, so scalesToFit fills
+        // the buffer exactly (no letterboxing) while avoiding a full 20MP grab.
+        let capped = cappedPixelSize(
+            width: max(1, display.width * scale),
+            height: max(1, display.height * scale)
+        )
+        config.width = capped.width
+        config.height = capped.height
         config.showsCursor = false
-        config.scalesToFit = false
+        config.scalesToFit = true
 
         let cgImage: CGImage
+        let captureStartedAt = Date()
         do {
             cgImage = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
+            // Conductor (and other fullscreen apps) take this display-capture
+            // path, so elapsed_ms here — not window_capture_success — is the
+            // real steady-state capture cost. Big displays mean a 20MP+ grab.
             TCCDiagnostics.log(
-                "display_capture_success display_id=\(display.displayID) width=\(cgImage.width) height=\(cgImage.height)"
+                "display_capture_success display_id=\(display.displayID) width=\(cgImage.width) height=\(cgImage.height) capture_ms=\(Int(Date().timeIntervalSince(captureStartedAt) * 1000))"
             )
         } catch {
             logSCKError("display_capture_failed", error: error)
@@ -663,9 +763,15 @@ enum ScreenCapture {
             }
             throw CaptureError.underlying(error)
         }
+        // PNG-encoding a full-display CGImage is its own cost (NSBitmapImageRep
+        // on a 6016×3384 grab is megabytes); measure it separately from capture.
+        let encodeStartedAt = Date()
         guard let pngData = cgImageToPNG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
+        TCCDiagnostics.log(
+            "display_capture_png_encoded bytes=\(pngData.count) png_encode_ms=\(Int(Date().timeIntervalSince(encodeStartedAt) * 1000))"
+        )
         return pngData
     }
 

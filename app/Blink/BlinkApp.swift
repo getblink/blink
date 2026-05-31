@@ -181,6 +181,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showControlWindow()
             showFirstHotkeyNudgeIfNeeded()
             startHotkeysIfNeeded()
+            // Warm the ScreenCaptureKit XPC connection so the first hotkey
+            // capture isn't ~0.8s slower than steady-state (cold SCK daemon).
+            ScreenCapture.prewarm()
+        }
+
+        // Re-warm SCK whenever the user activates another app — that's exactly
+        // when a capture is likely imminent, and it keeps the daemon connection
+        // from going cold between captures. prewarm() is debounced and
+        // permission-gated, so this can't spam the daemon or trigger a prompt;
+        // skip our own activations.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { note in
+            guard
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                app.processIdentifier != NSRunningApplication.current.processIdentifier
+            else { return }
+            ScreenCapture.prewarm()
         }
     }
 
