@@ -35,6 +35,13 @@ class PromptParityTests(unittest.TestCase):
             (REPO_ROOT / "app" / "Resources" / "prompt.txt").read_bytes(),
         )
 
+    def test_prompts_document_expandable_tldr_separator(self) -> None:
+        prompt_text = (REPO_ROOT / "server" / "prompt.txt").read_text(encoding="utf-8")
+        self.assertIn(r"\n\n---\n\n", prompt_text)
+        self.assertIn(r"\n\n---\n\n", blink_once.DEFAULT_PROMPT)
+        self.assertIn("more than one paragraph or more than one beat", prompt_text)
+        self.assertIn("more than one paragraph or more than one beat", blink_once.DEFAULT_PROMPT)
+
     def test_shared_model_content_text_matches(self) -> None:
         self.assertEqual(blink_once.MODEL_CONTENT_TEXT, gemini.MODEL_CONTENT_TEXT)
 

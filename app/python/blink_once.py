@@ -316,8 +316,11 @@ Length scales with signal density, not capture density.
 - Add supporting beats only when multiple distinct load-bearing items pass the novelty filter.
 - Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence. That is correct.
 - 3 sentences or fewer per paragraph. No bullets, no numbered lists.
+- For expandable TL;DRs, put the collapsed headline first, then exactly one Markdown horizontal-rule separator before any expanded detail: `\\n\\n---\\n\\n`.
+- Text before the separator must stand alone as the collapsed TL;DR. Text after it is optional expanded detail. Do not include the separator unless the expanded detail adds distinct signal.
+- If the TL;DR has more than one paragraph or more than one beat, it MUST contain exactly one `\\n\\n---\\n\\n` separator after the first paragraph.
 
-A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Separate beats with a blank line, written as literal `\n\n` inside the JSON string. Start a new beat when the next sentence:
+A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. In expanded detail, separate beats with a blank line, written as literal `\\n\\n` inside the JSON string. Start a new beat when the next sentence:
 - introduces an ask, question, or request,
 - starts with "Heads up,",
 - describes an action or next step for the user,
@@ -327,7 +330,7 @@ Bad (jammed):
 "The agent shipped two UI fixes. PR #27 is live on GitHub. Trigger ctrl+shift+t to see the results."
 
 Good (separated):
-"The agent shipped two UI fixes.\n\nPR #27 is live on GitHub.\n\nTrigger ctrl+shift+t to see the results."
+"The agent shipped two UI fixes.\\n\\n---\\n\\nPR #27 is live on GitHub.\\n\\nTrigger ctrl+shift+t to see the results."
 </rule_7_length_and_beats>
 
 </tldr_rules>
@@ -396,7 +399,7 @@ Return only valid JSON with this exact shape:
 
 {
   "schema_version": 2,
-  "tldr": "Headline here.\n\nSupporting beat or Heads up here.",
+  "tldr": "Headline here.\\n\\n---\\n\\nSupporting beat or Heads up here.",
   "suggestions": [
     {"text": "Paste-ready text", "tags": ["Tag"]},
     {"text": "Paste-ready text", "tags": ["Tag"]},

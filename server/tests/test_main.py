@@ -1052,6 +1052,8 @@ class MainTests(unittest.TestCase):
             [{"text": gemini.reroll_content_text("make these more direct")}],
         )
         self.assertNotIn("stale prompt text", contents[-1].parts[0]["text"])
+        self.assertNotIn("Produce a fresh set of three suggestions", contents[-1].parts[0]["text"])
+        self.assertIn("Continue the same capture conversation", contents[-1].parts[0]["text"])
 
     def test_gemini_conversation_contents_multi_reroll_keeps_reroll_as_final_turn(self) -> None:
         class FakePart:

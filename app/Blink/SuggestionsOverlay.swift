@@ -336,8 +336,9 @@ private final class TLDRPagerView: NSView {
     var currentIndex: Int = 0 { didSet { needsDisplay = true } }
     var onDotTapped: ((Int) -> Void)?
 
-    private static let dotDiameter: CGFloat = 6
-    private static let dotSpacing: CGFloat = 10
+    private static let dotDiameter: CGFloat = 7
+    private static let dotSpacing: CGFloat = 18
+    private static let hitRadius: CGFloat = 14
 
     override func draw(_ dirtyRect: NSRect) {
         guard dotCount > 1 else { return }
@@ -366,16 +367,18 @@ private final class TLDRPagerView: NSView {
         let spacing = TLDRPagerView.dotSpacing
         let totalWidth = CGFloat(dotCount) * d + CGFloat(dotCount - 1) * (spacing - d)
         let startX = (bounds.width - totalWidth) / 2
-        // Slop = half the inter-dot spacing minus 1px so adjacent dots'
-        // hit regions never overlap. With spacing=10 this gives a 4px slop
-        // and a 2px dead zone centered on each midpoint.
-        let hitSlop: CGFloat = spacing / 2 - 1
+        let centerY = bounds.height / 2
+        var best: (index: Int, distance: CGFloat)?
         for i in 0..<dotCount {
             let centerX = startX + CGFloat(i) * spacing + d / 2
-            if abs(point.x - centerX) <= hitSlop {
-                onDotTapped?(i)
-                return
+            let distance = hypot(point.x - centerX, point.y - centerY)
+            guard distance <= TLDRPagerView.hitRadius else { continue }
+            if best == nil || distance < best!.distance {
+                best = (i, distance)
             }
+        }
+        if let best {
+            onDotTapped?(best.index)
         }
     }
 }
@@ -974,7 +977,7 @@ final class SuggestionsOverlay: NSObject {
 
     private func installTLDRPagerIfNeeded(in host: NSView) -> TLDRPagerView {
         if let existing = tldrPagerView { return existing }
-        let pager = TLDRPagerView(frame: NSRect(x: 0, y: 4, width: host.bounds.width, height: 10))
+        let pager = TLDRPagerView(frame: NSRect(x: 0, y: 0, width: host.bounds.width, height: 24))
         // Keep the pager spanning the host's width and pinned to the bottom
         // so layout changes (panel resize, host re-layout) don't strand it.
         pager.autoresizingMask = [.width, .maxYMargin]
@@ -1612,6 +1615,19 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func updateSummary(_ text: String) {
+        updateSummary(text, allowsShrink: false, commitsLayout: false)
+    }
+
+    func updateSummaryForFinalResult(_ text: String) {
+        updateSummary(text, allowsShrink: false, commitsLayout: true)
+    }
+
+    func updateSummaryFromHistory(_ text: String) {
+        collapseSuggestions()
+        updateSummary(text, allowsShrink: true, commitsLayout: true)
+    }
+
+    private func updateSummary(_ text: String, allowsShrink: Bool, commitsLayout: Bool) {
         guard let panel,
               let contentView,
               let summaryCard,
@@ -1652,23 +1668,31 @@ final class SuggestionsOverlay: NSObject {
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
         // multi-line content has the normal breathing room.
-        let floor = wasLoading ? Layout.summaryMinHeight : summaryBaseFrame.height
+        let currentSummaryHeight = summaryCard.frame.height > 0
+            ? summaryCard.frame.height
+            : summaryBaseFrame.height
+        let floor = (wasLoading || allowsShrink) ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
             floor,
             measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
                 + summaryTextY
                 + Layout.summaryTopInset
         )
-        let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
-        if summaryDelta > 0 {
+        let baselineSummaryHeight = (allowsShrink || commitsLayout)
+            ? currentSummaryHeight
+            : summaryBaseFrame.height
+        let summaryDelta = requiredSummaryHeight - baselineSummaryHeight
+        let shouldResizeSummary = summaryDelta > 0 || (allowsShrink && abs(summaryDelta) > 0.5)
+        if shouldResizeSummary {
             if let scroller = scrollContainer, let doc = scrollDocumentView {
-                // Scrolled mode: grow documentView and (where there's room
-                // in the budget) the scrollView + panel. Match the original
-                // delta-from-show-time semantics — keep summaryBaseFrame and
-                // documentViewBaseHeight anchored to the baseline. Include
-                // `currentHeightDelta` so a late updateSummary arriving while
-                // a card is expanded doesn't shrink the doc.
-                let newDocHeight = documentViewBaseHeight + summaryDelta + currentHeightDelta
+                // Scrolled mode: resize documentView and (where there's room
+                // in the budget) the scrollView + panel. The streaming path
+                // keeps the old delta-from-show-time semantics; pager/final
+                // paths use the currently rendered height so they can shrink.
+                let baseDocHeight = (allowsShrink || commitsLayout)
+                    ? doc.frame.height
+                    : documentViewBaseHeight + currentHeightDelta
+                let newDocHeight = max(requiredSummaryHeight, baseDocHeight + summaryDelta)
                 let screenFrame = resolvedScreenFrame(panel: panel)
                 let computedMax = computeMaxPanelHeight(for: screenFrame)
                 let (newScrollerHeight, newPanelHeight) = scrolledLayoutHeights(
@@ -1714,10 +1738,7 @@ final class SuggestionsOverlay: NSObject {
                     width: labelWidth,
                     height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
                 )
-                if wasLoading {
-                    summaryBaseFrame = summaryCard.frame
-                    documentViewBaseHeight = newDocHeight
-                }
+                pinButton?.frame = pinButtonFrame(summaryHeight: requiredSummaryHeight)
                 // Anchor the viewport to the top of the document so each
                 // streamed token stays visible (otherwise the doc grows above
                 // a fixed-origin clipView and the summary scrolls off the
@@ -1729,14 +1750,18 @@ final class SuggestionsOverlay: NSObject {
                 scroller.reflectScrolledClipView(scroller.contentView)
                 refreshScrollFadeMask()
             } else {
-                // Flat mode: existing behavior — panel grows. Apply y-clamp so
-                // the panel can't be positioned off-screen. Don't cap the
+                // Flat mode: resize around the summary while keeping the cards
+                // below anchored. Apply y-clamp so the panel can't be positioned
+                // off-screen. Don't cap the
                 // panel height itself — the final `updateSuggestionDetails`
                 // re-evaluates the layout and transitions to scrolled mode if
                 // the full content exceeds the budget. Capping mid-stream
                 // would clip the summary against cards below it.
                 let screenFrame = resolvedScreenFrame(panel: panel)
-                let newPanelHeight = basePanelHeight + summaryDelta
+                let panelBaseHeight = (allowsShrink || commitsLayout)
+                    ? panel.frame.height
+                    : basePanelHeight
+                let newPanelHeight = panelBaseHeight + summaryDelta
                 let preferredCenterY = screenFrame.midY - newPanelHeight / 2
                 let originY = clampedPanelY(
                     preferredCenterY: preferredCenterY,
@@ -1764,10 +1789,7 @@ final class SuggestionsOverlay: NSObject {
                     width: labelWidth,
                     height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
                 )
-                if wasLoading {
-                    summaryBaseFrame = summaryCard.frame
-                    basePanelHeight = newPanelHeight
-                }
+                pinButton?.frame = pinButtonFrame(summaryHeight: requiredSummaryHeight)
             }
         } else if wasLoading {
             // Even when the new text fits in summaryBaseFrame, the loading
@@ -1779,6 +1801,7 @@ final class SuggestionsOverlay: NSObject {
                 width: labelWidth,
                 height: summaryBaseFrame.height - summaryTextY - Layout.summaryTopInset
             )
+            pinButton?.frame = pinButtonFrame(summaryHeight: summaryBaseFrame.height)
         }
         setLabelText(
             summaryLabel,
@@ -1789,6 +1812,15 @@ final class SuggestionsOverlay: NSObject {
             singleLine: false,
             boldPrefix: bodyBoldPrefix
         )
+        if wasLoading || commitsLayout {
+            summaryBaseFrame = summaryCard.frame
+            basePanelHeight = panel.frame.height
+            basePanelTopY = panel.frame.maxY
+            if let scroller = scrollContainer, let doc = scrollDocumentView {
+                scrollerBaseHeight = scroller.frame.height
+                documentViewBaseHeight = doc.frame.height
+            }
+        }
     }
 
     func updateSuggestions(_ suggestions: [String]) {

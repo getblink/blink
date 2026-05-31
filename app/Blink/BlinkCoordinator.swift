@@ -1675,7 +1675,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onTLDRDotTapped = { [weak self] index in
                     guard let self, index >= 0, index < self.tldrHistory.count else { return }
                     self.currentTldrIndex = index
-                    self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                    self.overlay.updateSummaryFromHistory(self.tldrHistory[index].tldr)
                     self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
                 }
                 self.soundEffects.play(.resultReady)
@@ -1772,7 +1772,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         // scrolled-back view snaps to the latest entry.
         if !tldrHistory.isEmpty && currentTldrIndex != tldrHistory.count - 1 {
             currentTldrIndex = tldrHistory.count - 1
-            overlay.updateSummary(tldrHistory[currentTldrIndex].tldr)
+            overlay.updateSummaryFromHistory(tldrHistory[currentTldrIndex].tldr)
             overlay.setPager(count: tldrHistory.count, currentIndex: currentTldrIndex)
         }
         let priorSuggestions = currentSuggestionDetails.isEmpty
@@ -2043,10 +2043,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                     }
                     // Apply TL;DR at completion only (Option A — no streaming partials).
                     if self.overlay.isStreamingActive {
-                        if result.tldr != self.overlay.summaryFullText {
-                            self.overlay.updateSummary(result.tldr)
+                        if suggestionDetailsUnchanged {
+                            self.overlay.updateSummaryForFinalResult(result.tldr)
+                        } else {
+                            if result.tldr != self.overlay.summaryFullText {
+                                self.overlay.updateSummary(result.tldr)
+                            }
                         }
-                        if !suggestionDetailsUnchanged {
+                        if suggestionDetailsUnchanged {
+                            self.overlay.endSuggestionRefresh()
+                        } else {
                             self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
                         }
                     } else {
@@ -2059,7 +2065,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self.overlay.onTLDRDotTapped = { [weak self] index in
                         guard let self, index >= 0, index < self.tldrHistory.count else { return }
                         self.currentTldrIndex = index
-                        self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                        self.overlay.updateSummaryFromHistory(self.tldrHistory[index].tldr)
                         self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
                     }
                     self.soundEffects.play(.resultReady)

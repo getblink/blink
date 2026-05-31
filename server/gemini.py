@@ -29,6 +29,10 @@ REROLL_CONTENT_TEXT = (
     "verb shape, or wording with your previous response above. If two valid moves "
     "cover the same intent, pick the one you did not already offer. Keep the same JSON schema."
 )
+FOLLOW_UP_CONTENT_TEXT = (
+    "Continue the same capture conversation using the prior user/model turns above. "
+    "Apply the follow-up rules in the system instruction and keep the same JSON schema."
+)
 PREFERENCE_EXAMPLE_LIMIT = 3
 PREFERENCE_REJECTED_SUGGESTION_LIMIT = 3
 VOICE_SAMPLE_MAX_CHARS = 500
@@ -245,7 +249,7 @@ def reroll_content_text(follow_up_instruction: Any = None) -> str:
     if not instruction:
         return REROLL_CONTENT_TEXT
     return (
-        f"{REROLL_CONTENT_TEXT}\n\n"
+        f"{FOLLOW_UP_CONTENT_TEXT}\n\n"
         "User follow-up instruction:\n"
         f"{instruction}\n"
         "Apply this instruction while still using only visible evidence."
@@ -1292,6 +1296,8 @@ Use exactly this structure, in this order:
 
 <tldr>
 Headline here.
+
+---
 
 Supporting beat or Heads up here.
 </tldr>
