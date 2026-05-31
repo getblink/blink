@@ -27,6 +27,11 @@ enum WindowAXTreeCapture {
     static let defaultMaxNodes = 4000
     static let defaultMaxDepth = 60
     static let defaultMaxValueChars = 500
+    /// Keep a little headroom under the server's `AX_TREE_MAX_CHARS` backstop
+    /// so elision markers and future wrapper text do not accidentally push the
+    /// request into a naive server-side head clamp.
+    static let defaultTextBudgetChars = 38_000
+    static let defaultAfterAnchorRatio = 0.65
     /// Per-node value clamp used when a node's value SUBSUMES a pure-text
     /// subtree we collapse into it (see `walk`). More generous than the inline
     /// leaf clamp so a normal chat paragraph survives collapse intact; a
@@ -54,24 +59,27 @@ enum WindowAXTreeCapture {
     static func capture(
         maxNodes: Int = defaultMaxNodes,
         maxDepth: Int = defaultMaxDepth,
-        maxValueChars: Int = defaultMaxValueChars
+        maxValueChars: Int = defaultMaxValueChars,
+        textBudgetChars: Int = defaultTextBudgetChars
     ) -> Result? {
         guard AXIsProcessTrusted() else { return nil }
-        guard let root = focusedWindowElement() else { return nil }
+        let focused = focusedElement()
+        guard let root = focusedWindowElement(focused: focused) else { return nil }
         // Bound AX messaging: an unresponsive app must not stall the submit
         // path. The timeout set on the app/window root propagates to its
         // element tree. Mirrors FocusedContextCapture.textTargetDecision.
         AXUIElementSetMessagingTimeout(root, 0.2)
 
         var lines: [String] = []
+        var focusedLineIndex: Int?
         var nodeCount = 0
-        var truncated = false
+        var nodeTruncated = false
 
         // `attrs` is pre-fetched by the caller (the root fetches its own) so the
         // collapse decision and the recursive descent share one IPC per node.
         func walk(_ element: AXUIElement, _ attrs: [CFTypeRef?], depth: Int, indent: Int) {
             if nodeCount >= maxNodes {
-                truncated = true
+                nodeTruncated = true
                 return
             }
             nodeCount += 1
@@ -114,6 +122,11 @@ enum WindowAXTreeCapture {
             // children at the current indent.
             let childIndent: Int
             if let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: clampedValue, indent: indent) {
+                if focusedLineIndex == nil,
+                   let focused,
+                   CFEqual(element, focused) {
+                    focusedLineIndex = lines.count
+                }
                 lines.append(line)
                 childIndent = indent + 1
             } else {
@@ -123,7 +136,7 @@ enum WindowAXTreeCapture {
             guard descend else { return }
             for (child, childAttr) in zip(children, childAttrs) {
                 if nodeCount >= maxNodes {
-                    truncated = true
+                    nodeTruncated = true
                     break
                 }
                 walk(child, childAttr, depth: depth + 1, indent: childIndent)
@@ -133,10 +146,55 @@ enum WindowAXTreeCapture {
         walk(root, copyMultiple(root, nodeAttributes), depth: 0, indent: 0)
 
         guard !lines.isEmpty else { return nil }
-        if truncated {
+        if nodeTruncated {
             lines.append("[… tree truncated at \(maxNodes) nodes]")
         }
-        return Result(text: lines.joined(separator: "\n"), nodeCount: nodeCount, truncated: truncated)
+        let selected = anchoredWindowText(
+            for: lines,
+            anchorIndex: focusedLineIndex,
+            budget: textBudgetChars,
+            requiredIndexes: nodeTruncated ? [lines.count - 1] : []
+        )
+        return Result(text: selected.text, nodeCount: nodeCount, truncated: nodeTruncated)
+    }
+
+    /// Select a budgeted window from a flat, indented AX dump.
+    ///
+    /// When the tree fits, this returns it unchanged. When it does not fit, it
+    /// keeps the anchor line, its ancestors (for orientation), and then expands
+    /// around the anchor with a bias toward following lines. If no anchor is
+    /// available, it falls back to a tail window so long scroll surfaces preserve
+    /// recent/bottom content instead of the old DFS-top prefix.
+    static func anchoredWindowText(
+        for rawLines: [String],
+        anchorIndex: Int?,
+        budget: Int,
+        afterRatio: Double = defaultAfterAnchorRatio,
+        requiredIndexes: Set<Int> = []
+    ) -> (text: String, truncated: Bool) {
+        let lines = rawLines.enumerated().map { index, text in
+            TreeLine(index: index, text: text, depth: indentationDepth(text), chars: text.count + 1)
+        }
+        guard !lines.isEmpty else { return ("", false) }
+        let fullChars = lines.reduce(0) { $0 + $1.chars }
+        guard budget > 0, fullChars > budget else {
+            return (rawLines.joined(separator: "\n"), false)
+        }
+
+        let clampedRatio = min(max(afterRatio, 0), 1)
+        let kept: Set<Int>
+        if let anchorIndex, lines.indices.contains(anchorIndex) {
+            kept = anchoredIndexes(
+                lines: lines,
+                anchorIndex: anchorIndex,
+                budget: budget,
+                afterRatio: clampedRatio,
+                requiredIndexes: requiredIndexes
+            )
+        } else {
+            kept = tailIndexes(lines: lines, budget: budget, requiredIndexes: requiredIndexes)
+        }
+        return (assemble(lines: lines, kept: kept), true)
     }
 
     // MARK: - Formatting
@@ -170,7 +228,7 @@ enum WindowAXTreeCapture {
 
     /// Resolve the active window element. Prefers the focused element's window;
     /// falls back to the owning application's focused window.
-    private static func focusedWindowElement() -> AXUIElement? {
+    private static func focusedElement() -> AXUIElement? {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
@@ -180,8 +238,11 @@ enum WindowAXTreeCapture {
         ) == .success, let focusedRef else {
             return nil
         }
-        let focused = focusedRef as! AXUIElement
+        return (focusedRef as! AXUIElement)
+    }
 
+    private static func focusedWindowElement(focused: AXUIElement?) -> AXUIElement? {
+        guard let focused else { return nil }
         if let window = elementAttr(focused, kAXWindowAttribute as CFString) {
             return window
         }
@@ -257,6 +318,180 @@ enum WindowAXTreeCapture {
     static func shortenRole(_ role: String?) -> String? {
         guard let role else { return nil }
         return role.hasPrefix("AX") ? String(role.dropFirst(2)) : role
+    }
+
+    // MARK: - Budget selection
+
+    private struct TreeLine {
+        let index: Int
+        let text: String
+        let depth: Int
+        let chars: Int
+    }
+
+    private static func indentationDepth(_ line: String) -> Int {
+        let spaces = line.prefix { $0 == " " }.count
+        return spaces / 2
+    }
+
+    private static func anchoredIndexes(
+        lines: [TreeLine],
+        anchorIndex: Int,
+        budget: Int,
+        afterRatio: Double,
+        requiredIndexes: Set<Int>
+    ) -> Set<Int> {
+        var kept = requiredIndexes.filter { lines.indices.contains($0) }
+        kept.formUnion(ancestorIndexes(lines: lines, anchorIndex: anchorIndex))
+        kept.insert(anchorIndex)
+
+        var used = kept.reduce(0) { $0 + lines[$1].chars }
+        guard used < budget else { return kept }
+
+        let remaining = budget - used
+        var afterBudget = Int(Double(remaining) * afterRatio)
+        var beforeBudget = remaining - afterBudget
+        var before = anchorIndex - 1
+        var after = anchorIndex + 1
+
+        while before >= 0 || after < lines.count {
+            var progressed = false
+            if after < lines.count, afterBudget > 0 {
+                progressed = tryAdd(
+                    index: after,
+                    lines: lines,
+                    kept: &kept,
+                    sideBudget: &afterBudget,
+                    used: &used,
+                    totalBudget: budget
+                ) || progressed
+                if progressed || kept.contains(after) { after += 1 }
+            }
+            if before >= 0, beforeBudget > 0 {
+                let added = tryAdd(
+                    index: before,
+                    lines: lines,
+                    kept: &kept,
+                    sideBudget: &beforeBudget,
+                    used: &used,
+                    totalBudget: budget
+                )
+                progressed = added || progressed
+                if added || kept.contains(before) { before -= 1 }
+            }
+            if !progressed {
+                break
+            }
+        }
+
+        // Spend any leftover budget on either side, preserving the after-first
+        // bias but avoiding stranded budget when one side is already exhausted.
+        while used < budget, before >= 0 || after < lines.count {
+            var progressed = false
+            if after < lines.count {
+                var sideBudget = budget - used
+                let added = tryAdd(
+                    index: after,
+                    lines: lines,
+                    kept: &kept,
+                    sideBudget: &sideBudget,
+                    used: &used,
+                    totalBudget: budget
+                )
+                progressed = added || progressed
+                if added || kept.contains(after) { after += 1 }
+            }
+            if used < budget, before >= 0 {
+                var sideBudget = budget - used
+                let added = tryAdd(
+                    index: before,
+                    lines: lines,
+                    kept: &kept,
+                    sideBudget: &sideBudget,
+                    used: &used,
+                    totalBudget: budget
+                )
+                progressed = added || progressed
+                if added || kept.contains(before) { before -= 1 }
+            }
+            if !progressed {
+                break
+            }
+        }
+
+        return kept
+    }
+
+    private static func tailIndexes(
+        lines: [TreeLine],
+        budget: Int,
+        requiredIndexes: Set<Int>
+    ) -> Set<Int> {
+        var kept = requiredIndexes.filter { lines.indices.contains($0) }
+        var used = kept.reduce(0) { $0 + lines[$1].chars }
+        for line in lines.reversed() {
+            if kept.contains(line.index) { continue }
+            guard used + line.chars <= budget else { break }
+            kept.insert(line.index)
+            used += line.chars
+        }
+        return kept
+    }
+
+    private static func tryAdd(
+        index: Int,
+        lines: [TreeLine],
+        kept: inout Set<Int>,
+        sideBudget: inout Int,
+        used: inout Int,
+        totalBudget: Int
+    ) -> Bool {
+        guard lines.indices.contains(index), !kept.contains(index) else { return false }
+        let cost = lines[index].chars
+        guard cost <= sideBudget, used + cost <= totalBudget else { return false }
+        kept.insert(index)
+        used += cost
+        sideBudget -= cost
+        return true
+    }
+
+    private static func ancestorIndexes(lines: [TreeLine], anchorIndex: Int) -> Set<Int> {
+        var ancestors: Set<Int> = []
+        var minDepth = lines[anchorIndex].depth
+        guard anchorIndex > 0 else { return ancestors }
+        for index in stride(from: anchorIndex - 1, through: 0, by: -1) {
+            if lines[index].depth < minDepth {
+                ancestors.insert(index)
+                minDepth = lines[index].depth
+                if minDepth == 0 { break }
+            }
+        }
+        return ancestors
+    }
+
+    private static func assemble(lines: [TreeLine], kept: Set<Int>) -> String {
+        let indexes = kept.sorted()
+        guard !indexes.isEmpty else { return "" }
+        var output: [String] = []
+        var previous: Int?
+        for index in indexes {
+            if let previous, index != previous + 1 {
+                output.append(elisionLine(lines[(previous + 1)..<index]))
+            } else if previous == nil, index > 0 {
+                output.append(elisionLine(lines[0..<index]))
+            }
+            output.append(lines[index].text)
+            previous = index
+        }
+        if let last = indexes.last, last < lines.count - 1 {
+            output.append(elisionLine(lines[(last + 1)..<lines.count]))
+        }
+        return output.joined(separator: "\n")
+    }
+
+    private static func elisionLine(_ omitted: ArraySlice<TreeLine>) -> String {
+        let chars = omitted.reduce(0) { $0 + $1.chars }
+        return "[... \(omitted.count) lines / \(chars) chars omitted ...]"
     }
 }
 
