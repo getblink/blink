@@ -407,7 +407,7 @@ final class SuggestionsOverlay: NSObject {
     private enum Layout {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
-        static let pinButtonSize: CGFloat = 16
+        static let pinButtonSize: CGFloat = 24
         static let pinButtonRightInset: CGFloat = 14
         static let pinButtonTopInset: CGFloat = 12
         static let summaryMinHeight: CGFloat = 144
@@ -3041,6 +3041,7 @@ final class SuggestionsOverlay: NSObject {
         pin.bezelStyle = .regularSquare
         pin.imagePosition = .imageOnly
         pin.imageScaling = .scaleProportionallyDown
+        pin.alignment = .center
         pin.target = self
         pin.action = #selector(pinButtonClicked(_:))
         pin.toolTip = "Pin (\u{2318}P)"
@@ -3061,7 +3062,8 @@ final class SuggestionsOverlay: NSObject {
 
     private func applyPinButtonAppearance(_ button: NSButton, pinned: Bool) {
         let name = pinned ? "pin.fill" : "pin"
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: pinned ? "Unpin" : "Pin")
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: pinned ? "Unpin" : "Pin")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: pinned ? .semibold : .regular))
         if let image {
             image.isTemplate = true
             button.image = image
