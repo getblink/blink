@@ -1005,14 +1005,24 @@ final class SuggestionsOverlay: NSObject {
         return pager
     }
 
-    private func installSummaryClickHandler(on label: NSTextField, isExpandable: Bool) {
-        for recognizer in label.gestureRecognizers where recognizer is NSClickGestureRecognizer {
-            label.removeGestureRecognizer(recognizer)
-        }
+    private func installSummaryClickHandler(on label: NSTextField, in host: NSView? = nil, isExpandable: Bool) {
+        removeSummaryClickHandlers(from: label)
         let click = NSClickGestureRecognizer(target: self, action: #selector(summaryLabelClicked(_:)))
         click.numberOfClicksRequired = 1
         label.addGestureRecognizer(click)
         updateSummaryTooltip(on: label, isExpandable: isExpandable)
+        guard let host else { return }
+        removeSummaryClickHandlers(from: host)
+        let cardClick = NSClickGestureRecognizer(target: self, action: #selector(summaryLabelClicked(_:)))
+        cardClick.numberOfClicksRequired = 1
+        host.addGestureRecognizer(cardClick)
+        host.toolTip = label.toolTip
+    }
+
+    private func removeSummaryClickHandlers(from view: NSView) {
+        for recognizer in view.gestureRecognizers where recognizer is NSClickGestureRecognizer {
+            view.removeGestureRecognizer(recognizer)
+        }
     }
 
     private func updateSummaryTooltip(on label: NSTextField, isExpandable: Bool) {
@@ -1381,7 +1391,11 @@ final class SuggestionsOverlay: NSObject {
                 boldPrefix: bodyBoldPrefix,
                 maximumNumberOfLines: summaryRenderPlan.maximumNumberOfLines
             )
-            installSummaryClickHandler(on: summaryLabel, isExpandable: summaryRenderPlan.isExpandable)
+            installSummaryClickHandler(
+                on: summaryLabel,
+                in: summary.content,
+                isExpandable: summaryRenderPlan.isExpandable
+            )
         }
         summary.content.addSubview(summaryLabel)
         cardHost.addSubview(summary.outer)
@@ -1738,7 +1752,11 @@ final class SuggestionsOverlay: NSObject {
             )
         }
         summaryIsExpandable = renderPlan.isExpandable
-        installSummaryClickHandler(on: summaryLabel, isExpandable: renderPlan.isExpandable)
+        installSummaryClickHandler(
+            on: summaryLabel,
+            in: summaryContent,
+            isExpandable: renderPlan.isExpandable
+        )
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
         // multi-line content has the normal breathing room.
@@ -4162,7 +4180,7 @@ final class SuggestionsOverlay: NSObject {
         label.textColor = color
         let isLineLimited = maximumNumberOfLines > 0
         label.maximumNumberOfLines = singleLine ? 1 : maximumNumberOfLines
-        label.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
+        label.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         label.usesSingleLineMode = singleLine
         if let cell = label.cell as? NSTextFieldCell {
             cell.truncatesLastVisibleLine = singleLine || isLineLimited
@@ -4185,7 +4203,7 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
+        paragraph.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         paragraph.lineSpacing = lineSpacing
         label.attributedStringValue = NSAttributedString(
             string: text,
@@ -4250,7 +4268,6 @@ final class SuggestionsOverlay: NSObject {
         maximumNumberOfLines: Int = 0
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let isLineLimited = maximumNumberOfLines > 0
         if let boldPrefix {
             let headerFont = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
             let headerPara = NSMutableParagraphStyle()
@@ -4267,7 +4284,7 @@ final class SuggestionsOverlay: NSObject {
             ))
         }
         let bodyPara = NSMutableParagraphStyle()
-        bodyPara.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
+        bodyPara.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         bodyPara.lineSpacing = lineSpacing
         result.append(NSAttributedString(
             string: text,
