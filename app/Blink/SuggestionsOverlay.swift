@@ -429,6 +429,7 @@ final class SuggestionsOverlay: NSObject {
         static let thumbStripGap: CGFloat = 6
         static let summaryLineSpacing: CGFloat = 7
         static let summaryHeaderBottomGap: CGFloat = 4
+        static let summaryCollapsedBodyLineLimit = 3
         static let bottomHintHeight: CGFloat = 18
         static let bottomHintTopGap: CGFloat = 14
         static let cardPaddingX: CGFloat = 24
@@ -525,6 +526,18 @@ final class SuggestionsOverlay: NSObject {
         let attachmentChips: NSStackView?
     }
 
+    private struct SummaryRenderPlan {
+        let displayText: String
+        let visibleTextHeight: CGFloat
+        let fullTextHeight: CGFloat
+        let isExpandable: Bool
+        let maximumNumberOfLines: Int
+
+        var expansionDelta: CGFloat {
+            max(0, fullTextHeight - visibleTextHeight)
+        }
+    }
+
     private var panel: SuggestionsPanel?
     /// Screen the next panel should be centered on. Set by the coordinator
     /// from the latest `ScreenCapture.Capture.windowFramePoints` so the
@@ -598,6 +611,8 @@ final class SuggestionsOverlay: NSObject {
     private var currentHeightDelta: CGFloat = 0
     private var customInputHeightDelta: CGFloat = 0
     private(set) var summaryFullText: String = ""
+    private var summaryIsExpanded = false
+    private var summaryIsExpandable = false
     private(set) var previousFrontmost: NSRunningApplication?
     private var hasPlayedSuggestionArrival = false
     private var isDismissing = false
@@ -990,6 +1005,31 @@ final class SuggestionsOverlay: NSObject {
         return pager
     }
 
+    private func installSummaryClickHandler(on label: NSTextField, isExpandable: Bool) {
+        for recognizer in label.gestureRecognizers where recognizer is NSClickGestureRecognizer {
+            label.removeGestureRecognizer(recognizer)
+        }
+        let click = NSClickGestureRecognizer(target: self, action: #selector(summaryLabelClicked(_:)))
+        click.numberOfClicksRequired = 1
+        label.addGestureRecognizer(click)
+        updateSummaryTooltip(on: label, isExpandable: isExpandable)
+    }
+
+    private func updateSummaryTooltip(on label: NSTextField, isExpandable: Bool) {
+        guard isExpandable else {
+            label.toolTip = nil
+            return
+        }
+        label.toolTip = summaryIsExpanded ? "Click to collapse TL;DR" : "Click to expand TL;DR"
+    }
+
+    @objc private func summaryLabelClicked(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended, summaryIsExpandable, !isLoadingState else { return }
+        collapseSuggestions()
+        summaryIsExpanded.toggle()
+        updateSummary(summaryFullText, allowsShrink: true, commitsLayout: true, preservesExpansion: true)
+    }
+
     func showLoading(tldr: String) {
         show(
             tldr: tldr,
@@ -1044,26 +1084,27 @@ final class SuggestionsOverlay: NSObject {
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let contentWidth = Layout.panelWidth
         let summaryLabelWidth = contentWidth - 48
-        let summaryDisplayText = TLDROverlayText.displayText(for: tldr)
         let hintBlockHeight = hintText == nil ? 0 : Layout.summaryHintHeight + Layout.summaryHintGap
         let thumbBlockHeight = thumbnails.isEmpty ? 0 : Layout.thumbStripHeight + Layout.summaryHintGap
         let summaryTextY = Layout.summaryBottomInset + hintBlockHeight + thumbBlockHeight
         let useHeader = showsTldrHeader && !isLoading
         let bodyBoldPrefix = useHeader ? "tl;dr" : nil
-        // The tldr renders into a single label that grows the panel to
-        // fit. We deliberately don't switch to a collapsible scrollview
-        // for long tldrs: that branch diverged visually from the
-        // in-place `updateSummary` path (which has no such concept), so
-        // the same content rendered differently on streaming-finalize
-        // (no toggle) vs resume (with toggle).
-        let fullSummaryTextHeight: CGFloat = isLoading
-            ? 0
-            : measureHeight(
-                summaryDisplayText,
+        // The model returns one plain TL;DR string. The overlay decides
+        // whether that string needs a collapsed line cap and click-to-expand.
+        let summaryRenderPlan = isLoading
+            ? SummaryRenderPlan(
+                displayText: tldr,
+                visibleTextHeight: 0,
+                fullTextHeight: 0,
+                isExpandable: false,
+                maximumNumberOfLines: 0
+            )
+            : makeSummaryRenderPlan(
+                text: tldr,
                 width: summaryLabelWidth,
                 font: summaryFont,
-                lineSpacing: Layout.summaryLineSpacing,
-                boldPrefix: bodyBoldPrefix
+                boldPrefix: bodyBoldPrefix,
+                expanded: false
             )
         let summaryHeight: CGFloat
         if isLoading {
@@ -1071,7 +1112,7 @@ final class SuggestionsOverlay: NSObject {
         } else {
             summaryHeight = max(
                 Layout.summaryMinHeight,
-                fullSummaryTextHeight + summaryTextY + Layout.summaryTopInset
+                summaryRenderPlan.visibleTextHeight + summaryTextY + Layout.summaryTopInset
             )
         }
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
@@ -1107,9 +1148,10 @@ final class SuggestionsOverlay: NSObject {
         // `expandSuggestion` doesn't have to transition flat→scrolled mid-flight.
         let scrollerContentHeight = summaryHeight
             + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
-        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+        let suggestionMaxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
             expandedHeights[$0] - collapsedHeights[$0]
         }.max() ?? 0
+        let maxExpandDelta = max(suggestionMaxExpandDelta, summaryRenderPlan.expansionDelta)
         let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
 
         let targetScreen = preferredScreen ?? NSScreen.main
@@ -1332,12 +1374,14 @@ final class SuggestionsOverlay: NSObject {
                     width: contentWidth - 48,
                     height: summaryHeight - summaryTextY - Layout.summaryTopInset
                 ),
-                text: summaryDisplayText,
+                text: summaryRenderPlan.displayText,
                 font: summaryFont,
                 color: .labelColor,
                 lineSpacing: Layout.summaryLineSpacing,
-                boldPrefix: bodyBoldPrefix
+                boldPrefix: bodyBoldPrefix,
+                maximumNumberOfLines: summaryRenderPlan.maximumNumberOfLines
             )
+            installSummaryClickHandler(on: summaryLabel, isExpandable: summaryRenderPlan.isExpandable)
         }
         summary.content.addSubview(summaryLabel)
         cardHost.addSubview(summary.outer)
@@ -1499,6 +1543,8 @@ final class SuggestionsOverlay: NSObject {
         self.currentHeightDelta = 0
         self.customInputHeightDelta = 0
         self.expandedSuggestionIndex = nil
+        self.summaryIsExpanded = false
+        self.summaryIsExpandable = summaryRenderPlan.isExpandable
         self.hasPlayedSuggestionArrival = false
         self.isLoadingState = isLoading
         self.summaryFullText = tldr
@@ -1616,19 +1662,24 @@ final class SuggestionsOverlay: NSObject {
     }
 
     func updateSummary(_ text: String) {
-        updateSummary(text, allowsShrink: false, commitsLayout: false)
+        updateSummary(text, allowsShrink: false, commitsLayout: false, preservesExpansion: false)
     }
 
     func updateSummaryForFinalResult(_ text: String) {
-        updateSummary(text, allowsShrink: false, commitsLayout: true)
+        updateSummary(text, allowsShrink: false, commitsLayout: true, preservesExpansion: false)
     }
 
     func updateSummaryFromHistory(_ text: String) {
         collapseSuggestions()
-        updateSummary(text, allowsShrink: true, commitsLayout: true)
+        updateSummary(text, allowsShrink: true, commitsLayout: true, preservesExpansion: false)
     }
 
-    private func updateSummary(_ text: String, allowsShrink: Bool, commitsLayout: Bool) {
+    private func updateSummary(
+        _ text: String,
+        allowsShrink: Bool,
+        commitsLayout: Bool,
+        preservesExpansion: Bool
+    ) {
         guard let panel,
               let contentView,
               let summaryCard,
@@ -1642,6 +1693,9 @@ final class SuggestionsOverlay: NSObject {
         // snapshot, so a stale value here meant the resumed panel showed
         // "Reading the screen…" instead of the real tldr.
         summaryFullText = text
+        if !preservesExpansion {
+            summaryIsExpanded = false
+        }
         let wasLoading = isLoadingState
         if wasLoading {
             tearDownLoadingState()
@@ -1666,7 +1720,25 @@ final class SuggestionsOverlay: NSObject {
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let labelWidth = Layout.panelWidth - 48
-        let displayText = TLDROverlayText.displayText(for: text)
+        var renderPlan = makeSummaryRenderPlan(
+            text: text,
+            width: labelWidth,
+            font: font,
+            boldPrefix: bodyBoldPrefix,
+            expanded: summaryIsExpanded
+        )
+        if !renderPlan.isExpandable {
+            summaryIsExpanded = false
+            renderPlan = makeSummaryRenderPlan(
+                text: text,
+                width: labelWidth,
+                font: font,
+                boldPrefix: bodyBoldPrefix,
+                expanded: false
+            )
+        }
+        summaryIsExpandable = renderPlan.isExpandable
+        installSummaryClickHandler(on: summaryLabel, isExpandable: renderPlan.isExpandable)
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
         // multi-line content has the normal breathing room.
@@ -1676,7 +1748,7 @@ final class SuggestionsOverlay: NSObject {
         let floor = (wasLoading || allowsShrink) ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
             floor,
-            measureHeight(displayText, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
+            renderPlan.visibleTextHeight
                 + summaryTextY
                 + Layout.summaryTopInset
         )
@@ -1807,12 +1879,13 @@ final class SuggestionsOverlay: NSObject {
         }
         setLabelText(
             summaryLabel,
-            text: displayText,
+            text: renderPlan.displayText,
             font: font,
             color: .labelColor,
             lineSpacing: Layout.summaryLineSpacing,
             singleLine: false,
-            boldPrefix: bodyBoldPrefix
+            boldPrefix: bodyBoldPrefix,
+            maximumNumberOfLines: renderPlan.maximumNumberOfLines
         )
         if wasLoading || commitsLayout {
             summaryBaseFrame = summaryCard.frame
@@ -1859,10 +1932,13 @@ final class SuggestionsOverlay: NSObject {
         expandedSuggestionIndex = nil
 
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let bottomHintText: String? = nil
         let contentWidth = Layout.panelWidth
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let summaryLabelWidth = contentWidth - 48
+        let summaryBodyBoldPrefix = showsTldrHeader ? "tl;dr" : nil
         let collapsedHeights = visibleSuggestions.map {
             collapsedHeight(for: $0, width: suggestionLabelWidth, font: suggestionFont)
         }
@@ -1886,9 +1962,17 @@ final class SuggestionsOverlay: NSObject {
         let contentHeight = summaryHeight + Layout.sectionGap + stackHeight + bottomHintBlockHeight
         let scrollerContentHeight = summaryHeight
             + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
-        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+        let suggestionMaxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
             expandedHeights[$0] - collapsedHeights[$0]
         }.max() ?? 0
+        let summaryRenderPlan = makeSummaryRenderPlan(
+            text: summaryFullText,
+            width: summaryLabelWidth,
+            font: summaryFont,
+            boldPrefix: summaryBodyBoldPrefix,
+            expanded: false
+        )
+        let maxExpandDelta = max(suggestionMaxExpandDelta, summaryRenderPlan.expansionDelta)
         let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
 
         let screenFrame = resolvedScreenFrame(panel: panel)
@@ -2641,6 +2725,8 @@ final class SuggestionsOverlay: NSObject {
         summaryContent = nil
         summaryLabel = nil
         summaryFullText = ""
+        summaryIsExpanded = false
+        summaryIsExpandable = false
         refreshStatusPill = nil
         refreshStatusLabel = nil
         summaryTextY = 0
@@ -3983,6 +4069,56 @@ final class SuggestionsOverlay: NSObject {
         setCustomInputMode(customInputMode == .followUp ? .write : .followUp, focusField: false)
     }
 
+    private func makeSummaryRenderPlan(
+        text: String,
+        width: CGFloat,
+        font: NSFont,
+        boldPrefix: String?,
+        expanded: Bool
+    ) -> SummaryRenderPlan {
+        let displayText = TLDROverlayText.displayText(for: text)
+        let fullHeight = measureHeight(
+            displayText,
+            width: width,
+            font: font,
+            lineSpacing: Layout.summaryLineSpacing,
+            boldPrefix: boldPrefix
+        )
+        let collapsedHeight = collapsedSummaryTextHeight(
+            font: font,
+            lineSpacing: Layout.summaryLineSpacing,
+            boldPrefix: boldPrefix
+        )
+        let isExpandable = fullHeight > collapsedHeight + 1
+        let maximumNumberOfLines = isExpandable && !expanded
+            ? Layout.summaryCollapsedBodyLineLimit + (boldPrefix == nil ? 0 : 1)
+            : 0
+        return SummaryRenderPlan(
+            displayText: displayText,
+            visibleTextHeight: isExpandable && !expanded ? collapsedHeight : fullHeight,
+            fullTextHeight: fullHeight,
+            isExpandable: isExpandable,
+            maximumNumberOfLines: maximumNumberOfLines
+        )
+    }
+
+    private func collapsedSummaryTextHeight(
+        font: NSFont,
+        lineSpacing: CGFloat,
+        boldPrefix: String?
+    ) -> CGFloat {
+        let bodyLineHeight = ceil(font.ascender - font.descender + font.leading)
+        let bodyLineCount = Layout.summaryCollapsedBodyLineLimit
+        let bodyHeight = CGFloat(bodyLineCount) * bodyLineHeight
+            + CGFloat(max(0, bodyLineCount - 1)) * lineSpacing
+        guard boldPrefix != nil else {
+            return ceil(bodyHeight)
+        }
+        let headerFont = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
+        let headerLineHeight = ceil(headerFont.ascender - headerFont.descender + headerFont.leading)
+        return ceil(headerLineHeight + Layout.summaryHeaderBottomGap + bodyHeight)
+    }
+
     private func label(
         frame: NSRect,
         text: String,
@@ -3990,7 +4126,8 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat = 0,
         singleLine: Bool = false,
-        boldPrefix: String? = nil
+        boldPrefix: String? = nil,
+        maximumNumberOfLines: Int = 0
     ) -> NSTextField {
         let label = NSTextField(labelWithString: "")
         label.frame = frame
@@ -4005,7 +4142,8 @@ final class SuggestionsOverlay: NSObject {
             color: color,
             lineSpacing: lineSpacing,
             singleLine: singleLine,
-            boldPrefix: boldPrefix
+            boldPrefix: boldPrefix,
+            maximumNumberOfLines: maximumNumberOfLines
         )
         return label
     }
@@ -4017,12 +4155,19 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat,
         singleLine: Bool,
-        boldPrefix: String? = nil
+        boldPrefix: String? = nil,
+        maximumNumberOfLines: Int = 0
     ) {
         label.font = font
         label.textColor = color
-        label.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        let isLineLimited = maximumNumberOfLines > 0
+        label.maximumNumberOfLines = singleLine ? 1 : maximumNumberOfLines
+        label.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
         label.usesSingleLineMode = singleLine
+        if let cell = label.cell as? NSTextFieldCell {
+            cell.truncatesLastVisibleLine = singleLine || isLineLimited
+            cell.wraps = !singleLine
+        }
         if boldPrefix != nil {
             label.attributedStringValue = makeBodyAttributedString(
                 text: text,
@@ -4030,7 +4175,8 @@ final class SuggestionsOverlay: NSObject {
                 color: color,
                 lineSpacing: lineSpacing,
                 singleLine: singleLine,
-                boldPrefix: boldPrefix
+                boldPrefix: boldPrefix,
+                maximumNumberOfLines: maximumNumberOfLines
             )
             return
         }
@@ -4039,7 +4185,7 @@ final class SuggestionsOverlay: NSObject {
             return
         }
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        paragraph.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
         paragraph.lineSpacing = lineSpacing
         label.attributedStringValue = NSAttributedString(
             string: text,
@@ -4066,7 +4212,8 @@ final class SuggestionsOverlay: NSObject {
                 color: .labelColor,
                 lineSpacing: lineSpacing,
                 singleLine: false,
-                boldPrefix: boldPrefix
+                boldPrefix: boldPrefix,
+                maximumNumberOfLines: 0
             )
         } else {
             let paragraph = NSMutableParagraphStyle()
@@ -4099,9 +4246,11 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat,
         singleLine: Bool,
-        boldPrefix: String?
+        boldPrefix: String?,
+        maximumNumberOfLines: Int = 0
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
+        let isLineLimited = maximumNumberOfLines > 0
         if let boldPrefix {
             let headerFont = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
             let headerPara = NSMutableParagraphStyle()
@@ -4118,7 +4267,7 @@ final class SuggestionsOverlay: NSObject {
             ))
         }
         let bodyPara = NSMutableParagraphStyle()
-        bodyPara.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
+        bodyPara.lineBreakMode = (singleLine || isLineLimited) ? .byTruncatingTail : .byWordWrapping
         bodyPara.lineSpacing = lineSpacing
         result.append(NSAttributedString(
             string: text,

@@ -1297,8 +1297,6 @@ Use exactly this structure, in this order:
 <tldr>
 Headline here.
 
----
-
 Supporting beat or Heads up here.
 </tldr>
 <suggestion tags="Reply">

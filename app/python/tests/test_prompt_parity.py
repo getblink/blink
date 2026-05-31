@@ -35,12 +35,13 @@ class PromptParityTests(unittest.TestCase):
             (REPO_ROOT / "app" / "Resources" / "prompt.txt").read_bytes(),
         )
 
-    def test_prompts_document_expandable_tldr_separator(self) -> None:
+    def test_prompts_document_plain_tldr_without_model_separator(self) -> None:
         prompt_text = (REPO_ROOT / "server" / "prompt.txt").read_text(encoding="utf-8")
-        self.assertIn(r"\n\n---\n\n", prompt_text)
-        self.assertIn(r"\n\n---\n\n", blink_once.DEFAULT_PROMPT)
-        self.assertIn("more than one paragraph or more than one beat", prompt_text)
-        self.assertIn("more than one paragraph or more than one beat", blink_once.DEFAULT_PROMPT)
+        old_separator = r"\n\n" + "-" * 3 + r"\n\n"
+        self.assertNotIn(old_separator, prompt_text)
+        self.assertNotIn(old_separator, blink_once.DEFAULT_PROMPT)
+        self.assertIn("The app handles collapsed/expanded display", prompt_text)
+        self.assertIn("The app handles collapsed/expanded display", blink_once.DEFAULT_PROMPT)
         self.assertIn("Latest state wins", prompt_text)
         self.assertIn("Latest state wins", blink_once.DEFAULT_PROMPT)
 

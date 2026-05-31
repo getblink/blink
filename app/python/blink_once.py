@@ -105,10 +105,8 @@ SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4
-# Multi-beat TL;DRs separate beats with literal \n\n and can run 2–3 beats
-# × ~200 chars each, so the per-turn TL;DR bound for follow-up history is
-# generous compared to PREFERENCE_TEXT_MAX_CHARS (360), which is tuned for
-# short cross-capture takeaways.
+# TL;DRs can be longer than a single compact headline because the overlay owns
+# collapsed/expanded rendering. Keep enough history to preserve full context.
 FOLLOW_UP_HISTORY_TLDR_MAX_CHARS = 1024
 FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS = 500
 # Two windows, scope-aware. A follow-up given on the same post stays valid
@@ -318,11 +316,10 @@ Length scales with signal density, not capture density.
 - Add supporting beats only when multiple distinct load-bearing items pass the novelty filter.
 - Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence. That is correct.
 - 3 sentences or fewer per paragraph. No bullets, no numbered lists.
-- For expandable TL;DRs, put the collapsed headline first, then exactly one Markdown horizontal-rule separator before any expanded detail: `\\n\\n---\\n\\n`.
-- Text before the separator must stand alone as the collapsed TL;DR. Text after it is optional expanded detail. Do not include the separator unless the expanded detail adds distinct signal.
-- If the TL;DR has more than one paragraph or more than one beat, it MUST contain exactly one `\\n\\n---\\n\\n` separator after the first paragraph.
+- Return normal prose only. Do not add Markdown folds, horizontal rules, bullets, or UI separators. The app handles collapsed/expanded display.
+- If multiple beats pass the novelty filter, separate them with a blank line, written as literal `\\n\\n` inside the JSON string.
 
-A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. In expanded detail, separate beats with a blank line, written as literal `\\n\\n` inside the JSON string. Start a new beat when the next sentence:
+A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Start a new beat when the next sentence:
 - introduces an ask, question, or request,
 - starts with "Heads up,",
 - describes an action or next step for the user,
@@ -332,7 +329,7 @@ Bad (jammed):
 "The agent shipped two UI fixes. PR #27 is live on GitHub. Trigger ctrl+shift+t to see the results."
 
 Good (separated):
-"The agent shipped two UI fixes.\\n\\n---\\n\\nPR #27 is live on GitHub.\\n\\nTrigger ctrl+shift+t to see the results."
+"The agent shipped two UI fixes.\\n\\nPR #27 is live on GitHub.\\n\\nTrigger ctrl+shift+t to see the results."
 </rule_7_length_and_beats>
 
 </tldr_rules>
@@ -389,7 +386,7 @@ Protagonist surface: the user watched an agent finish work in real time. The rec
   "schema_version": 2,
   "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.",
   "suggestions": [
-    {"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]},
+    {"text": "open the local Blink overlay on a dense Slack thread and check that long TL;DR text expands when clicked", "tags": ["Next step"]},
     {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]},
     {"text": "kick off a sweep on the dogfood fixture set and report any captures where the TL;DR came back as a bare status", "tags": ["Next step"]}
   ]
@@ -401,7 +398,7 @@ Return only valid JSON with this exact shape:
 
 {
   "schema_version": 2,
-  "tldr": "Headline here.\\n\\n---\\n\\nSupporting beat or Heads up here.",
+  "tldr": "Headline here.\\n\\nSupporting beat or Heads up here.",
   "suggestions": [
     {"text": "Paste-ready text", "tags": ["Tag"]},
     {"text": "Paste-ready text", "tags": ["Tag"]},
