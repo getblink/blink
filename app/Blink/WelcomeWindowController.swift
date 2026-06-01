@@ -1,20 +1,38 @@
 import AppKit
 import SwiftUI
 
-/// First-run welcome slideshow window. Hosts `WelcomePreview` — the animated
-/// 4-slide intro (cursor → hotkey → overlay → pick) — centered on screen, and
-/// reports completion so the app can advance to the permissions wizard.
+/// First-run welcome window. Hosts `WelcomePreview` — the "Welcome to Blink"
+/// landing, the animated 4-slide tour, and the live in-window permissions step
+/// — centered on screen as one continuous, single-window experience.
 ///
-/// Completion and an early manual close both funnel through the window's
-/// `windowWillClose`, so there's a single, idempotent hand-off path: the user
-/// is never stranded on this screen, and `onComplete` fires exactly once.
+/// The window stays open across landing → tour → permissions; it closes and
+/// hands off to the demo card (`onComplete`) only after permissions are granted
+/// and the hotkey listener starts. An early manual close just tears down — the
+/// onboarded marker isn't written, so the next launch re-runs onboarding.
 @MainActor
 final class WelcomeWindowController: NSObject, NSWindowDelegate {
+    private let eventClient: BlinkEventClient?
+    private let allowLogging: () -> Bool
+    private let clientMetadata: () -> [String: Any]
+    private let attemptHotkeyStart: () -> Bool
+    /// Fired exactly once, only on a successful grant + hotkey start.
     private let onComplete: () -> Void
+
     private var window: NSWindow?
+    private var model: PermissionsModel?
     private var didComplete = false
 
-    init(onComplete: @escaping () -> Void) {
+    init(
+        eventClient: BlinkEventClient?,
+        allowLogging: @escaping () -> Bool,
+        clientMetadata: @escaping () -> [String: Any],
+        attemptHotkeyStart: @escaping () -> Bool,
+        onComplete: @escaping () -> Void
+    ) {
+        self.eventClient = eventClient
+        self.allowLogging = allowLogging
+        self.clientMetadata = clientMetadata
+        self.attemptHotkeyStart = attemptHotkeyStart
         self.onComplete = onComplete
         super.init()
     }
@@ -26,9 +44,16 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        // Finishing the last slide just closes the window; the close handler
-        // below is the one place that advances onboarding.
-        let root = WelcomePreview(onComplete: { [weak self] in self?.window?.close() })
+        let model = PermissionsModel(
+            eventClient: eventClient,
+            allowLogging: allowLogging,
+            clientMetadata: clientMetadata,
+            attemptHotkeyStart: attemptHotkeyStart,
+            onComplete: { [weak self] in self?.completeAndClose() }
+        )
+        self.model = model
+
+        let root = WelcomePreview(model: model)
             .frame(minWidth: 620, minHeight: 540)
             .background(Color(nsColor: .windowBackgroundColor))
         let host = NSHostingController(rootView: root)
@@ -50,12 +75,23 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func windowWillClose(_ notification: Notification) {
-        // Reached by finishing the slideshow OR by an early manual close —
-        // either way, advance onboarding exactly once.
+    /// The permissions step succeeded: close the window and hand off to the
+    /// demo card. Idempotent.
+    private func completeAndClose() {
         guard !didComplete else { return }
         didComplete = true
-        window = nil
+        window?.close()
         onComplete()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Reached by a successful finish (via completeAndClose) OR an early
+        // manual close. Either way, let the model tear down its timer/helper
+        // and record an abandon if the user never finished. Only the success
+        // path advances onboarding — an early close leaves the user on the
+        // menubar with the marker unset, so onboarding re-runs next launch.
+        model?.handleWindowClosed()
+        model = nil
+        window = nil
     }
 }

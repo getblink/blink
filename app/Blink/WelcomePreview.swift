@@ -2,26 +2,39 @@ import AppKit
 import SwiftUI
 
 /// Top-level state for the welcome slideshow. Drives `slideIndex` and the
-/// unskippable per-slide dwell timer; everything visual lives in
+/// per-step "Click anywhere" hint; everything visual lives in
 /// `WelcomeSlideContainer` and the components it composes.
 ///
-/// Not a fixture — users do not interact with the canvas. The activation
-/// moment (first real hotkey press on the user's own desktop) lives in a
-/// later step.
+/// The flow is a single window: a "Welcome to Blink" landing, the 4-slide
+/// tour (cursor → hotkey → overlay → pick), and a live permissions step that
+/// replaces the old separate AppKit wizard for first-run. The activation
+/// moment (first real hotkey press on the user's own desktop) lives in the
+/// demo card that follows, once permissions are granted.
 struct WelcomePreview: View {
-    var onComplete: () -> Void = {}
+    /// Owns the live permission probing, telemetry, auto-chain, and the
+    /// hotkey-start / relaunch fallback for the permissions step. Injected so
+    /// the window controller can wire in the app's real dependencies.
+    @StateObject private var permissions: PermissionsModel
 
     @State private var slideIndex: Int = 0
     /// Copy index lags `slideIndex` so the title/body can fade out, swap
-    /// while hidden, and fade back in — the canvas (driven by slideIndex)
+    /// while hidden, and fade back in — the middle (driven by slideIndex)
     /// still reacts immediately.
     @State private var copyIndex: Int = 0
     @State private var copyVisible: Bool = true
     @State private var showHint: Bool = false
+    /// Set per-navigation: true when the move crosses a landing/permissions
+    /// boundary, so the container fades the middle + dots with the copy as one
+    /// unit (vs. staying solid and morphing within the tour).
+    @State private var middleFades: Bool = false
     /// The in-flight copy fade, held so a rapid second navigation can cancel
     /// it — otherwise overlapping fade tasks race and can leave the copy
     /// stuck invisible.
     @State private var copyFadeTask: Task<Void, Never>?
+
+    init(model: PermissionsModel) {
+        _permissions = StateObject(wrappedValue: model)
+    }
 
     /// How long after a slide appears before the "Click anywhere" hint
     /// fades in — roughly the length of the slide's entrance animation.
@@ -56,14 +69,77 @@ struct WelcomePreview: View {
         ),
     ]
 
+    /// Landing copy. The hero icon + "Get started" button live in the middle;
+    /// these strings fill the shared copy block.
+    static let landingTitle = "Welcome to Blink"
+    static let landingSubtitle = "Reads your screen and writes the rest — in your voice."
+
+    /// The closing permissions step. Live grant checklist — replaces the old
+    /// framing slide and the separate AppKit wizard for first-run.
+    static let framingTitle = "A couple of permissions to get going"
+    static let framingSubtitle = "Just what Blink needs for the loop you just saw."
+
+    /// One typed entry per step: landing, the four tour slides, then
+    /// permissions. The bookends are dot-less; the tour carries the page dots.
+    struct Step {
+        let kind: WelcomeStepKind
+        let title: String
+        let subtitle: String
+        /// Canvas phase. Pinned to `.chose` on the bookends so the canvas
+        /// rests at its final state behind the cross-fade.
+        let phase: WelcomePhase
+    }
+
+    static let steps: [Step] = {
+        var result: [Step] = [
+            // Landing pins the (hidden) canvas to the tour's *first* phase, not
+            // `.chose`. Otherwise the canvas behind the landing sits prefilled
+            // with the inserted reply, and crossing into slide 1 (or Back)
+            // animates that text out/in — a visible glitch.
+            Step(kind: .landing, title: landingTitle, subtitle: landingSubtitle, phase: .cursorLanded),
+        ]
+        result += defaultSlides.map {
+            Step(kind: .tour, title: $0.title, subtitle: $0.body, phase: $0.phase)
+        }
+        result.append(
+            Step(kind: .permissions, title: framingTitle, subtitle: framingSubtitle, phase: .chose)
+        )
+        return result
+    }()
+
+    private var stepCount: Int { Self.steps.count }
+    /// 0-based tour index for the page dots (landing is step 0 → -1, which the
+    /// container clamps; dots only render on `.tour` anyway).
+    private func tourDotIndex(_ step: Int) -> Int { step - 1 }
+
+    private var permissionsView: WelcomePermissionsView {
+        WelcomePermissionsView(
+            granted: permissions.granted,
+            allGranted: permissions.allGranted,
+            needsRelaunch: permissions.needsRelaunch,
+            onOpenSettings: { permissions.openSettings(for: $0) },
+            onGetStarted: { permissions.finish() },
+            onRelaunch: { permissions.relaunch() }
+        )
+    }
+
     var body: some View {
         WelcomeSlideContainer(
-            copySlide: Self.defaultSlides[copyIndex],
-            phase: Self.defaultSlides[slideIndex].phase,
+            title: Self.steps[copyIndex].title,
+            subtitle: Self.steps[copyIndex].subtitle,
+            // Drive the middle's cross-fade off the lagged copyIndex so the
+            // canvas→permissions dissolve lands in step with the title swap,
+            // not 200ms ahead.
+            stepKind: Self.steps[copyIndex].kind,
+            phase: Self.steps[slideIndex].phase,
             copyVisible: copyVisible,
-            slideIndex: slideIndex,
-            totalSlides: Self.defaultSlides.count,
+            tourDotIndex: tourDotIndex(slideIndex),
+            dotCount: Self.defaultSlides.count,
             canAdvance: showHint,
+            // Lag Back off copyIndex so it fades with the incoming step.
+            showBack: copyIndex > 0,
+            middleFades: middleFades,
+            permissions: permissionsView,
             onTap: handleTap,
             onBack: handleBack
         )
@@ -74,15 +150,22 @@ struct WelcomePreview: View {
                 showHint = true
             }
         }
+        .onChange(of: slideIndex) { _, newValue in
+            // Begin live probing only while the permissions step is on screen;
+            // pause (and close the floating helper) when stepping away.
+            if Self.steps[newValue].kind == .permissions {
+                permissions.start()
+            } else {
+                permissions.pause()
+            }
+        }
     }
 
     private func handleTap() {
-        // The click is never swallowed; the canvas + copy animations carry
-        // the pacing.
-        guard slideIndex < Self.defaultSlides.count - 1 else {
-            onComplete()
-            return
-        }
+        // The click is never swallowed; the canvas + copy animations carry the
+        // pacing. Taps on the permissions step are inert (the container guards
+        // them) — completion there runs through the "Get Started" button.
+        guard slideIndex < stepCount - 1 else { return }
         goTo(slideIndex + 1)
     }
 
@@ -91,17 +174,19 @@ struct WelcomePreview: View {
         goTo(slideIndex - 1)
     }
 
-    /// Move to `newIndex`: the canvas reacts immediately at its own
-    /// deliberate pace, while the copy fades out, swaps to the new slide's
-    /// text while hidden, then fades back in — sequential, so two different
-    /// titles never sit on screen at once (the cross-fade overlap was
-    /// unreadable). Works the same forward or backward.
+    /// Move to `newIndex`: the middle reacts immediately at its own deliberate
+    /// pace, while the copy fades out, swaps to the new step's text while
+    /// hidden, then fades back in — sequential, so two different titles never
+    /// sit on screen at once. Works the same forward or backward.
     ///
     /// Cancelling any in-flight fade first makes rapid navigation safe: only
     /// the latest task reaches the fade-in, so the copy can't get stranded
     /// invisible. `try?` swallows the sleep's cancellation error, so the
     /// post-sleep `isCancelled` check is what actually stops a stale task.
     private func goTo(_ newIndex: Int) {
+        // A bookend crossing (landing↔tour or tour↔permissions) fades the middle
+        // with the copy; tour↔tour keeps the canvas solid and just morphs phase.
+        middleFades = Self.steps[slideIndex].kind != Self.steps[newIndex].kind
         slideIndex = newIndex
         copyFadeTask?.cancel()
         copyFadeTask = Task { @MainActor in
@@ -130,7 +215,15 @@ enum WelcomePhase: CaseIterable {
 }
 
 #Preview {
-    WelcomePreview()
-        .frame(width: 620, height: 540)
-        .background(Color(nsColor: .windowBackgroundColor))
+    WelcomePreview(
+        model: PermissionsModel(
+            eventClient: nil,
+            allowLogging: { false },
+            clientMetadata: { [:] },
+            attemptHotkeyStart: { false },
+            onComplete: {}
+        )
+    )
+    .frame(width: 620, height: 540)
+    .background(Color(nsColor: .windowBackgroundColor))
 }

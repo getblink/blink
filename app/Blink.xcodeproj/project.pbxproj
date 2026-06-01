@@ -13,9 +13,11 @@
 		0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 733316E4538EF5998654016C /* Carbon.framework */; };
 		126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */; };
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
+		1D015A0F6D6C1DF00E6EAF27 /* WelcomePermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A843AABE071121CCBDBF6E91 /* WelcomePermissionsView.swift */; };
 		2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */; };
 		25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DBB159CA5CB427CCCADEF /* BlinkApp.swift */; };
 		2798D0C6537E90C28F2675DC /* ReasoningLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */; };
+		291C3C14AA942E3B09776E48 /* PermissionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00FB45D42D711DC16F6248EE /* PermissionsModel.swift */; };
 		2AB661B5D3F9DC75B8F7A7D6 /* WelcomeCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */; };
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */; };
@@ -58,7 +60,6 @@
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */; };
 		B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */; };
-		B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */; };
 		B82573088A91D3E3C93A0DBC /* ScreenAnnotatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F2731FA7A6D053A6388EA8 /* ScreenAnnotatorTests.swift */; };
 		C555231889A49F9834BC5D16 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BACCF164226F25B851C687 /* SettingsWindow.swift */; };
 		C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B874CA83CFFA290563A148F /* ModelChoices.swift */; };
@@ -96,6 +97,7 @@
 
 /* Begin PBXFileReference section */
 		009080B616A8506A5210AC26 /* MenubarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarController.swift; sourceTree = "<group>"; };
+		00FB45D42D711DC16F6248EE /* PermissionsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsModel.swift; sourceTree = "<group>"; };
 		01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAnnotator.swift; sourceTree = "<group>"; };
 		040D699C80AB14DC7CA7180F /* FocusedContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCaptureTests.swift; sourceTree = "<group>"; };
 		0B47EB8B7273BB95141192DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -125,7 +127,6 @@
 		574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeCanvasView.swift; sourceTree = "<group>"; };
 		57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuBuilder.swift; sourceTree = "<group>"; };
 		5B0476F717FE6D32A76C485D /* ControlWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlWindow.swift; sourceTree = "<group>"; };
-		5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingChatMockWindow.swift; sourceTree = "<group>"; };
 		5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironmentTests.swift; sourceTree = "<group>"; };
 		63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundActivityMonitor.swift; sourceTree = "<group>"; };
@@ -153,6 +154,7 @@
 		9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayKeyRouter.swift; sourceTree = "<group>"; };
 		A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStoreTests.swift; sourceTree = "<group>"; };
 		A2EF34A50A57C1CF8722B81A /* Hotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hotkey.swift; sourceTree = "<group>"; };
+		A843AABE071121CCBDBF6E91 /* WelcomePermissionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePermissionsView.swift; sourceTree = "<group>"; };
 		A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRunner.swift; sourceTree = "<group>"; };
 		AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceStateTests.swift; sourceTree = "<group>"; };
 		B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentedKnob.swift; sourceTree = "<group>"; };
@@ -255,11 +257,11 @@
 				1B874CA83CFFA290563A148F /* ModelChoices.swift */,
 				63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */,
 				154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */,
-				5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */,
 				320EFC3753704C215B9E8F68 /* OnboardingDemoCardWindow.swift */,
 				9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */,
 				D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */,
 				4214D54A0ABE9369A9BBC560 /* PermissionsActions.swift */,
+				00FB45D42D711DC16F6248EE /* PermissionsModel.swift */,
 				D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */,
 				A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */,
 				27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */,
@@ -276,6 +278,7 @@
 				574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */,
 				74AB0C7A19C893ED0095FF27 /* WelcomeKeycap.swift */,
 				D4D8E5685B1437D8D2C2B165 /* WelcomeOverlayPanel.swift */,
+				A843AABE071121CCBDBF6E91 /* WelcomePermissionsView.swift */,
 				C26594E46B9AF504D235C5A9 /* WelcomePreview.swift */,
 				BEEEE53047DB889BB46111E9 /* WelcomeSlideContainer.swift */,
 				6B19C3487B6BA8E18E233DCB /* WelcomeWindowController.swift */,
@@ -459,11 +462,11 @@
 				C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */,
 				989A18FB0C1C4C8D04079543 /* NudgeCoordinator.swift in Sources */,
 				980F1B428389277B4F6AAD36 /* NudgeOverlay.swift in Sources */,
-				B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */,
 				4A753A72DD3D2BDD69DC0536 /* OnboardingDemoCardWindow.swift in Sources */,
 				141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */,
 				683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */,
 				647C68DE1CAF90DC99650812 /* PermissionsActions.swift in Sources */,
+				291C3C14AA942E3B09776E48 /* PermissionsModel.swift in Sources */,
 				9BAE9B795541CD3B0E66653E /* PermissionsSettingsView.swift in Sources */,
 				B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */,
 				4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */,
@@ -483,6 +486,7 @@
 				2AB661B5D3F9DC75B8F7A7D6 /* WelcomeCanvasView.swift in Sources */,
 				9E313C561FCBB4B318232179 /* WelcomeKeycap.swift in Sources */,
 				F38B835C8929C86855ACB8BF /* WelcomeOverlayPanel.swift in Sources */,
+				1D015A0F6D6C1DF00E6EAF27 /* WelcomePermissionsView.swift in Sources */,
 				D70ED9B50AF249EEC20393D4 /* WelcomePreview.swift in Sources */,
 				8D4B973BAB065E21A9F47342 /* WelcomeSlideContainer.swift in Sources */,
 				43E6C3DB7409DF3B6E71F9CB /* WelcomeWindowController.swift in Sources */,

@@ -3,11 +3,9 @@ import SwiftUI
 
 /// First-run "try Blink on your own window" card.
 ///
-/// Replaces the Slack-style mock as the default onboarding surface. The card
-/// floats in the corner of the screen, watches for the user's first real
-/// hotkey press on any window, and celebrates the result. The legacy mock is
-/// preserved behind a "Try a sample" escape hatch for users who don't have a
-/// good window handy.
+/// The default (and only) first-run demo surface. The card floats in the
+/// corner of the screen, watches for the user's first real hotkey press on
+/// any window, and celebrates the result.
 @MainActor
 final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     enum Outcome {
@@ -16,9 +14,6 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         case firstHotkeyLanded
         /// User explicitly dismissed the card (Skip / close button / Esc).
         case skipped
-        /// User opted into the bundled Slack-style fixture. AppDelegate is
-        /// expected to open the legacy `OnboardingChatMockWindowController`.
-        case sampleRequested
     }
 
     fileprivate enum State: Equatable {
@@ -68,6 +63,12 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Fixed card size. Shared by the panel (`setContentSize`) and the SwiftUI
+    /// view's frame — the view MUST be bounded, otherwise its `maxHeight:
+    /// .infinity` makes `NSHostingController` size the panel to the content's
+    /// (unbounded) preferred height, blowing the window up to screen height.
+    fileprivate static let cardSize = CGSize(width: 360, height: 280)
+
     // MARK: - Public lifecycle
 
     func show() {
@@ -79,8 +80,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         let view = DemoCardView(
             hotkeyDisplay: hotkeyDisplay,
             state: state,
-            onSkip: { [weak self] in self?.handleSkip() },
-            onTrySample: { [weak self] in self?.handleSampleRequested() }
+            onSkip: { [weak self] in self?.handleSkip() }
         )
         let host = NSHostingController(rootView: view)
         hostingController = host
@@ -102,7 +102,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
-        let contentSize = NSSize(width: 360, height: 280)
+        let contentSize = Self.cardSize
         panel.setContentSize(contentSize)
 
         if let screen = NSScreen.main {
@@ -222,14 +222,6 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         fireOutcome(.skipped)
     }
 
-    private func handleSampleRequested() {
-        emit(
-            "onboarding_demo_sample_clicked",
-            details: ["ms_since_shown": msSinceShown]
-        )
-        fireOutcome(.sampleRequested)
-    }
-
     private func fireOutcome(_ outcome: Outcome) {
         guard !didFireOutcome else { return }
         didFireOutcome = true
@@ -252,8 +244,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         host.rootView = DemoCardView(
             hotkeyDisplay: hotkeyDisplay,
             state: state,
-            onSkip: { [weak self] in self?.handleSkip() },
-            onTrySample: { [weak self] in self?.handleSampleRequested() }
+            onSkip: { [weak self] in self?.handleSkip() }
         )
     }
 
@@ -334,7 +325,6 @@ private struct DemoCardView: View {
     let hotkeyDisplay: String
     let state: OnboardingDemoCardWindowController.State
     let onSkip: () -> Void
-    let onTrySample: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -351,7 +341,14 @@ private struct DemoCardView: View {
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Bounded to the card size so the hosting controller can't size the
+        // panel to an unbounded preferred height. The Spacer above still
+        // pins the footer to the bottom within this fixed height.
+        .frame(
+            width: OnboardingDemoCardWindowController.cardSize.width,
+            height: OnboardingDemoCardWindowController.cardSize.height,
+            alignment: .topLeading
+        )
     }
 
     private var header: some View {
@@ -400,10 +397,6 @@ private struct DemoCardView: View {
                 .buttonStyle(.borderless)
                 .foregroundColor(.secondary)
             Spacer()
-            if state != .landed {
-                Button("Try a sample", action: onTrySample)
-                    .buttonStyle(.bordered)
-            }
         }
         .font(.system(size: 12))
     }
@@ -411,9 +404,8 @@ private struct DemoCardView: View {
 
 // MARK: - Keycap
 
-/// Reusable keycap for hotkey display. `large` is the focal-point variant used
-/// by the demo card; `small` matches the inline footer style in
-/// `OnboardingChatMockWindow.swift`.
+/// Keycap for hotkey display. `large` is the focal-point variant used by the
+/// demo card; `small` is the compact inline variant.
 private struct KeycapView: View {
     enum Size { case small, large }
     let label: String

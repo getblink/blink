@@ -23,7 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionsWindow: PermissionsWindowController?
     private var controlWindow: ControlWindowController?
     private var settingsWindow: SettingsWindowController?
-    private var onboardingSampleWindow: OnboardingChatMockWindowController?
     private var onboardingDemoCard: OnboardingDemoCardWindowController?
     private var welcomeWindow: WelcomeWindowController?
     private var runtimeStore: RuntimeConfigStore?
@@ -278,17 +277,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionsWindow?.show()
     }
 
-    /// First-run only: the animated welcome slideshow. On completion — or if
-    /// the user closes it early — it hands off to the permissions wizard.
+    /// First-run only: the single-window welcome experience — "Welcome to
+    /// Blink" landing → 4-slide tour → live in-window permissions. Completion
+    /// (permissions granted + hotkey listening) hands off to the demo card. An
+    /// early manual close leaves the marker unset so onboarding re-runs next
+    /// launch; it no longer opens the separate AppKit wizard.
     private func runWelcomeSlideshow() {
         if let welcomeWindow {
             welcomeWindow.show()
             return
         }
-        let welcome = WelcomeWindowController(onComplete: { [weak self] in
-            self?.welcomeWindow = nil
-            self?.showPermissionsWindow()
-        })
+        let welcome = WelcomeWindowController(
+            eventClient: eventClient,
+            allowLogging: { [weak runtimeStore] in
+                runtimeStore?.allowEventLogging ?? false
+            },
+            clientMetadata: {
+                BlinkCoordinator.clientMetadata()
+            },
+            attemptHotkeyStart: { [weak self] in
+                self?.hotkeys?.start() ?? false
+            },
+            onComplete: { [weak self] in
+                self?.welcomeWindow = nil
+                self?.runOnboardingDemo()
+            }
+        )
         welcomeWindow = welcome
         welcome.show()
     }
@@ -320,41 +334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // marker so the legacy 4-second toast doesn't fire next.
                     Paths.markFirstHotkeyNudgeShown()
                     self.showControlWindow()
-                case .sampleRequested:
-                    self.runOnboardingSampleMock()
                 }
             }
         )
         onboardingDemoCard = card
         card.show()
-    }
-
-    /// Legacy chat-mock demo window. Preserved as the "Try a sample" fallback
-    /// from the demo card for users who don't have a good window to try Blink
-    /// on themselves. Kept verbatim from the previous `runOnboardingSample`.
-    private func runOnboardingSampleMock() {
-        guard onboardingSampleWindow == nil else {
-            onboardingSampleWindow?.show()
-            return
-        }
-        let fixture = OnboardingFixture.load()
-        coordinator.setOnboardingSampleActive(true)
-        let mock = OnboardingChatMockWindowController(
-            fixture: fixture,
-            hotkeyDisplay: coordinator.currentHotkey.displayString
-        ) { [weak self] in
-            guard let self else { return }
-            self.coordinator.setOnboardingSampleActive(false)
-            self.onboardingSampleWindow = nil
-            self.showControlWindow()
-            self.showFirstHotkeyNudgeIfNeeded()
-        }
-        onboardingSampleWindow = mock
-        mock.show()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            NSApp.activate(ignoringOtherApps: true)
-            self?.onboardingSampleWindow?.bringToFront()
-        }
     }
 
     func showControlWindow() {

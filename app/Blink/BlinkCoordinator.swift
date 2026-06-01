@@ -198,7 +198,6 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// (the new run replaces it) or on intentional dismiss.
     private var modalChatSnapshot: LastDismissedSession?
 
-    private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
     var onStatusChange: ((String) -> Void)?
@@ -289,15 +288,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         ]
     }
 
-    /// Per-invocation client metadata. Merges `source = onboarding_sample`
-    /// when the onboarding mock window is the active capture target so the
-    /// server can distinguish first-run sample invocations from real ones.
+    /// Per-invocation client metadata. Currently identical to the static
+    /// snapshot; kept as an instance method so per-invocation context can be
+    /// merged in here if needed.
     func clientMetadata() -> [String: Any] {
-        var meta = Self.clientMetadata()
-        if onboardingSampleActive {
-            meta["source"] = "onboarding_sample"
-        }
-        return meta
+        Self.clientMetadata()
     }
 
     /// The active summary hotkey. Read-only mirror so surfaces (e.g. the
@@ -377,14 +372,6 @@ final class BlinkCoordinator: @unchecked Sendable {
             overlayInsertConsumesReturnValue = false
         }
         overlayInsertConsumeLock.unlock()
-    }
-
-    /// Flips the onboarding-sample flag. Main-thread only; the value is
-    /// read on the capture queue at session start, but the queue dispatches
-    /// to main for the runtime snapshot so a single hop is sufficient.
-    func setOnboardingSampleActive(_ active: Bool) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        onboardingSampleActive = active
     }
 
     private static func requiredPermissionsGranted(caller: String) -> Bool {
