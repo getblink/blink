@@ -25,6 +25,12 @@ extension EnvironmentValues {
 /// The reply cards are flat chips (fill + hairline border, no shadow).
 struct WelcomeOverlayPanel: View {
     let phase: WelcomePhase
+    /// Whether the panel is shown. Driven by the parent so the overlay can
+    /// linger into `.chose` (through the pick) and only dismiss once the reply
+    /// is committed — decoupled from the raw phase.
+    let visible: Bool
+    /// Which reply card is highlighted as the chosen option (nil = none).
+    let selectedIndex: Int?
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.overlayForcedCardCount) private var forcedCardCount
@@ -78,9 +84,12 @@ struct WelcomeOverlayPanel: View {
         // Shadow AFTER the clip, so the drop light stays a clean halo cast by
         // the opaque silhouette rather than being clipped away.
         .shadow(color: panelShadow.color, radius: panelShadow.radius, y: panelShadow.y)
-        .opacity(phase == .overlay ? 1 : 0)
-        .scaleEffect(phase == .overlay ? 1.0 : 0.96)
-        .animation(panelAnimation, value: phase)
+        .opacity(visible ? 1 : 0)
+        .scaleEffect(visible ? 1.0 : 0.96)
+        // Keyed on `visible`: arrival rides the delayed spring while
+        // `phase == .overlay`, and the dismissal at insertion (`.chose`) uses
+        // the quicker exit spring so the panel clears as the reply lands.
+        .animation(panelAnimation, value: visible)
         // `.task(id: phase)` auto-cancels when the phase changes, so
         // clicking through to `.chose` before the cards finish landing
         // won't leave a detached Task that repopulates them on the final
@@ -88,6 +97,13 @@ struct WelcomeOverlayPanel: View {
         // `try?` swallows the cancellation error and would otherwise let
         // the loop continue.
         .task(id: phase) {
+            // Hold all three cards through `.chose` so the chosen option can
+            // highlight before the parent dismisses the whole panel. Without
+            // this the cards would reset to 0 the moment we left `.overlay`.
+            if phase == .chose {
+                visibleCardCount = 3
+                return
+            }
             visibleCardCount = 0
             guard phase == .overlay else { return }
             try? await Task.sleep(for: Self.firstCardDelay)
@@ -143,11 +159,15 @@ struct WelcomeOverlayPanel: View {
     }
 
     private func replyCard(index: Int, contentWidth: CGFloat) -> some View {
-        HStack(spacing: 8) {
+        // The chosen option on the final slide. When set, the card takes an
+        // accent fill/border + tinted number and pops once — reading as the
+        // user picking it before it lands in the field.
+        let isSelected = index == selectedIndex
+        return HStack(spacing: 8) {
             // Bare number — no gray chip behind it.
             Text("\(index + 1)")
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundColor(.primary.opacity(0.5))
+                .foregroundColor(isSelected ? .blinkAccent : .primary.opacity(0.5))
                 .frame(width: 14, height: 14)
             RoundedRectangle(cornerRadius: 2).fill(.primary.opacity(0.6))
                 .frame(width: contentWidth, height: 6)
@@ -155,11 +175,29 @@ struct WelcomeOverlayPanel: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(cardFill))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(cardBorder, lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.blinkAccent.opacity(0.15) : cardFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSelected ? Color.blinkAccent : cardBorder, lineWidth: isSelected ? 1.5 : 1)
+        )
         // No shadow or glow on the cards — they're flat chips, defined only
         // by their fill + hairline border. The lone drop light lives on the
         // panel itself.
+        .animation(.spring(duration: 0.3, bounce: 0.2), value: selectedIndex)
+        // Press-pop on the chosen card — a quick dip-and-settle, mirroring the
+        // keycap press, so the pick reads as a tap. Only the selected card's
+        // trigger flips, so the others never animate.
+        .keyframeAnimator(initialValue: 1.0, trigger: isSelected) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                SpringKeyframe(0.95, duration: 0.12)
+                SpringKeyframe(1.0, duration: 0.22)
+            }
+        }
     }
 
     // MARK: - Surfaces

@@ -8,6 +8,23 @@ import SwiftUI
 struct WelcomeCanvasView: View {
     let phase: WelcomePhase
 
+    /// Which reply card is highlighted during the `.chose` pick (nil = none
+    /// yet). Drives the overlay's accent + press-pop on the chosen option.
+    @State private var selectedIndex: Int? = nil
+    /// Whether the chosen reply has been committed into the field. Gates the
+    /// field grow, text wipe, body undim, and overlay dismissal — all the
+    /// motion that used to fire the instant `.chose` arrived.
+    @State private var replyInserted: Bool = false
+
+    /// The option the demo picks on the final slide — option 1 (top card).
+    private let chosenCard = 0
+    /// `.chose` entry → highlight: a brief beat with the overlay still up so
+    /// "pick one" registers before the selection lands.
+    private static let selectDelay: Duration = .milliseconds(350)
+    /// Highlight → insert: hold the accented pick a moment before the overlay
+    /// dismisses and the reply wipes into the field.
+    private static let highlightHold: Duration = .milliseconds(450)
+
     var body: some View {
         ZStack(alignment: .center) {
             emailCanvas
@@ -22,7 +39,29 @@ struct WelcomeCanvasView: View {
                         .padding(.bottom, keycapBottomInset),
                     alignment: .bottomTrailing
                 )
-            WelcomeOverlayPanel(phase: phase).offset(y: overlayYOffset)
+            WelcomeOverlayPanel(phase: phase, visible: overlayVisible, selectedIndex: selectedIndex)
+                .offset(y: overlayYOffset)
+        }
+        // Sub-timeline for the final slide: keep the overlay up, highlight the
+        // chosen option, hold a beat, then commit the insert. Mirrors the
+        // keycap/overlay `.task` pattern — `id: phase` auto-cancels on a phase
+        // change (Back, or clicking through), and `try?` swallows the sleep's
+        // cancellation so the post-sleep `isCancelled` checks are what stop a
+        // stale run. Resetting first means re-entering `.chose` from another
+        // phase (e.g. Back to the overlay slide, then forward) replays the
+        // pick. The slide-4 ↔ permissions hop keeps `.chose` pinned, so the
+        // task doesn't re-fire and the canvas rests at its finished frame —
+        // same as before this change, and the correct bookend resting state.
+        .task(id: phase) {
+            selectedIndex = nil
+            replyInserted = false
+            guard phase == .chose else { return }
+            try? await Task.sleep(for: Self.selectDelay)
+            if Task.isCancelled { return }
+            selectedIndex = chosenCard
+            try? await Task.sleep(for: Self.highlightHold)
+            if Task.isCancelled { return }
+            replyInserted = true
         }
         // Reserve the tallest (.chose) canvas height and top-anchor the
         // card in it. The card then grows *downward* into the reserved
@@ -36,10 +75,13 @@ struct WelcomeCanvasView: View {
 
     // MARK: Phase-driven layout
 
-    private var showingOverlay: Bool { phase == .overlay }
-    private var bodyOpacity: Double { showingOverlay ? 0.5 : 1.0 }
+    /// The overlay is up during `.overlay` and lingers into `.chose` until the
+    /// pick is committed — so the body stays dimmed and the panel stays on
+    /// screen through the selection beat, then both resolve at insertion.
+    private var overlayVisible: Bool { phase == .overlay || (phase == .chose && !replyInserted) }
+    private var bodyOpacity: Double { overlayVisible ? 0.5 : 1.0 }
     private var overlayYOffset: CGFloat { -8 }
-    private var replyFieldHeight: CGFloat { phase == .chose ? 78 : 36 }
+    private var replyFieldHeight: CGFloat { replyInserted ? 78 : 36 }
     // Canvas tall enough to fully contain its content (sender + body +
     // reply field) with the Spacer holding real slack — otherwise the
     // content overflows, the Spacer collapses, and the reply field gets
@@ -55,7 +97,7 @@ struct WelcomeCanvasView: View {
     /// Tallest the card ever gets (.chose). Used both as the .chose canvas
     /// height and as the reserved slot height so growth is downward-only.
     private let maxCanvasHeight: CGFloat = 308
-    private var canvasHeight: CGFloat { phase == .chose ? maxCanvasHeight : 266 }
+    private var canvasHeight: CGFloat { replyInserted ? maxCanvasHeight : 266 }
     /// Mask height that fully reveals the inserted reply (a touch beyond
     /// the ~50pt content so the last line's caret isn't clipped). The mask
     /// animates 0 → this to wipe the reply in top-to-bottom.
@@ -98,7 +140,7 @@ struct WelcomeCanvasView: View {
                 .padding(.bottom, 18),
                 alignment: .topLeading
             )
-            .animation(choseAnimation, value: phase)
+            .animation(choseAnimation, value: replyInserted)
     }
 
     private var senderRow: some View {
@@ -126,8 +168,10 @@ struct WelcomeCanvasView: View {
         }
         .opacity(bodyOpacity)
         // Same curve as the canvas/field growth so the body brightens on
-        // exactly the same timeline — one synced motion, not two.
-        .animation(choseAnimation, value: phase)
+        // exactly the same timeline — one synced motion, not two. Keyed on
+        // `overlayVisible` so it animates both the dim-IN on `.overlay` entry
+        // and the undim when the overlay dismisses at insertion.
+        .animation(choseAnimation, value: overlayVisible)
     }
 
     private func paragraph(widths: [CGFloat]) -> some View {
@@ -152,7 +196,7 @@ struct WelcomeCanvasView: View {
             .frame(height: replyFieldHeight)
             // Same shared curve as canvas height + content swap so
             // field growth and text insertion move together.
-            .animation(choseAnimation, value: phase)
+            .animation(choseAnimation, value: replyInserted)
     }
 
     private var replyFieldContent: some View {
@@ -167,8 +211,8 @@ struct WelcomeCanvasView: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 11)
-            .opacity(phase == .chose ? 0 : 1)
-            .animation(.easeOut(duration: 0.18), value: phase)
+            .opacity(replyInserted ? 0 : 1)
+            .animation(.easeOut(duration: 0.18), value: replyInserted)
 
             // Filled state — inserted reply, top-justified. Instead of a
             // slow opacity cross-fade on the growth spring (which read as
@@ -178,9 +222,9 @@ struct WelcomeCanvasView: View {
             // sooner. The field/canvas keep their physical spring grow.
             insertedContent
                 .mask(alignment: .top) {
-                    Rectangle().frame(height: phase == .chose ? replyRevealHeight : 0)
+                    Rectangle().frame(height: replyInserted ? replyRevealHeight : 0)
                 }
-                .animation(.easeOut(duration: 0.42), value: phase)
+                .animation(.easeOut(duration: 0.42), value: replyInserted)
         }
         // Fill the field height and pin children to the top so the inserted
         // text anchors at the top edge through the grow.
