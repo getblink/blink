@@ -15,6 +15,8 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     private let allowLogging: () -> Bool
     private let clientMetadata: () -> [String: Any]
     private let attemptHotkeyStart: () -> Bool
+    /// Open straight on the permissions step (mid-grant relaunch resume).
+    private let startAtPermissions: Bool
     /// Fired exactly once, only on a successful grant + hotkey start.
     private let onComplete: () -> Void
 
@@ -27,12 +29,14 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         allowLogging: @escaping () -> Bool,
         clientMetadata: @escaping () -> [String: Any],
         attemptHotkeyStart: @escaping () -> Bool,
+        startAtPermissions: Bool = false,
         onComplete: @escaping () -> Void
     ) {
         self.eventClient = eventClient
         self.allowLogging = allowLogging
         self.clientMetadata = clientMetadata
         self.attemptHotkeyStart = attemptHotkeyStart
+        self.startAtPermissions = startAtPermissions
         self.onComplete = onComplete
         super.init()
     }
@@ -53,7 +57,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         )
         self.model = model
 
-        let root = WelcomePreview(model: model)
+        let root = WelcomePreview(model: model, startAtPermissions: startAtPermissions)
             .frame(minWidth: 620, minHeight: 540)
             .background(Color(nsColor: .windowBackgroundColor))
         let host = NSHostingController(rootView: root)
@@ -76,12 +80,31 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     }
 
     /// The permissions step succeeded: close the window and hand off to the
-    /// demo card. Idempotent.
+    /// demo card. Idempotent. Fades the window out and waits a beat before the
+    /// handoff so the welcome's disappearance and the card's entrance don't
+    /// visually collide (which read as a disjointed jump cut).
     private func completeAndClose() {
         guard !didComplete else { return }
         didComplete = true
-        window?.close()
-        onComplete()
+        guard let window,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            window?.close()
+            onComplete()
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            window.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.window?.close()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+                    self?.onComplete()
+                }
+            }
+        })
     }
 
     func windowWillClose(_ notification: Notification) {

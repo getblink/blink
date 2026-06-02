@@ -20,6 +20,9 @@ final class PermissionsModel: ObservableObject {
     /// Relaunch sub-state: the in-process hotkey start failed after the grants
     /// landed, so the view swaps to "Relaunch Blink".
     @Published private(set) var needsRelaunch: Bool = false
+    /// "Launch Blink at login" intent. Default-on; applied (registered) when the
+    /// user commits via Get Started, so abandoners don't leave a login item.
+    @Published var launchAtLogin: Bool = true
 
     var allGranted: Bool {
         WelcomePermissionKind.allCases.allSatisfy { granted[$0] ?? false }
@@ -87,12 +90,18 @@ final class PermissionsModel: ObservableObject {
         if !didShow {
             didShow = true
             shownAt = Date()
+            // Default-on, but respect a prior explicit opt-out on re-onboarding.
+            launchAtLogin = LoginItem.onboardingDefault
             let snap = snapshot()
             lastSnapshot = snap
             granted = snap
             // Seed grant timestamps for already-granted perms so `grants_ms`
             // is complete in `onboarding_completed`.
             for (kind, isGranted) in snap where isGranted { grantMS[kind] = 0 }
+            // Persist that onboarding reached this step, so a mid-grant relaunch
+            // (e.g. macOS "Quit & Reopen" after Screen Recording) resumes here
+            // instead of replaying the landing + tour.
+            Paths.markReachedOnboardingPermissions()
             emit("onboarding_shown", details: [
                 "initial_granted": snap.filter { $0.value }.map { $0.key.rawValue },
             ])
@@ -126,6 +135,11 @@ final class PermissionsModel: ObservableObject {
 
     // MARK: User actions
 
+    func setLaunchAtLogin(_ enabled: Bool) {
+        launchAtLogin = enabled
+        emit("onboarding_launch_at_login_toggled", details: ["enabled": enabled])
+    }
+
     func openSettings(for kind: WelcomePermissionKind) {
         emit("onboarding_open_settings_clicked", details: ["permission": kind.rawValue])
         // Pass nil source frame: drop the button→Settings fly-in for the
@@ -150,6 +164,8 @@ final class PermissionsModel: ObservableObject {
         // Commit the moment the user clicks Get Started; granting alone (no
         // click) shouldn't count as onboarded.
         markOnboardedOnce()
+        // Apply the launch-at-login choice now that the user has committed.
+        LoginItem.setEnabled(launchAtLogin)
         if attemptHotkeyStart() {
             completeSuccess()
             return
@@ -268,6 +284,9 @@ final class PermissionsModel: ObservableObject {
 
     private func markOnboardedOnce() {
         Paths.markOnboarded()
+        // Onboarding is committed; the resume-at-permissions marker has served
+        // its purpose, so a future reset starts cleanly at the landing.
+        Paths.clearReachedOnboardingPermissions()
     }
 
     private func emitCompleted(relaunchRequired: Bool) {
@@ -277,6 +296,7 @@ final class PermissionsModel: ObservableObject {
             "relaunch_required": relaunchRequired,
             "duration_ms": duration,
             "grants_ms": grants,
+            "launch_at_login": launchAtLogin,
         ])
     }
 

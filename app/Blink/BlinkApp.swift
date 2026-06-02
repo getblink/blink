@@ -298,6 +298,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             attemptHotkeyStart: { [weak self] in
                 self?.hotkeys?.start() ?? false
             },
+            // If a prior session already reached permissions (then got
+            // relaunched mid-grant), resume there rather than replaying the
+            // landing + tour.
+            startAtPermissions: Paths.reachedOnboardingPermissions(),
             onComplete: { [weak self] in
                 self?.welcomeWindow = nil
                 self?.runOnboardingDemo()
@@ -318,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let card = OnboardingDemoCardWindowController(
             hotkeyDisplay: coordinator.currentHotkey.displayString,
+            hotkeyParts: coordinator.currentHotkey.displayParts,
             eventClient: eventClient,
             allowLogging: { [weak runtimeStore] in
                 runtimeStore?.allowEventLogging ?? false
@@ -333,7 +338,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // The card is itself the first-hotkey nudge — mark the
                     // marker so the legacy 4-second toast doesn't fire next.
                     Paths.markFirstHotkeyNudgeShown()
-                    self.showControlWindow()
+                    // Don't pop a window cold. Bounce the Dock icon — Blink is a
+                    // regular Dock app, so that's its always-visible home (no
+                    // menubar-overflow problem). The landed card has just told
+                    // the user Blink lives in the Dock; this draws the eye there.
+                    NSApp.requestUserAttention(.informationalRequest)
                 }
             }
         )

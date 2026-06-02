@@ -23,6 +23,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     }
 
     private let hotkeyDisplay: String
+    private let hotkeyParts: [String]
     private let eventClient: BlinkEventClient?
     private let allowLogging: () -> Bool
     private let clientMetadata: () -> [String: Any]
@@ -36,7 +37,10 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     private var didEmitFirstSummary = false
     private var didEmitFirstPaste = false
     private var didEmitArmed = false
+    private var didAnimateEntrance = false
+    private var entranceInFlight = false
 
+    private let cardModel = DemoCardModel(state: .waiting)
     private var panel: NSPanel?
     private var hostingController: NSHostingController<DemoCardView>?
     private var landedDismissWorkItem: DispatchWorkItem?
@@ -44,12 +48,14 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
 
     init(
         hotkeyDisplay: String,
+        hotkeyParts: [String],
         eventClient: BlinkEventClient?,
         allowLogging: @escaping () -> Bool,
         clientMetadata: @escaping () -> [String: Any],
         onOutcome: @escaping (Outcome) -> Void
     ) {
         self.hotkeyDisplay = hotkeyDisplay
+        self.hotkeyParts = hotkeyParts
         self.eventClient = eventClient
         self.allowLogging = allowLogging
         self.clientMetadata = clientMetadata
@@ -63,11 +69,12 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Fixed card size. Shared by the panel (`setContentSize`) and the SwiftUI
-    /// view's frame — the view MUST be bounded, otherwise its `maxHeight:
-    /// .infinity` makes `NSHostingController` size the panel to the content's
-    /// (unbounded) preferred height, blowing the window up to screen height.
-    fileprivate static let cardSize = CGSize(width: 360, height: 280)
+    /// Initial content-size estimate used only for the first frame before the
+    /// hosting controller auto-sizes to the SwiftUI content (`sizingOptions =
+    /// .preferredContentSize`). Width matches the card's fixed width so only the
+    /// height settles. The card is pinned to the corner via `pinToCorner()`.
+    fileprivate static let cardSize = CGSize(width: DemoCardView.cardWidth, height: 220)
+    private static let cornerInset: CGFloat = 24
 
     // MARK: - Public lifecycle
 
@@ -77,18 +84,27 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
             return
         }
         shownAt = Date()
+        cardModel.state = state
         let view = DemoCardView(
+            model: cardModel,
             hotkeyDisplay: hotkeyDisplay,
-            state: state,
-            onSkip: { [weak self] in self?.handleSkip() }
+            hotkeyParts: hotkeyParts,
+            onDismiss: { [weak self] in self?.handleSkip() }
         )
         let host = NSHostingController(rootView: view)
+        host.sizingOptions = [.preferredContentSize]
         hostingController = host
 
         let panel = NSPanel(
             contentViewController: host
         )
-        panel.styleMask = [.titled, .closable, .fullSizeContentView, .nonactivatingPanel, .hudWindow]
+        // No `.hudWindow`: we draw our own Liquid Glass card in SwiftUI and
+        // keep the panel transparent so its alpha-shaped shadow follows the
+        // card's rounded corners. `.closable` keeps ⌘W working even though the
+        // native title-bar buttons are hidden (we draw the close control in the
+        // card — the native traffic lights render inactive/gray on a
+        // non-activating panel, which wouldn't match the design).
+        panel.styleMask = [.titled, .closable, .fullSizeContentView, .nonactivatingPanel]
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
@@ -98,26 +114,27 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
         panel.delegate = self
+        panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
-        let contentSize = Self.cardSize
-        panel.setContentSize(contentSize)
-
-        if let screen = NSScreen.main {
-            let visible = screen.visibleFrame
-            let origin = NSPoint(
-                x: visible.maxX - contentSize.width - 24,
-                y: visible.maxY - contentSize.height - 24
-            )
-            panel.setFrameOrigin(origin)
-        } else {
-            panel.center()
-        }
+        panel.setContentSize(Self.cardSize)
+        panel.alphaValue = 0
+        self.panel = panel
+        pinToCorner()
 
         panel.orderFrontRegardless()
-        self.panel = panel
+        // The first `windowDidResize` (after the hosting controller settles its
+        // preferred size) is the primary entrance trigger, so the animation
+        // runs at the final size. This delayed call is a fallback for the rare
+        // case where no resize fires; both are guarded by `didAnimateEntrance`.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.animateEntranceIfNeeded()
+        }
 
         installActivationObserver()
         emit("onboarding_demo_card_shown", details: ["hotkey_display": hotkeyDisplay])
@@ -151,7 +168,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     /// doesn't fight the suggestions overlay.
     func noteHotkeyInvoked() {
         guard panel != nil, state == .waiting else { return }
-        state = .firing
+        setState(.firing)
         panel?.orderOut(nil)
         if !didEmitFirstHotkey {
             didEmitFirstHotkey = true
@@ -171,7 +188,7 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     func noteSummaryCompleted(success: Bool) {
         guard panel != nil else { return }
         if success {
-            state = .landed
+            setState(.landed)
             if !didEmitFirstSummary {
                 didEmitFirstSummary = true
                 emit(
@@ -182,11 +199,9 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
                     ]
                 )
             }
-            renderState()
             showPanelAgain()
         } else {
-            state = .waiting
-            renderState()
+            setState(.waiting)
             showPanelAgain()
         }
     }
@@ -210,6 +225,14 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
     }
 
     // MARK: - Internal
+
+    private func setState(_ newState: State) {
+        state = newState
+        // Publishing to the model updates the live SwiftUI view in place (no
+        // rootView swap), so the entrance animation isn't replayed on every
+        // state change — only the landed logo spring fires, on its own appear.
+        cardModel.state = newState
+    }
 
     private func handleSkip() {
         emit(
@@ -239,18 +262,58 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: work)
     }
 
-    private func renderState() {
-        guard let host = hostingController else { return }
-        host.rootView = DemoCardView(
-            hotkeyDisplay: hotkeyDisplay,
-            state: state,
-            onSkip: { [weak self] in self?.handleSkip() }
-        )
-    }
-
     private func showPanelAgain() {
         guard let panel, !panel.isVisible else { return }
         panel.orderFrontRegardless()
+    }
+
+    /// Top-right corner origin for the panel's current frame size.
+    private func cornerOrigin() -> NSPoint? {
+        guard let panel else { return nil }
+        guard let visible = (panel.screen ?? NSScreen.main)?.visibleFrame else { return nil }
+        let frame = panel.frame
+        return NSPoint(
+            x: visible.maxX - frame.width - Self.cornerInset,
+            y: visible.maxY - frame.height - Self.cornerInset
+        )
+    }
+
+    /// Keep the card pinned to the top-right corner so it grows downward as the
+    /// content height changes between states (no jump, no empty space).
+    private func pinToCorner() {
+        guard let panel, let origin = cornerOrigin() else { return }
+        panel.setFrameOrigin(origin)
+    }
+
+    /// One-shot entrance: a gentle fade + rise, at the window level so it is not
+    /// clipped by the content-sized panel. The target is the corner (not the
+    /// current origin), so it lands correctly even if the size is still
+    /// settling. Reduce-Motion shows it immediately.
+    private func animateEntranceIfNeeded() {
+        guard let panel, !didAnimateEntrance, let target = cornerOrigin() else { return }
+        didAnimateEntrance = true
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.setFrameOrigin(target)
+            panel.alphaValue = 1
+            return
+        }
+        entranceInFlight = true
+        // A pronounced rise (vs the subtle steady-state nudge) so the eye
+        // follows the card into the corner after the welcome window fades.
+        panel.setFrameOrigin(NSPoint(x: target.x, y: target.y - 22))
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.42
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+            panel.animator().setFrameOrigin(target)
+        }, completionHandler: { [weak self] in
+            // Runs on the main thread; snap to the final corner in case the
+            // content size settled mid-flight.
+            MainActor.assumeIsolated {
+                self?.entranceInFlight = false
+                self?.pinToCorner()
+            }
+        })
     }
 
     private func installActivationObserver() {
@@ -309,127 +372,211 @@ final class OnboardingDemoCardWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate
 
+    func windowDidResize(_ notification: Notification) {
+        // The hosting controller auto-sizes the panel to the SwiftUI content.
+        // The first resize (size settled) drives the entrance; later resizes
+        // (state changes) re-pin to the corner. While the entrance is in
+        // flight, leave the origin to the animator so it doesn't fight.
+        if !didAnimateEntrance {
+            animateEntranceIfNeeded()
+        } else if !entranceInFlight {
+            pinToCorner()
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
-        // The X button on the panel was clicked — treat as Skip with no extra
-        // ceremony. If we're already firing an outcome (from a button path),
-        // fireOutcome's idempotency guard makes this a no-op.
+        // ⌘W (the panel is .closable) — treat as Skip with no extra ceremony.
+        // If we're already firing an outcome (from a button path), fireOutcome's
+        // idempotency guard makes this a no-op.
         if !didFireOutcome {
             handleSkip()
         }
     }
 }
 
-// MARK: - SwiftUI card
+// MARK: - Card model
 
-private struct DemoCardView: View {
-    let hotkeyDisplay: String
-    let state: OnboardingDemoCardWindowController.State
-    let onSkip: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            switch state {
-            case .waiting, .firing:
-                waitingBody
-            case .landed:
-                landedBody
-            }
-            Spacer(minLength: 0)
-            footer
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 16)
-        // Bounded to the card size so the hosting controller can't size the
-        // panel to an unbounded preferred height. The Spacer above still
-        // pins the footer to the bottom within this fixed height.
-        .frame(
-            width: OnboardingDemoCardWindowController.cardSize.width,
-            height: OnboardingDemoCardWindowController.cardSize.height,
-            alignment: .topLeading
-        )
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: state == .landed ? "checkmark.seal.fill" : "sparkles")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.accentColor)
-            Text(state == .landed ? "You're in." : "Try Blink on your own window")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var waitingBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Switch to any window — an email, a Slack thread, a doc — and press")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                KeycapView(label: hotkeyDisplay, size: .large)
-                Spacer()
-            }
-            .padding(.vertical, 2)
-            Text("Blink will summarize it and draft 3 replies. Press **1**, **2**, or **3** to paste.")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var landedBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Press **1**, **2**, or **3** to paste a reply.\nPress **R** to reroll.")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Button("Skip", action: onSkip)
-                .buttonStyle(.borderless)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .font(.system(size: 12))
+/// Drives the live SwiftUI card. The controller publishes state changes here so
+/// the view updates in place rather than via a `rootView` swap.
+private final class DemoCardModel: ObservableObject {
+    @Published var state: OnboardingDemoCardWindowController.State
+    init(state: OnboardingDemoCardWindowController.State) {
+        self.state = state
     }
 }
 
-// MARK: - Keycap
+// MARK: - SwiftUI card
 
-/// Keycap for hotkey display. `large` is the focal-point variant used by the
-/// demo card; `small` is the compact inline variant.
-private struct KeycapView: View {
-    enum Size { case small, large }
-    let label: String
-    let size: Size
+private struct DemoCardView: View {
+    @ObservedObject var model: DemoCardModel
+    let hotkeyDisplay: String
+    let hotkeyParts: [String]
+    let onDismiss: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let cardWidth: CGFloat = 320
 
     var body: some View {
-        let fontSize: CGFloat = size == .large ? 18 : 12
-        let hPad: CGFloat = size == .large ? 14 : 6
-        let vPad: CGFloat = size == .large ? 8 : 2
-        let corner: CGFloat = size == .large ? 8 : 4
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .center, spacing: 14) {
+                if model.state == .landed {
+                    BlinkLogo(reduceMotion: reduceMotion)
+                }
 
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                switch model.state {
+                case .waiting, .firing:
+                    Text("Switch to any window and press")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+
+                    KeyRow(keys: hotkeyParts)
+                        .padding(.vertical, 2)
+
+                    Text("Blink reads it and drafts three replies in seconds.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+
+                case .landed:
+                    Text("Press \(hotkeyDisplay) anytime. Blink lives in your Dock.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 22)
+            .frame(width: Self.cardWidth)
+            .modifier(GlassCardSurface(cornerRadius: 22))
+
+            MacCloseButton(action: onDismiss)
+                .padding(14)
+        }
+    }
+
+    private var title: String {
+        model.state == .landed ? "Nice, that's Blink" : "Try Blink on your own window"
+    }
+}
+
+// MARK: - Close button
+
+/// The standard macOS traffic-light close button: red fill, ✕ on hover. Drawn
+/// in SwiftUI (rather than using the native title-bar button) so it stays the
+/// active red on a non-activating panel.
+private struct MacCloseButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 1.0, green: 0.37, blue: 0.34))
+                    .overlay(Circle().strokeBorder(.black.opacity(0.18), lineWidth: 0.5))
+                Image(systemName: "xmark")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.black.opacity(hovering ? 0.55 : 0.0))
+            }
+            .frame(width: 12, height: 12)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Close")
+        .accessibilityLabel("Dismiss")
+    }
+}
+
+// MARK: - Blink logo
+
+/// Landed-state celebration: the Blink app icon springs in once. Solid image,
+/// no glow.
+private struct BlinkLogo: View {
+    let reduceMotion: Bool
+    @State private var shown = false
+
+    var body: some View {
+        Image(nsImage: NSApplication.shared.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: 54, height: 54)
+            .scaleEffect(shown ? 1 : 0.5)
+            .opacity(shown ? 1 : 0)
+            .onAppear {
+                if reduceMotion {
+                    shown = true
+                } else {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
+                        shown = true
+                    }
+                }
+            }
+    }
+}
+
+// MARK: - Keys
+
+/// The hotkey rendered as separate caps, e.g. ⌃ ⌥ Space.
+private struct KeyRow: View {
+    let keys: [String]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                Keycap(label: key)
+            }
+        }
+    }
+}
+
+/// One quiet, flat cap — no shadow, glow, or animation.
+private struct Keycap: View {
+    let label: String
+
+    var body: some View {
         Text(label)
-            .font(.system(size: fontSize, weight: .semibold, design: .monospaced))
-            .foregroundColor(.primary)
-            .padding(.horizontal, hPad)
-            .padding(.vertical, vPad)
+            .font(.system(size: 16, weight: .medium, design: .rounded))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, label.count > 1 ? 12 : 9)
+            .padding(.vertical, 6)
+            .frame(minWidth: 30)
             .background(
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.primary.opacity(0.08))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.12), lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(size == .large ? 0.12 : 0), radius: 2, x: 0, y: 1)
+    }
+}
+
+// MARK: - Glass card surface
+
+/// Liquid Glass on macOS 26+, `.regularMaterial` everywhere older. The panel is
+/// transparent and provides the (rounded) drop shadow, so this draws no shadow
+/// of its own.
+private struct GlassCardSurface: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(
+                .regular,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+        } else {
+            content.background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+            )
+        }
     }
 }

@@ -60,7 +60,10 @@ struct WelcomePermissionsView: View {
     /// Relaunch sub-state: the in-process hotkey start failed after the grants
     /// landed, so Blink needs a relaunch before it can listen.
     let needsRelaunch: Bool
+    /// "Launch Blink at login" preference (default-on).
+    let launchAtLogin: Bool
     let onOpenSettings: (WelcomePermissionKind) -> Void
+    let onSetLaunchAtLogin: (Bool) -> Void
     let onGetStarted: () -> Void
     let onRelaunch: () -> Void
 
@@ -86,11 +89,13 @@ struct WelcomePermissionsView: View {
     private var checklistBody: some View {
         VStack(spacing: 18) {
             rowsCard
-            Text("Runs on your Mac — Blink only acts when you press the hotkey.")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+            Toggle(isOn: Binding(get: { launchAtLogin }, set: onSetLaunchAtLogin)) {
+                Text("Launch Blink at login")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
             Button(action: onGetStarted) {
                 Text("Get Started")
                     .font(.system(size: 14, weight: .semibold))
@@ -204,7 +209,9 @@ struct WelcomePermissionsView: View {
         granted: [.screenRecording: true],
         allGranted: false,
         needsRelaunch: false,
+        launchAtLogin: true,
         onOpenSettings: { _ in },
+        onSetLaunchAtLogin: { _ in },
         onGetStarted: {},
         onRelaunch: {}
     )
@@ -217,7 +224,9 @@ struct WelcomePermissionsView: View {
         granted: [.screenRecording: true, .accessibility: true, .inputMonitoring: true],
         allGranted: true,
         needsRelaunch: false,
+        launchAtLogin: true,
         onOpenSettings: { _ in },
+        onSetLaunchAtLogin: { _ in },
         onGetStarted: {},
         onRelaunch: {}
     )

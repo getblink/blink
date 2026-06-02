@@ -32,8 +32,13 @@ struct WelcomePreview: View {
     /// stuck invisible.
     @State private var copyFadeTask: Task<Void, Never>?
 
-    init(model: PermissionsModel) {
+    init(model: PermissionsModel, startAtPermissions: Bool = false) {
         _permissions = StateObject(wrappedValue: model)
+        // Resume directly at the permissions step (e.g. after a mid-grant
+        // relaunch) instead of replaying the landing + tour.
+        let start = startAtPermissions ? (Self.steps.count - 1) : 0
+        _slideIndex = State(initialValue: start)
+        _copyIndex = State(initialValue: start)
     }
 
     /// How long after a slide appears before the "Click anywhere" hint
@@ -117,7 +122,9 @@ struct WelcomePreview: View {
             granted: permissions.granted,
             allGranted: permissions.allGranted,
             needsRelaunch: permissions.needsRelaunch,
+            launchAtLogin: permissions.launchAtLogin,
             onOpenSettings: { permissions.openSettings(for: $0) },
+            onSetLaunchAtLogin: { permissions.setLaunchAtLogin($0) },
             onGetStarted: { permissions.finish() },
             onRelaunch: { permissions.relaunch() }
         )
@@ -157,6 +164,13 @@ struct WelcomePreview: View {
                 permissions.start()
             } else {
                 permissions.pause()
+            }
+        }
+        .onAppear {
+            // Resume case: we open straight on permissions, so onChange never
+            // fires — kick off probing here. start() is idempotent.
+            if Self.steps[slideIndex].kind == .permissions {
+                permissions.start()
             }
         }
     }

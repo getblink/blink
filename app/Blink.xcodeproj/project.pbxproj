@@ -46,6 +46,7 @@
 		8550B2497B8E60C5C41CC218 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7907A5FA8563D8D62D8A0538 /* IOKit.framework */; };
 		85F2AEEC97F66C7399E832C0 /* FocusedContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040D699C80AB14DC7CA7180F /* FocusedContextCaptureTests.swift */; };
 		875FED3FFB2C90AEAF04377E /* MainMenuBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */; };
+		8A7274C1780D627701F5733F /* LoginItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55E7A078F9F84EFE2213A5C5 /* LoginItem.swift */; };
 		8D4B973BAB065E21A9F47342 /* WelcomeSlideContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEEE53047DB889BB46111E9 /* WelcomeSlideContainer.swift */; };
 		8D89F453B4B447F3C165D8C2 /* RuntimeEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F508C4F9E4A91770F8CAB40E /* RuntimeEnvironment.swift */; };
 		980F1B428389277B4F6AAD36 /* NudgeOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */; };
@@ -124,6 +125,7 @@
 		4F40CDC441E9D455D7493380 /* LibraryStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStripView.swift; sourceTree = "<group>"; };
 		5003916E3C9E51FF96494423 /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
 		5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
+		55E7A078F9F84EFE2213A5C5 /* LoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItem.swift; sourceTree = "<group>"; };
 		574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeCanvasView.swift; sourceTree = "<group>"; };
 		57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuBuilder.swift; sourceTree = "<group>"; };
 		5B0476F717FE6D32A76C485D /* ControlWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlWindow.swift; sourceTree = "<group>"; };
@@ -252,6 +254,7 @@
 				5003916E3C9E51FF96494423 /* JSONFiles.swift */,
 				9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */,
 				4F40CDC441E9D455D7493380 /* LibraryStripView.swift */,
+				55E7A078F9F84EFE2213A5C5 /* LoginItem.swift */,
 				57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */,
 				009080B616A8506A5210AC26 /* MenubarController.swift */,
 				1B874CA83CFFA290563A148F /* ModelChoices.swift */,
@@ -457,6 +460,7 @@
 				9C4F5B01E1D71DEF511D97ED /* JSONFiles.swift in Sources */,
 				B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */,
 				5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */,
+				8A7274C1780D627701F5733F /* LoginItem.swift in Sources */,
 				875FED3FFB2C90AEAF04377E /* MainMenuBuilder.swift in Sources */,
 				F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */,
 				C71A7774C8F984B93B771730 /* ModelChoices.swift in Sources */,

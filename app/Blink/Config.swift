@@ -54,6 +54,14 @@ enum Paths {
         runtimeDir.appendingPathComponent("first_hotkey_nudge_shown")
     }
 
+    /// Set once the first-run welcome flow advances to the permissions step.
+    /// Lets a mid-onboarding relaunch — e.g. macOS's "Quit & Reopen" after the
+    /// user grants Screen Recording — resume at permissions instead of
+    /// replaying the landing + tour. Cleared when onboarding completes.
+    static var onboardingReachedPermissionsPath: URL {
+        runtimeDir.appendingPathComponent("onboarding_reached_permissions")
+    }
+
     static var installIDPath: URL {
         runtimeDir.appendingPathComponent("install_id")
     }
@@ -122,6 +130,24 @@ enum Paths {
     static func markOnboarded(runtimeDir: URL = Paths.runtimeDir) {
         let path = runtimeDir.appendingPathComponent("onboarded")
         try? JSONFiles.isoString().write(to: path, atomically: true, encoding: .utf8)
+    }
+
+    /// True if a prior session reached the permissions step but never finished
+    /// onboarding — i.e. resume there rather than replaying landing + tour.
+    static func reachedOnboardingPermissions(runtimeDir: URL = Paths.runtimeDir) -> Bool {
+        FileManager.default.fileExists(
+            atPath: runtimeDir.appendingPathComponent("onboarding_reached_permissions").path
+        )
+    }
+
+    static func markReachedOnboardingPermissions(runtimeDir: URL = Paths.runtimeDir) {
+        let path = runtimeDir.appendingPathComponent("onboarding_reached_permissions")
+        try? JSONFiles.isoString().write(to: path, atomically: true, encoding: .utf8)
+    }
+
+    static func clearReachedOnboardingPermissions(runtimeDir: URL = Paths.runtimeDir) {
+        let path = runtimeDir.appendingPathComponent("onboarding_reached_permissions")
+        try? FileManager.default.removeItem(at: path)
     }
 
     static func shouldShowFirstHotkeyNudge(
