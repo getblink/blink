@@ -85,6 +85,10 @@ struct RuntimeConfigFile: Codable {
     var nudgeCooldownMinutes: Int
     var style: StylePrefs
     var annotateScreenshots: Bool
+    /// Pace multiplier for the Liquid Glass capture-loading intro (drain → pill
+    /// → smile). 1.0 = original timing; higher = snappier. Read fresh by the
+    /// lens on each capture, so a Settings change applies on the next press.
+    var lensAnimationSpeed: Double
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -101,6 +105,7 @@ struct RuntimeConfigFile: Codable {
         case nudgeCooldownMinutes = "nudge_cooldown_minutes"
         case style
         case annotateScreenshots = "annotate_screenshots"
+        case lensAnimationSpeed = "lens_animation_speed"
     }
 
     init(
@@ -117,7 +122,8 @@ struct RuntimeConfigFile: Codable {
         recentNudgeDismissals: [Date],
         nudgeCooldownMinutes: Int,
         style: StylePrefs = .default,
-        annotateScreenshots: Bool = true
+        annotateScreenshots: Bool = true,
+        lensAnimationSpeed: Double = 2.0
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -133,6 +139,7 @@ struct RuntimeConfigFile: Codable {
         self.nudgeCooldownMinutes = nudgeCooldownMinutes
         self.style = style
         self.annotateScreenshots = annotateScreenshots
+        self.lensAnimationSpeed = lensAnimationSpeed
     }
 
     init(from decoder: Decoder) throws {
@@ -153,6 +160,7 @@ struct RuntimeConfigFile: Codable {
         nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
         style = try container.decodeIfPresent(StylePrefs.self, forKey: .style) ?? .default
         annotateScreenshots = try container.decodeIfPresent(Bool.self, forKey: .annotateScreenshots) ?? true
+        lensAnimationSpeed = try container.decodeIfPresent(Double.self, forKey: .lensAnimationSpeed) ?? 2.0
     }
 }
 
@@ -197,6 +205,13 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var annotateScreenshots: Bool {
         didSet { save() }
     }
+    @Published var lensAnimationSpeed: Double {
+        didSet { save() }
+    }
+
+    /// Bounds for `lensAnimationSpeed`, shared by the Settings slider and the
+    /// lens (which clamps defensively in case the config file is hand-edited).
+    static let lensAnimationSpeedRange: ClosedRange<Double> = 1.0...3.0
 
     private var isSaving = false
 
@@ -215,6 +230,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.nudgeCooldownMinutes = config.nudgeCooldownMinutes
         self.style = config.style
         self.annotateScreenshots = config.annotateScreenshots
+        self.lensAnimationSpeed = config.lensAnimationSpeed
     }
 
     var snapshot: RuntimeConfigFile {
@@ -232,7 +248,8 @@ final class RuntimeConfigStore: ObservableObject {
             recentNudgeDismissals: recentNudgeDismissals,
             nudgeCooldownMinutes: nudgeCooldownMinutes,
             style: style,
-            annotateScreenshots: annotateScreenshots
+            annotateScreenshots: annotateScreenshots,
+            lensAnimationSpeed: lensAnimationSpeed
         )
     }
 
@@ -256,7 +273,8 @@ final class RuntimeConfigStore: ObservableObject {
             recentNudgeDismissals: [],
             nudgeCooldownMinutes: 30,
             style: .default,
-            annotateScreenshots: true
+            annotateScreenshots: true,
+            lensAnimationSpeed: 2.0
         )
         write(config)
         return config

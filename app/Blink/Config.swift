@@ -195,18 +195,31 @@ enum Paths {
 }
 
 enum TCCDiagnostics {
+    /// Serial queue for the diagnostics file append. The write is moved off the
+    /// caller's thread so logging never blocks a latency-sensitive path — most
+    /// importantly `requiredPermissionsGranted`, which runs on the main thread
+    /// immediately *before* the capture chime, so a slow disk used to delay the
+    /// sound. `isoString()` is sampled synchronously (accurate timestamp) and
+    /// the serial queue preserves append order.
+    private static let writeQueue = DispatchQueue(
+        label: "com.henryz2004.blink.tcc-diagnostics",
+        qos: .utility
+    )
+
     static func log(_ message: String) {
         let line = "\(JSONFiles.isoString()) BlinkTCC: \(message)\n"
         NSLog("%@", line.trimmingCharacters(in: .newlines))
-        let path = Paths.tccDiagnosticsPath
         guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: path.path),
-           let handle = try? FileHandle(forWritingTo: path) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: path, options: .atomic)
+        let path = Paths.tccDiagnosticsPath
+        writeQueue.async {
+            if FileManager.default.fileExists(atPath: path.path),
+               let handle = try? FileHandle(forWritingTo: path) {
+                defer { try? handle.close() }
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+            } else {
+                try? data.write(to: path, options: .atomic)
+            }
         }
     }
 }

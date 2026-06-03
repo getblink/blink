@@ -182,6 +182,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showFirstHotkeyNudgeIfNeeded()
             startHotkeysIfNeeded()
         }
+
+        // Warm the capture-feedback surfaces (chime audio route + glass lens
+        // render) shortly after launch, off the critical path, so the *first*
+        // hotkey press doesn't pay their one-time first-use warmup as a lag.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak coordinator] in
+            coordinator?.prewarmCaptureFeedback()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {

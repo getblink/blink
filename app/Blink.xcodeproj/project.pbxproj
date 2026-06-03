@@ -35,6 +35,7 @@
 		55E249BC1D79B2376E2BFAE6 /* CaptureGesturePrototypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2FB2C3A23CFE8A4A48F2DCD /* CaptureGesturePrototypes.swift */; };
 		55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */; };
 		57193332340304C7D0F59435 /* LGProto16.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B984A1FB20601BDAC8E7E70 /* LGProto16.swift */; };
+		58CC3B902AAF6354D17C43AC /* GlassCaptureLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */; };
 		5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */; };
 		5DB3E531F79B3772D84B7949 /* StyleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F198B215CB11B569047AA51E /* StyleSettingsView.swift */; };
 		5EC90CA7FCF9628D1FA931F7 /* ControlWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0476F717FE6D32A76C485D /* ControlWindow.swift */; };
@@ -119,6 +120,7 @@
 		125535B1A3C0CFB2836E271A /* LGProto17.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto17.swift; sourceTree = "<group>"; };
 		154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
 		194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCapture.swift; sourceTree = "<group>"; };
+		1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCaptureLoading.swift; sourceTree = "<group>"; };
 		1B874CA83CFFA290563A148F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
 		1B984A1FB20601BDAC8E7E70 /* LGProto16.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto16.swift; sourceTree = "<group>"; };
 		1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClientTests.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				B6CFA143AF216667464AF0DE /* Config.swift */,
 				5B0476F717FE6D32A76C485D /* ControlWindow.swift */,
 				BE528B648E6A873778F7825C /* FocusedContextCapture.swift */,
+				1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */,
 				A2EF34A50A57C1CF8722B81A /* Hotkey.swift */,
 				5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */,
 				ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */,
@@ -493,6 +496,7 @@
 				5EC90CA7FCF9628D1FA931F7 /* ControlWindow.swift in Sources */,
 				39EF5881D30049E64A6BC7B1 /* FocusedContextCapture.swift in Sources */,
 				B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */,
+				58CC3B902AAF6354D17C43AC /* GlassCaptureLoading.swift in Sources */,
 				E26600A22917C3ADD360B2E0 /* Hotkey.swift in Sources */,
 				55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */,
 				5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */,

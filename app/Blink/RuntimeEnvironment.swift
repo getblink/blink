@@ -5,6 +5,18 @@ struct ProxyConfig {
     let token: String
 }
 
+/// Where the overlay (loading state + result card) is positioned on screen.
+/// `centered` is the historical behavior. The window-anchored modes use the
+/// captured window's frame so the loading indicator stays out of the reading
+/// area while the user scans the source content. Switched via
+/// `BLINK_LOADING_PLACEMENT` so the three approaches can be compared without
+/// a rebuild — see `RuntimeEnvironment.loadingPlacement()`.
+enum LoadingPlacement: String {
+    case centered
+    case windowSide
+    case windowCorner
+}
+
 enum RuntimeEnvironment {
     static func proxyConfig() -> ProxyConfig? {
         proxyConfig(preferDeviceToken: true)
@@ -77,6 +89,33 @@ enum RuntimeEnvironment {
     static func forceLegacyGlass() -> Bool {
         let env = mergedEnvironment()
         return isTruthy(env["BLINK_FORCE_LEGACY_GLASS"]) || isTruthy(env["TLDR_FORCE_LEGACY_GLASS"])
+    }
+
+    /// Overlay placement, read fresh so editing `.env.local` and triggering a
+    /// new capture picks up the change without a rebuild. Unknown / unset
+    /// values fall back to `.centered` (the shipped behavior), so the
+    /// window-anchored modes are strictly opt-in.
+    static func loadingPlacement() -> LoadingPlacement {
+        let env = mergedEnvironment()
+        let raw = (env["BLINK_LOADING_PLACEMENT"] ?? env["TLDR_LOADING_PLACEMENT"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch raw {
+        case "corner", "windowcorner", "window_corner":
+            return .windowCorner
+        case "side", "windowside", "window_side":
+            return .windowSide
+        default:
+            return .centered
+        }
+    }
+
+    /// Opt into the Liquid Glass capture-loading animation (a clear lens over the
+    /// captured window that drains into a glass "Reading…" pill) in place of the
+    /// default corner puck. Read fresh each capture; unset = off.
+    static func glassLoadingEnabled() -> Bool {
+        let env = mergedEnvironment()
+        return isTruthy(env["BLINK_GLASS_LOADING"]) || isTruthy(env["TLDR_GLASS_LOADING"])
     }
 
     private static func isTruthy(_ value: String?) -> Bool {

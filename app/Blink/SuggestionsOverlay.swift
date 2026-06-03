@@ -411,6 +411,12 @@ final class SuggestionsOverlay: NSObject {
         static let loadingMinHeight: CGFloat = 56
         static let loadingDotSize: CGFloat = 8
         static let loadingDotTextGap: CGFloat = 10
+        // Compact loading puck used by the window-anchored placements. A small
+        // accent-tinted pill (pulsing dot + short "Reading…" label) — present
+        // enough to signal work, unobtrusive enough to scan past. Width is
+        // content-sized in `show()`; padding sets the horizontal breathing room.
+        static let loadingPuckHeight: CGFloat = 34
+        static let loadingPuckPaddingX: CGFloat = 17
         static let sectionGap: CGFloat = 14
         static let suggestionGap: CGFloat = 8
         static let summaryFontSize: CGFloat = 16
@@ -533,6 +539,18 @@ final class SuggestionsOverlay: NSObject {
     /// Only consulted at panel construction; once a panel exists, recenter
     /// logic uses `panel.screen` and ignores this value.
     var preferredScreen: NSScreen?
+    /// AppKit-screen rect (bottom-left origin) of the captured window, set by
+    /// the coordinator before `showLoading`. Consulted by `panelOrigin` when
+    /// the placement is a window-anchored mode so the overlay lands relative
+    /// to the focused window instead of screen-center. Nil falls back to
+    /// centered placement, preserving prior behavior for non-capture entry
+    /// points (Settings, manual show calls in tests).
+    var anchorRect: NSRect?
+    /// Placement mode captured at `show()` time so the streaming follow-ups
+    /// (`updateSummary` / `updateSuggestionDetails`) reposition the panel
+    /// consistently with where the loading state first landed — no jump from
+    /// a corner puck to a centered card mid-stream.
+    private var loadingPlacement: LoadingPlacement = .centered
     // Close handle for the active multi-frame submit-prompt pill. Set by
     // `showSubmitPrompt()`; invoked + cleared by `dismissSubmitPrompt()`
     // (or replaced if `showSubmitPrompt()` is called again).
@@ -553,6 +571,12 @@ final class SuggestionsOverlay: NSObject {
     private var refreshStatusLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
+    /// True while the loading state is rendered as the compact corner/side
+    /// puck (window-anchored placements) rather than the full-width centered
+    /// pill. Gates the puck-specific layout in `show()`, the no-op in
+    /// `updateLoadingPhase` (the puck has no text), and the full-width restore
+    /// in `updateSummary`'s loading→result transition.
+    private var loadingIsCompactPuck: Bool = false
     private var isSuggestionRefreshing: Bool = false
     private var softErrorPanel: NSPanel?
     private var summaryBaseFrame: NSRect = .zero
@@ -736,6 +760,86 @@ final class SuggestionsOverlay: NSObject {
     /// bottom on the target screen.
     private func computeMaxPanelHeight(for screenFrame: NSRect) -> CGFloat {
         max(0, screenFrame.height - 2 * Layout.screenSafetyMargin)
+    }
+
+    /// Clamp a panel x so the panel never extends past the visible screen,
+    /// mirroring `clampedPanelY` for the horizontal axis. Falls back to
+    /// horizontal centering when the panel is wider than the screen budget.
+    private func clampedPanelX(
+        preferredX: CGFloat,
+        panelWidth: CGFloat,
+        screenFrame: NSRect
+    ) -> CGFloat {
+        let margin = Layout.screenSafetyMargin
+        let minX = screenFrame.minX + margin
+        let maxX = screenFrame.maxX - panelWidth - margin
+        if maxX < minX {
+            return screenFrame.midX - panelWidth / 2
+        }
+        return max(minX, min(preferredX, maxX))
+    }
+
+    /// Resolve the panel origin for the current placement. Every origin-from-
+    /// scratch site (show + the streaming `updateSummary`/`updateSuggestion`
+    /// follow-ups) routes through here so the loading state and the finished
+    /// card land in the same place. `.centered` (or a nil `anchorRect`)
+    /// reproduces the historical screen-centered placement exactly.
+    ///
+    /// The visible card sits `shadowBleed` inside the panel on every edge, so
+    /// the anchored modes offset by `shadowBleed` to land the *visible* edge —
+    /// not the invisible shadow perimeter — at the intended inset.
+    private func panelOrigin(
+        panelWidth: CGFloat,
+        panelHeight: CGFloat,
+        screenFrame: NSRect
+    ) -> NSPoint {
+        // Inset of the visible card from the window edge in anchored modes.
+        let gap: CGFloat = 16
+        let bleed = Layout.shadowBleed
+
+        guard loadingPlacement != .centered, let anchor = anchorRect else {
+            let y = clampedPanelY(
+                preferredCenterY: screenFrame.midY - panelHeight / 2,
+                panelHeight: panelHeight,
+                screenFrame: screenFrame
+            )
+            // Preserve the current x on in-place grows — matches the historical
+            // centered behavior, including a user's horizontal drag. `close()`
+            // nils `panel` before each `show()`, so the first placement (no
+            // panel yet) still centers horizontally.
+            let x = panel?.frame.origin.x ?? (screenFrame.midX - panelWidth / 2)
+            return NSPoint(x: x, y: y)
+        }
+
+        // Pin the visible right edge just inside the window's right edge for
+        // both anchored modes; corner also pins the visible bottom edge just
+        // inside the window's bottom, while side centers vertically on the
+        // window. As the panel grows (loading puck -> tall card), the pinned
+        // corner/edge stays put and the card expands up / left from it.
+        let desiredVisibleRight = anchor.maxX - gap
+        let x = clampedPanelX(
+            preferredX: desiredVisibleRight + bleed - panelWidth,
+            panelWidth: panelWidth,
+            screenFrame: screenFrame
+        )
+
+        let preferredY: CGFloat
+        switch loadingPlacement {
+        case .windowCorner:
+            // Visible bottom edge at (window bottom + gap).
+            preferredY = (anchor.minY + gap) - bleed
+        case .windowSide:
+            // Vertically centered on the window.
+            preferredY = anchor.midY - panelHeight / 2
+        case .centered:
+            preferredY = screenFrame.midY - panelHeight / 2
+        }
+        let y = clampedPanelY(
+            preferredCenterY: preferredY,
+            panelHeight: panelHeight,
+            screenFrame: screenFrame
+        )
+        return NSPoint(x: x, y: y)
     }
 
     /// Build the NSScrollView used in overflowing mode. Hosts the summary
@@ -1032,6 +1136,18 @@ final class SuggestionsOverlay: NSObject {
     ) {
         close()
 
+        // Read fresh each show() so editing `.env.local` + a new capture
+        // picks up a placement change; latched into the property so the
+        // streaming follow-ups reposition consistently.
+        loadingPlacement = RuntimeEnvironment.loadingPlacement()
+
+        // Compact-puck loading layout only for the window-anchored placements
+        // with a known window rect; centered loading keeps the full-width
+        // pill. Latched so the loading->result transition and `updateLoadingPhase`
+        // can branch consistently.
+        let loadingPuck = isLoading && loadingPlacement != .centered && anchorRect != nil
+        loadingIsCompactPuck = loadingPuck
+
         let visibleSuggestions = Array(suggestionDetails.prefix(3))
         // Loading state keeps the medium weight for visual contrast with the
         // pulsing dot; the actual Blink body is regular weight so the bold
@@ -1063,7 +1179,7 @@ final class SuggestionsOverlay: NSObject {
             )
         let summaryHeight: CGFloat
         if isLoading {
-            summaryHeight = Layout.loadingMinHeight
+            summaryHeight = loadingPuck ? Layout.loadingPuckHeight : Layout.loadingMinHeight
         } else {
             summaryHeight = max(
                 Layout.summaryMinHeight,
@@ -1092,7 +1208,17 @@ final class SuggestionsOverlay: NSObject {
         let contentHeight = summaryHeight
             + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
             + bottomHintBlockHeight
-        let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
+        // The compact puck uses a narrow panel so only the small visible pill
+        // sits over the source window (no wide invisible click dead-zone). The
+        // loading->result transition widens it back to the standard width.
+        // Width is content-sized to fit [dot][gap][label] plus side padding so
+        // the "Reading…" label reads as a tidy pill.
+        let puckTextWidth = loadingPuck ? ceil(measureLoadingTextWidth(tldr, font: summaryFont)) : 0
+        let puckWidth = Layout.loadingPuckPaddingX
+            + Layout.loadingDotSize + Layout.loadingDotTextGap + puckTextWidth
+            + Layout.loadingPuckPaddingX
+        let cardWidth = loadingPuck ? puckWidth : contentWidth
+        let panelWidth = cardWidth + Layout.shadowBleed * 2
         let flatPanelHeight = contentHeight + Layout.shadowBleed * 2
 
         // Overflow plan: the scrollable area is summary + suggestion stack;
@@ -1127,15 +1253,10 @@ final class SuggestionsOverlay: NSObject {
             ? (effectiveScrollerHeight + pinnedHeight + 2 * Layout.shadowBleed)
             : flatPanelHeight
 
-        let preferredCenterY = screenFrame.midY - panelHeight / 2
-        let originY = clampedPanelY(
-            preferredCenterY: preferredCenterY,
+        let origin = panelOrigin(
+            panelWidth: panelWidth,
             panelHeight: panelHeight,
             screenFrame: screenFrame
-        )
-        let origin = NSPoint(
-            x: screenFrame.midX - panelWidth / 2,
-            y: originY
         )
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
@@ -1217,8 +1338,11 @@ final class SuggestionsOverlay: NSObject {
 
         let contentX = cardHostX
         let summaryY = cardHostTopY - summaryHeight
-        let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
-        let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
+        let summaryFrame = NSRect(x: contentX, y: summaryY, width: cardWidth, height: summaryHeight)
+        let summary = makeGlassPane(
+            frame: summaryFrame,
+            cornerRadius: loadingPuck ? summaryHeight / 2 : 24
+        )
 
         // Skip the pin affordance during the loading shimmer — the panel is
         // momentarily an unactionable "Reading the screen…" pill and the
@@ -1285,7 +1409,41 @@ final class SuggestionsOverlay: NSObject {
         }
 
         let summaryLabel: NSTextField
-        if isLoading {
+        if loadingPuck {
+            // Window-anchored loading: a small liquid-glass pill — one pulsing
+            // monochrome dot + the "Reading…" label — that tells a first-time
+            // user what Blink is doing while staying out of the way. The glass
+            // is left bare (no color wash) so it reads as native frosted glass;
+            // the streaming `updateSummary` path reframes this same label into
+            // the real tldr when the pill grows into the card.
+            let textHeight = ceil(summaryFont.ascender - summaryFont.descender)
+            let centerY = summaryFrame.height / 2
+            let dotX = Layout.loadingPuckPaddingX
+            let dot = installLoadingDot(
+                in: summary.content,
+                at: NSRect(
+                    x: dotX,
+                    y: centerY - Layout.loadingDotSize / 2,
+                    width: Layout.loadingDotSize,
+                    height: Layout.loadingDotSize
+                ),
+                color: .labelColor
+            )
+            loadingPulseDot = dot
+            let labelX = dotX + Layout.loadingDotSize + Layout.loadingDotTextGap
+            summaryLabel = label(
+                frame: NSRect(
+                    x: labelX,
+                    y: centerY - textHeight / 2,
+                    width: summaryFrame.width - labelX - Layout.loadingPuckPaddingX + 6,
+                    height: textHeight
+                ),
+                text: tldr,
+                font: summaryFont,
+                color: .labelColor,
+                singleLine: true
+            )
+        } else if isLoading {
             // Compact loading layout: a centered horizontal group of
             // [pulsing dot] [placeholder text] sitting at vertical center
             // of the (much shorter) summary card. We size and position the
@@ -1549,7 +1707,8 @@ final class SuggestionsOverlay: NSObject {
     /// pulsing dot or growing the card. Used for `.phase` events from the
     /// streaming pipeline ("Reading screen…", "Calling Gemini…", etc.).
     func updateLoadingPhase(_ text: String) {
-        guard isLoadingState, let summaryCard, let summaryLabel else {
+        // The compact puck shows no text — phase messages are a no-op there.
+        guard isLoadingState, !loadingIsCompactPuck, let summaryCard, let summaryLabel else {
             return
         }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
@@ -1626,8 +1785,32 @@ final class SuggestionsOverlay: NSObject {
         // "Reading the screen…" instead of the real tldr.
         summaryFullText = text
         let wasLoading = isLoadingState
+        // Capture before tearDownLoadingState() clears the flag below.
+        let wasCompactPuck = loadingIsCompactPuck
         if wasLoading {
             tearDownLoadingState()
+            if wasCompactPuck {
+                // The narrow corner/side puck unfolds into the full-width
+                // result card. Widen the panel and reset the summary card's
+                // baseline width to the standard width *before* the grow math
+                // below repositions/resizes from these baselines. Origin is
+                // recomputed via panelOrigin in the grow branch, so the
+                // card's pinned window edge stays put as it expands.
+                let fullPanelWidth = Layout.panelWidth + 2 * Layout.shadowBleed
+                panel.setFrame(
+                    NSRect(
+                        x: panel.frame.minX,
+                        y: panel.frame.minY,
+                        width: fullPanelWidth,
+                        height: panel.frame.height
+                    ),
+                    display: false,
+                    animate: false
+                )
+                contentView.frame.size.width = fullPanelWidth
+                summaryBaseFrame.size.width = Layout.panelWidth
+                summaryLabel.isHidden = false
+            }
             // Streaming-loading path: now that the real summary is on screen,
             // promote the panel to key so its local handler intercepts stray
             // keystrokes. Mirrors the immediate-show path in `show(...)`.
@@ -1676,17 +1859,16 @@ final class SuggestionsOverlay: NSObject {
                     pinnedHeight: pinnedAreaHeight,
                     maxPanelHeight: computedMax
                 )
-                // Resize panel (recenter on each grow, matching the pre-fix
-                // updateSummary behavior).
-                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-                let originY = clampedPanelY(
-                    preferredCenterY: preferredCenterY,
+                // Reposition on each grow per the active placement (recenter
+                // for centered; re-anchor for the window-anchored modes).
+                let origin = panelOrigin(
+                    panelWidth: panel.frame.width,
                     panelHeight: newPanelHeight,
                     screenFrame: screenFrame
                 )
                 let newFrame = NSRect(
-                    x: panel.frame.origin.x,
-                    y: originY,
+                    x: origin.x,
+                    y: origin.y,
                     width: panel.frame.width,
                     height: newPanelHeight
                 )
@@ -1737,15 +1919,14 @@ final class SuggestionsOverlay: NSObject {
                 // would clip the summary against cards below it.
                 let screenFrame = resolvedScreenFrame(panel: panel)
                 let newPanelHeight = basePanelHeight + summaryDelta
-                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-                let originY = clampedPanelY(
-                    preferredCenterY: preferredCenterY,
+                let origin = panelOrigin(
+                    panelWidth: panel.frame.width,
                     panelHeight: newPanelHeight,
                     screenFrame: screenFrame
                 )
                 let newFrame = NSRect(
-                    x: panel.frame.origin.x,
-                    y: originY,
+                    x: origin.x,
+                    y: origin.y,
                     width: panel.frame.width,
                     height: newPanelHeight
                 )
@@ -1876,15 +2057,14 @@ final class SuggestionsOverlay: NSObject {
         // attempted "anchor current top to preserve user drag" was
         // wrong because the streaming-driven first render then walked
         // the panel down per-token instead of expanding from center.
-        let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-        let newOriginY = clampedPanelY(
-            preferredCenterY: preferredCenterY,
+        let newOrigin = panelOrigin(
+            panelWidth: newPanelWidth,
             panelHeight: newPanelHeight,
             screenFrame: screenFrame
         )
         let newFrame = NSRect(
-            x: panel.frame.origin.x,
-            y: newOriginY,
+            x: newOrigin.x,
+            y: newOrigin.y,
             width: newPanelWidth,
             height: newPanelHeight
         )
@@ -2935,13 +3115,17 @@ final class SuggestionsOverlay: NSObject {
         onTogglePinKey?()
     }
 
-    private func installLoadingDot(in host: NSView, at frame: NSRect) -> NSView {
+    private func installLoadingDot(
+        in host: NSView,
+        at frame: NSRect,
+        color: NSColor = .controlAccentColor
+    ) -> NSView {
         let dot = NSView(frame: frame)
         dot.wantsLayer = true
         dot.layer?.cornerRadius = frame.height / 2
-        dot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        // Composite above the glass material so the accent reads cleanly
-        // through the frosted backdrop.
+        dot.layer?.backgroundColor = color.cgColor
+        // Composite above the glass material so the dot reads cleanly through
+        // the frosted backdrop.
         dot.layer?.zPosition = 1
         host.addSubview(dot)
 
@@ -2961,6 +3145,7 @@ final class SuggestionsOverlay: NSObject {
         loadingPulseDot?.removeFromSuperview()
         loadingPulseDot = nil
         isLoadingState = false
+        loadingIsCompactPuck = false
     }
 
     private func showRefreshStatusPill() {
