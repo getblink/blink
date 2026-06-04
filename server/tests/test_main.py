@@ -272,7 +272,7 @@ class MainTests(unittest.TestCase):
             turns = kwargs["conversation_turns"]
             self.assertEqual([turn["role"] for turn in turns], ["user", "model", "user"])
             self.assertEqual(turns[1]["suggestions"], ["Please send the doc.", "I'll take a look."])
-            self.assertIn("fresh set", turns[2]["text"])
+            self.assertIn("Continue the same capture conversation", turns[2]["text"])
             self.assertIn("make this warmer", turns[2]["text"])
             self.assertEqual(turns[2]["follow_up_instruction"], "make this warmer")
             self.assertNotIn("Stateful Blink context:", prompt_text)
