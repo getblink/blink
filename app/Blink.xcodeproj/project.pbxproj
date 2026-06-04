@@ -15,24 +15,24 @@
 		126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */; };
 		1343FD5FFB24D37392C8284E /* LGProto05.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE20A33E2A2D7865236A131 /* LGProto05.swift */; };
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
+		1D015A0F6D6C1DF00E6EAF27 /* WelcomePermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A843AABE071121CCBDBF6E91 /* WelcomePermissionsView.swift */; };
 		1D77564245971FB7CB8EA383 /* LGProto10.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8035C98504271D3E1A93927 /* LGProto10.swift */; };
 		2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */; };
 		25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DBB159CA5CB427CCCADEF /* BlinkApp.swift */; };
 		2798D0C6537E90C28F2675DC /* ReasoningLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */; };
-		2F95FEF1F15BB46568939DA6 /* LGProto09.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E586D98EF9B940DE8E3A04 /* LGProto09.swift */; };
-		1D015A0F6D6C1DF00E6EAF27 /* WelcomePermissionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A843AABE071121CCBDBF6E91 /* WelcomePermissionsView.swift */; };
 		291C3C14AA942E3B09776E48 /* PermissionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00FB45D42D711DC16F6248EE /* PermissionsModel.swift */; };
 		2AB661B5D3F9DC75B8F7A7D6 /* WelcomeCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */; };
+		2F95FEF1F15BB46568939DA6 /* LGProto09.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E586D98EF9B940DE8E3A04 /* LGProto09.swift */; };
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */; };
 		379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */; };
 		39EF5881D30049E64A6BC7B1 /* FocusedContextCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE528B648E6A873778F7825C /* FocusedContextCapture.swift */; };
 		3D0CF024F2456FA137971D74 /* LGProto03.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2294E928AAD20868F5855076 /* LGProto03.swift */; };
 		4350F1C146997C347902659C /* LGProto06.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3721EC9B44F62F3925DA0994 /* LGProto06.swift */; };
-		4AFFF3D6AF8CCCD235B9130E /* LGProto08.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F98827A05F7E82AAAF480E /* LGProto08.swift */; };
-		4D98A149069CD1C2B4441726 /* LGProto15.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */; };
 		43E6C3DB7409DF3B6E71F9CB /* WelcomeWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B19C3487B6BA8E18E233DCB /* WelcomeWindowController.swift */; };
 		4A753A72DD3D2BDD69DC0536 /* OnboardingDemoCardWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 320EFC3753704C215B9E8F68 /* OnboardingDemoCardWindow.swift */; };
+		4AFFF3D6AF8CCCD235B9130E /* LGProto08.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F98827A05F7E82AAAF480E /* LGProto08.swift */; };
+		4D98A149069CD1C2B4441726 /* LGProto15.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */; };
 		4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */; };
 		50308AE5E3F7FADD8F91C786 /* ScreenAnnotator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */; };
 		5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F40CDC441E9D455D7493380 /* LibraryStripView.swift */; };
@@ -94,8 +94,8 @@
 		D104FE490D8660B2C0C81706 /* SelectionCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */; };
 		D21595661DEA8661EF58575E /* LGProto02.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA6B348B16355169B875C2AF /* LGProto02.swift */; };
 		D480D4B8BC8F46752EE261B6 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBFD0424E841D9B578986EF2 /* AppKit.framework */; };
-		D5F87C7631EDC265C21F8EF2 /* TLDROverlayTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81737ADBA9EC614DB7528265 /* TLDROverlayTextTests.swift */; };
 		D56F64CD2D5AD67CE65D9FC5 /* LGProto12.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE510349F158B0D6B812C514 /* LGProto12.swift */; };
+		D5F87C7631EDC265C21F8EF2 /* TLDROverlayTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81737ADBA9EC614DB7528265 /* TLDROverlayTextTests.swift */; };
 		D70ED9B50AF249EEC20393D4 /* WelcomePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C26594E46B9AF504D235C5A9 /* WelcomePreview.swift */; };
 		D760D941705366FB3ED8B5FC /* BlinkEventClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */; };
 		DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B0F9AAF9A7972C08DC337C /* Inserter.swift */; };
@@ -145,8 +145,8 @@
 		2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
 		2E7169947353B72448A6E051 /* LGProto07.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto07.swift; sourceTree = "<group>"; };
 		306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriverTests.swift; sourceTree = "<group>"; };
-		3721EC9B44F62F3925DA0994 /* LGProto06.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto06.swift; sourceTree = "<group>"; };
 		320EFC3753704C215B9E8F68 /* OnboardingDemoCardWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingDemoCardWindow.swift; sourceTree = "<group>"; };
+		3721EC9B44F62F3925DA0994 /* LGProto06.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto06.swift; sourceTree = "<group>"; };
 		379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsView.swift; sourceTree = "<group>"; };
 		3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		3B6A4F1D256A1BB62E0C9EEF /* AboutMeTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeTextEditor.swift; sourceTree = "<group>"; };
@@ -206,20 +206,20 @@
 		BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
 		BE30179D90510906DEBE437A /* LGProto13.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto13.swift; sourceTree = "<group>"; };
 		BE528B648E6A873778F7825C /* FocusedContextCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCapture.swift; sourceTree = "<group>"; };
+		BEEEE53047DB889BB46111E9 /* WelcomeSlideContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeSlideContainer.swift; sourceTree = "<group>"; };
+		C26594E46B9AF504D235C5A9 /* WelcomePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePreview.swift; sourceTree = "<group>"; };
 		CA6B348B16355169B875C2AF /* LGProto02.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto02.swift; sourceTree = "<group>"; };
 		CA943F52412677F0533F2A01 /* LGProto04.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto04.swift; sourceTree = "<group>"; };
 		CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto15.swift; sourceTree = "<group>"; };
-		BEEEE53047DB889BB46111E9 /* WelcomeSlideContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeSlideContainer.swift; sourceTree = "<group>"; };
-		C26594E46B9AF504D235C5A9 /* WelcomePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomePreview.swift; sourceTree = "<group>"; };
 		CBFD0424E841D9B578986EF2 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStore.swift; sourceTree = "<group>"; };
 		D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStore.swift; sourceTree = "<group>"; };
 		D4D8E5685B1437D8D2C2B165 /* WelcomeOverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeOverlayPanel.swift; sourceTree = "<group>"; };
 		D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindow.swift; sourceTree = "<group>"; };
-		EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDROverlayText.swift; sourceTree = "<group>"; };
 		DE510349F158B0D6B812C514 /* LGProto12.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto12.swift; sourceTree = "<group>"; };
 		E2FB2C3A23CFE8A4A48F2DCD /* CaptureGesturePrototypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureGesturePrototypes.swift; sourceTree = "<group>"; };
 		E8035C98504271D3E1A93927 /* LGProto10.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto10.swift; sourceTree = "<group>"; };
+		EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDROverlayText.swift; sourceTree = "<group>"; };
 		ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDiagnostics.swift; sourceTree = "<group>"; };
 		F198B215CB11B569047AA51E /* StyleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleSettingsView.swift; sourceTree = "<group>"; };
 		F4A41FA81E0F7BC70D97E7F3 /* ReasoningLevelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningLevelsTests.swift; sourceTree = "<group>"; };
@@ -354,7 +354,6 @@
 				426B07C0195BA5BE4C6F7857 /* SuggestionDetail.swift */,
 				4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */,
 				EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */,
-				496D944D4DFBD05EC2DEB5CD /* WindowAXTreeCapture.swift */,
 				574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */,
 				74AB0C7A19C893ED0095FF27 /* WelcomeKeycap.swift */,
 				D4D8E5685B1437D8D2C2B165 /* WelcomeOverlayPanel.swift */,
@@ -362,6 +361,7 @@
 				C26594E46B9AF504D235C5A9 /* WelcomePreview.swift */,
 				BEEEE53047DB889BB46111E9 /* WelcomeSlideContainer.swift */,
 				6B19C3487B6BA8E18E233DCB /* WelcomeWindowController.swift */,
+				496D944D4DFBD05EC2DEB5CD /* WindowAXTreeCapture.swift */,
 				082C8BA94E0BCFA337FD2181 /* Settings */,
 			);
 			path = Blink;
@@ -589,7 +589,6 @@
 				C7A3F03FC086958582E20328 /* SuggestionDetail.swift in Sources */,
 				A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */,
 				A9C965B96FCBA403AE5FF3E6 /* TLDROverlayText.swift in Sources */,
-				9CECACA6A5BB320EED2BD834 /* WindowAXTreeCapture.swift in Sources */,
 				2AB661B5D3F9DC75B8F7A7D6 /* WelcomeCanvasView.swift in Sources */,
 				9E313C561FCBB4B318232179 /* WelcomeKeycap.swift in Sources */,
 				F38B835C8929C86855ACB8BF /* WelcomeOverlayPanel.swift in Sources */,
@@ -597,6 +596,7 @@
 				D70ED9B50AF249EEC20393D4 /* WelcomePreview.swift in Sources */,
 				8D4B973BAB065E21A9F47342 /* WelcomeSlideContainer.swift in Sources */,
 				43E6C3DB7409DF3B6E71F9CB /* WelcomeWindowController.swift in Sources */,
+				9CECACA6A5BB320EED2BD834 /* WindowAXTreeCapture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
