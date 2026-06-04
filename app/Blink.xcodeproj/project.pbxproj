@@ -7,24 +7,35 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		000C77BDCF81F83D0C28CADC /* LGProto04.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA943F52412677F0533F2A01 /* LGProto04.swift */; };
 		057DEA137FBCB5D08BFC72E5 /* ScreenCaptureKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */; };
 		06D5F20E2A2C8DE388596F7B /* RuntimeEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */; };
 		0C86153A76280A714D14064C /* AttachmentLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */; };
 		0EDDE37BF54C746A6850E4BD /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 733316E4538EF5998654016C /* Carbon.framework */; };
 		126FC6E4086CB45999C8E061 /* SegmentedKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */; };
+		1343FD5FFB24D37392C8284E /* LGProto05.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAE20A33E2A2D7865236A131 /* LGProto05.swift */; };
 		141FECBD6B88306196043D11 /* OverlayKeyRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E32E4BBACE5DF974ECBA567 /* OverlayKeyRouter.swift */; };
+		1D77564245971FB7CB8EA383 /* LGProto10.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8035C98504271D3E1A93927 /* LGProto10.swift */; };
 		2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */; };
 		25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 989DBB159CA5CB427CCCADEF /* BlinkApp.swift */; };
 		2798D0C6537E90C28F2675DC /* ReasoningLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */; };
+		2F95FEF1F15BB46568939DA6 /* LGProto09.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E586D98EF9B940DE8E3A04 /* LGProto09.swift */; };
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */; };
 		379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */; };
 		39EF5881D30049E64A6BC7B1 /* FocusedContextCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE528B648E6A873778F7825C /* FocusedContextCapture.swift */; };
+		3D0CF024F2456FA137971D74 /* LGProto03.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2294E928AAD20868F5855076 /* LGProto03.swift */; };
+		4350F1C146997C347902659C /* LGProto06.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3721EC9B44F62F3925DA0994 /* LGProto06.swift */; };
+		4AFFF3D6AF8CCCD235B9130E /* LGProto08.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F98827A05F7E82AAAF480E /* LGProto08.swift */; };
+		4D98A149069CD1C2B4441726 /* LGProto15.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */; };
 		4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */; };
 		50308AE5E3F7FADD8F91C786 /* ScreenAnnotator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */; };
 		5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F40CDC441E9D455D7493380 /* LibraryStripView.swift */; };
 		50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */; };
+		55E249BC1D79B2376E2BFAE6 /* CaptureGesturePrototypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2FB2C3A23CFE8A4A48F2DCD /* CaptureGesturePrototypes.swift */; };
 		55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */; };
+		57193332340304C7D0F59435 /* LGProto16.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B984A1FB20601BDAC8E7E70 /* LGProto16.swift */; };
+		58CC3B902AAF6354D17C43AC /* GlassCaptureLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */; };
 		5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */; };
 		5DB3E531F79B3772D84B7949 /* StyleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F198B215CB11B569047AA51E /* StyleSettingsView.swift */; };
 		5EC90CA7FCF9628D1FA931F7 /* ControlWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0476F717FE6D32A76C485D /* ControlWindow.swift */; };
@@ -32,9 +43,12 @@
 		614EF5D57340907D29C96DC0 /* ScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */; };
 		6236E723BC574777D616DE37 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 274CBBE4DC64F9737B66DCB6 /* Sparkle */; };
 		647C68DE1CAF90DC99650812 /* PermissionsActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4214D54A0ABE9369A9BBC560 /* PermissionsActions.swift */; };
+		66FA88A067CF56A3B39B96AF /* LGProto07.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7169947353B72448A6E051 /* LGProto07.swift */; };
 		683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */; };
+		6BE6FE3DCC03B244B9AC7DBC /* LGProto17.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125535B1A3C0CFB2836E271A /* LGProto17.swift */; };
 		773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = 71B7439E5F2E382C7BB997BB /* PermissionFlow */; };
 		7A67FB3C16E6F5FA23C06607 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */; };
+		7C450E1D8CDBF9F1E8908A91 /* LGShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034A209A75C65A639214FF01 /* LGShared.swift */; };
 		7CF606DC505B6CA2775CB68A /* ApplicationServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 40A3234FC54834D91492DCC2 /* ApplicationServices.framework */; };
 		7EF91A37D94AB43F2497F3FD /* Quartz.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6936322431A6B58771E79D13 /* Quartz.framework */; };
 		82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */; };
@@ -47,14 +61,17 @@
 		9BAE9B795541CD3B0E66653E /* PermissionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79FD4897B5E37052B916E3C6 /* PermissionsSettingsView.swift */; };
 		9C4F5B01E1D71DEF511D97ED /* JSONFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5003916E3C9E51FF96494423 /* JSONFiles.swift */; };
 		9CECACA6A5BB320EED2BD834 /* WindowAXTreeCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 496D944D4DFBD05EC2DEB5CD /* WindowAXTreeCapture.swift */; };
+		9E31148D5D163AE3FC4EE013 /* LGProto11.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61A012D31ED2BA2BBE9C3FCB /* LGProto11.swift */; };
 		A19A16C5B1CA08F3C61BB513 /* AboutMeTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B6A4F1D256A1BB62E0C9EEF /* AboutMeTextEditor.swift */; };
 		A30D6C3A6254EAFAD013A514 /* ReasoningLevelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4A41FA81E0F7BC70D97E7F3 /* ReasoningLevelsTests.swift */; };
 		A343378F57CCFA1434935296 /* tldr.json in Resources */ = {isa = PBXBuildFile; fileRef = 9C2C613B92765D6101795F64 /* tldr.json */; };
+		A3DCD6D9056C6D02515BB5AD /* LGBranchGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7A0BD15B432E0BCB52B017 /* LGBranchGallery.swift */; };
 		A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */; };
 		A9C965B96FCBA403AE5FF3E6 /* TLDROverlayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */; };
 		B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */; };
+		B3CA4A0F34552BD977F291B4 /* LGLensGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA60FA274B316A1FCC4DE9AA /* LGLensGallery.swift */; };
 		B5CB41CE3B34888B9091D324 /* OnboardingChatMockWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */; };
 		B82573088A91D3E3C93A0DBC /* ScreenAnnotatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69F2731FA7A6D053A6388EA8 /* ScreenAnnotatorTests.swift */; };
 		C555231889A49F9834BC5D16 /* SettingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BACCF164226F25B851C687 /* SettingsWindow.swift */; };
@@ -63,11 +80,15 @@
 		C817AE456EF62E0578C673B2 /* SuggestionChoiceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */; };
 		C864ED9CE85231178F12B9F1 /* PermissionFlowExtendedStatus in Frameworks */ = {isa = PBXBuildFile; productRef = 006F33F7E8CC040624F639A0 /* PermissionFlowExtendedStatus */; };
 		C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */; };
+		C9A174A249892705DD41AFBC /* LGProto14.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273D9A030AD68D0EAE97FAF2 /* LGProto14.swift */; };
 		CD09576539039F9AE8E7F933 /* BlinkEventClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */; };
+		CE7E865C1AD2C2BD34D338AE /* LGGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 880ACFCEE13AA404044F3138 /* LGGallery.swift */; };
 		D0104C9D64B43780F862BA88 /* CaptureModeDeriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */; };
 		D104FE490D8660B2C0C81706 /* SelectionCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */; };
+		D21595661DEA8661EF58575E /* LGProto02.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA6B348B16355169B875C2AF /* LGProto02.swift */; };
 		D480D4B8BC8F46752EE261B6 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CBFD0424E841D9B578986EF2 /* AppKit.framework */; };
 		D5F87C7631EDC265C21F8EF2 /* TLDROverlayTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81737ADBA9EC614DB7528265 /* TLDROverlayTextTests.swift */; };
+		D56F64CD2D5AD67CE65D9FC5 /* LGProto12.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE510349F158B0D6B812C514 /* LGProto12.swift */; };
 		D760D941705366FB3ED8B5FC /* BlinkEventClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */; };
 		DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71B0F9AAF9A7972C08DC337C /* Inserter.swift */; };
 		E26600A22917C3ADD360B2E0 /* Hotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2EF34A50A57C1CF8722B81A /* Hotkey.swift */; };
@@ -75,6 +96,8 @@
 		E3717144A411C67F8EFFA185 /* SelectionCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */; };
 		E41C2B60366AF0F2E7DFDB87 /* AdvancedSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */; };
 		E533E632BDBEEF319433C10D /* ScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */; };
+		E83187B97F527C563628BC8D /* LGProto01.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCA13EBE92B31D031EDB51A5 /* LGProto01.swift */; };
+		E8321CD61F8AD8F21CDECF9C /* LGProto13.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE30179D90510906DEBE437A /* LGProto13.swift */; };
 		F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009080B616A8506A5210AC26 /* MenubarController.swift */; };
 		F98F38FA0D707A3CDDD1C94B /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6CFA143AF216667464AF0DE /* Config.swift */; };
 		FBA4A540708D0BA00A2BDD15 /* CaptureModeDeriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FDBB8FC33DE2F5D3D76871 /* CaptureModeDeriver.swift */; };
@@ -93,17 +116,26 @@
 /* Begin PBXFileReference section */
 		009080B616A8506A5210AC26 /* MenubarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarController.swift; sourceTree = "<group>"; };
 		01FAB83B694C8DA0E150B694 /* ScreenAnnotator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAnnotator.swift; sourceTree = "<group>"; };
+		034A209A75C65A639214FF01 /* LGShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGShared.swift; sourceTree = "<group>"; };
 		040D699C80AB14DC7CA7180F /* FocusedContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCaptureTests.swift; sourceTree = "<group>"; };
 		0B47EB8B7273BB95141192DE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		111C775580802A86D963BB01 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
+		125535B1A3C0CFB2836E271A /* LGProto17.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto17.swift; sourceTree = "<group>"; };
 		154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
 		194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCapture.swift; sourceTree = "<group>"; };
+		1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCaptureLoading.swift; sourceTree = "<group>"; };
 		1B874CA83CFFA290563A148F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
+		1B984A1FB20601BDAC8E7E70 /* LGProto16.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto16.swift; sourceTree = "<group>"; };
 		1BE54F912B8681BB5193B053 /* BlinkEventClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkEventClientTests.swift; sourceTree = "<group>"; };
+		2294E928AAD20868F5855076 /* LGProto03.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto03.swift; sourceTree = "<group>"; };
+		25E586D98EF9B940DE8E3A04 /* LGProto09.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto09.swift; sourceTree = "<group>"; };
 		260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLibrary.swift; sourceTree = "<group>"; };
+		273D9A030AD68D0EAE97FAF2 /* LGProto14.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto14.swift; sourceTree = "<group>"; };
 		27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningLevels.swift; sourceTree = "<group>"; };
 		2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyTests.swift; sourceTree = "<group>"; };
+		2E7169947353B72448A6E051 /* LGProto07.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto07.swift; sourceTree = "<group>"; };
 		306D47BFEED3170673EF3BAA /* CaptureModeDeriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriverTests.swift; sourceTree = "<group>"; };
+		3721EC9B44F62F3925DA0994 /* LGProto06.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto06.swift; sourceTree = "<group>"; };
 		379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsView.swift; sourceTree = "<group>"; };
 		3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		3B6A4F1D256A1BB62E0C9EEF /* AboutMeTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeTextEditor.swift; sourceTree = "<group>"; };
@@ -118,10 +150,12 @@
 		4F40CDC441E9D455D7493380 /* LibraryStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStripView.swift; sourceTree = "<group>"; };
 		5003916E3C9E51FF96494423 /* JSONFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFiles.swift; sourceTree = "<group>"; };
 		5074B5E5D9B38763D42B6A11 /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
+		54F98827A05F7E82AAAF480E /* LGProto08.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto08.swift; sourceTree = "<group>"; };
 		57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuBuilder.swift; sourceTree = "<group>"; };
 		5B0476F717FE6D32A76C485D /* ControlWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlWindow.swift; sourceTree = "<group>"; };
 		5B18A0C82F52C2738BBC06CB /* OnboardingChatMockWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingChatMockWindow.swift; sourceTree = "<group>"; };
 		5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		61A012D31ED2BA2BBE9C3FCB /* LGProto11.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto11.swift; sourceTree = "<group>"; };
 		6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironmentTests.swift; sourceTree = "<group>"; };
 		63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundActivityMonitor.swift; sourceTree = "<group>"; };
 		63EE599D056F4C586829ACA2 /* NudgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeCoordinator.swift; sourceTree = "<group>"; };
@@ -137,6 +171,7 @@
 		81737ADBA9EC614DB7528265 /* TLDROverlayTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDROverlayTextTests.swift; sourceTree = "<group>"; };
 		83CABA226B77C41C6ED8BE26 /* BlinkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BlinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCaptureTests.swift; sourceTree = "<group>"; };
+		880ACFCEE13AA404044F3138 /* LGGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGGallery.swift; sourceTree = "<group>"; };
 		8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Blink.entitlements; sourceTree = "<group>"; };
 		8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -152,17 +187,28 @@
 		B04C0693E2C9BD76FF86EE71 /* SegmentedKnob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentedKnob.swift; sourceTree = "<group>"; };
 		B2FDBB8FC33DE2F5D3D76871 /* CaptureModeDeriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureModeDeriver.swift; sourceTree = "<group>"; };
 		B6CFA143AF216667464AF0DE /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		BCA13EBE92B31D031EDB51A5 /* LGProto01.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto01.swift; sourceTree = "<group>"; };
 		BDB3235C66F26F64CAF27D26 /* ScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapture.swift; sourceTree = "<group>"; };
+		BE30179D90510906DEBE437A /* LGProto13.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto13.swift; sourceTree = "<group>"; };
 		BE528B648E6A873778F7825C /* FocusedContextCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedContextCapture.swift; sourceTree = "<group>"; };
+		CA6B348B16355169B875C2AF /* LGProto02.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto02.swift; sourceTree = "<group>"; };
+		CA943F52412677F0533F2A01 /* LGProto04.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto04.swift; sourceTree = "<group>"; };
+		CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto15.swift; sourceTree = "<group>"; };
 		CBFD0424E841D9B578986EF2 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfigStore.swift; sourceTree = "<group>"; };
 		D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingRunStore.swift; sourceTree = "<group>"; };
 		D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsWindow.swift; sourceTree = "<group>"; };
 		EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLDROverlayText.swift; sourceTree = "<group>"; };
+		DE510349F158B0D6B812C514 /* LGProto12.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto12.swift; sourceTree = "<group>"; };
+		E2FB2C3A23CFE8A4A48F2DCD /* CaptureGesturePrototypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureGesturePrototypes.swift; sourceTree = "<group>"; };
+		E8035C98504271D3E1A93927 /* LGProto10.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto10.swift; sourceTree = "<group>"; };
 		ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDiagnostics.swift; sourceTree = "<group>"; };
 		F198B215CB11B569047AA51E /* StyleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleSettingsView.swift; sourceTree = "<group>"; };
 		F4A41FA81E0F7BC70D97E7F3 /* ReasoningLevelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReasoningLevelsTests.swift; sourceTree = "<group>"; };
 		F508C4F9E4A91770F8CAB40E /* RuntimeEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeEnvironment.swift; sourceTree = "<group>"; };
+		FA60FA274B316A1FCC4DE9AA /* LGLensGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGLensGallery.swift; sourceTree = "<group>"; };
+		FAE20A33E2A2D7865236A131 /* LGProto05.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto05.swift; sourceTree = "<group>"; };
+		FF7A0BD15B432E0BCB52B017 /* LGBranchGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGBranchGallery.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -230,16 +276,39 @@
 				989DBB159CA5CB427CCCADEF /* BlinkApp.swift */,
 				66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */,
 				642D85242B0A3BAA47E49409 /* BlinkEventClient.swift */,
+				E2FB2C3A23CFE8A4A48F2DCD /* CaptureGesturePrototypes.swift */,
 				B2FDBB8FC33DE2F5D3D76871 /* CaptureModeDeriver.swift */,
 				B6CFA143AF216667464AF0DE /* Config.swift */,
 				5B0476F717FE6D32A76C485D /* ControlWindow.swift */,
 				BE528B648E6A873778F7825C /* FocusedContextCapture.swift */,
+				1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */,
 				A2EF34A50A57C1CF8722B81A /* Hotkey.swift */,
 				5F2F8ECC3DDEC7F451E2E3F5 /* HotkeyManager.swift */,
 				ECC464D8DF07EFDA1061E9BB /* ImageDiagnostics.swift */,
 				0B47EB8B7273BB95141192DE /* Info.plist */,
 				71B0F9AAF9A7972C08DC337C /* Inserter.swift */,
 				5003916E3C9E51FF96494423 /* JSONFiles.swift */,
+				FF7A0BD15B432E0BCB52B017 /* LGBranchGallery.swift */,
+				880ACFCEE13AA404044F3138 /* LGGallery.swift */,
+				FA60FA274B316A1FCC4DE9AA /* LGLensGallery.swift */,
+				BCA13EBE92B31D031EDB51A5 /* LGProto01.swift */,
+				CA6B348B16355169B875C2AF /* LGProto02.swift */,
+				2294E928AAD20868F5855076 /* LGProto03.swift */,
+				CA943F52412677F0533F2A01 /* LGProto04.swift */,
+				FAE20A33E2A2D7865236A131 /* LGProto05.swift */,
+				3721EC9B44F62F3925DA0994 /* LGProto06.swift */,
+				2E7169947353B72448A6E051 /* LGProto07.swift */,
+				54F98827A05F7E82AAAF480E /* LGProto08.swift */,
+				25E586D98EF9B940DE8E3A04 /* LGProto09.swift */,
+				E8035C98504271D3E1A93927 /* LGProto10.swift */,
+				61A012D31ED2BA2BBE9C3FCB /* LGProto11.swift */,
+				DE510349F158B0D6B812C514 /* LGProto12.swift */,
+				BE30179D90510906DEBE437A /* LGProto13.swift */,
+				273D9A030AD68D0EAE97FAF2 /* LGProto14.swift */,
+				CB89C6ECD03D6FDF35A7EDB4 /* LGProto15.swift */,
+				1B984A1FB20601BDAC8E7E70 /* LGProto16.swift */,
+				125535B1A3C0CFB2836E271A /* LGProto17.swift */,
+				034A209A75C65A639214FF01 /* LGShared.swift */,
 				9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */,
 				4F40CDC441E9D455D7493380 /* LibraryStripView.swift */,
 				57DACF3FA704D662C3561C5E /* MainMenuBuilder.swift */,
@@ -430,16 +499,39 @@
 				25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */,
 				2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */,
 				D760D941705366FB3ED8B5FC /* BlinkEventClient.swift in Sources */,
+				55E249BC1D79B2376E2BFAE6 /* CaptureGesturePrototypes.swift in Sources */,
 				FBA4A540708D0BA00A2BDD15 /* CaptureModeDeriver.swift in Sources */,
 				F98F38FA0D707A3CDDD1C94B /* Config.swift in Sources */,
 				5EC90CA7FCF9628D1FA931F7 /* ControlWindow.swift in Sources */,
 				39EF5881D30049E64A6BC7B1 /* FocusedContextCapture.swift in Sources */,
 				B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */,
+				58CC3B902AAF6354D17C43AC /* GlassCaptureLoading.swift in Sources */,
 				E26600A22917C3ADD360B2E0 /* Hotkey.swift in Sources */,
 				55FA34BCDFA70E8255B56D26 /* HotkeyManager.swift in Sources */,
 				5AE8C2982313295822865BA5 /* ImageDiagnostics.swift in Sources */,
 				DF7F004F4F35FCC0321A15B4 /* Inserter.swift in Sources */,
 				9C4F5B01E1D71DEF511D97ED /* JSONFiles.swift in Sources */,
+				A3DCD6D9056C6D02515BB5AD /* LGBranchGallery.swift in Sources */,
+				CE7E865C1AD2C2BD34D338AE /* LGGallery.swift in Sources */,
+				B3CA4A0F34552BD977F291B4 /* LGLensGallery.swift in Sources */,
+				E83187B97F527C563628BC8D /* LGProto01.swift in Sources */,
+				D21595661DEA8661EF58575E /* LGProto02.swift in Sources */,
+				3D0CF024F2456FA137971D74 /* LGProto03.swift in Sources */,
+				000C77BDCF81F83D0C28CADC /* LGProto04.swift in Sources */,
+				1343FD5FFB24D37392C8284E /* LGProto05.swift in Sources */,
+				4350F1C146997C347902659C /* LGProto06.swift in Sources */,
+				66FA88A067CF56A3B39B96AF /* LGProto07.swift in Sources */,
+				4AFFF3D6AF8CCCD235B9130E /* LGProto08.swift in Sources */,
+				2F95FEF1F15BB46568939DA6 /* LGProto09.swift in Sources */,
+				1D77564245971FB7CB8EA383 /* LGProto10.swift in Sources */,
+				9E31148D5D163AE3FC4EE013 /* LGProto11.swift in Sources */,
+				D56F64CD2D5AD67CE65D9FC5 /* LGProto12.swift in Sources */,
+				E8321CD61F8AD8F21CDECF9C /* LGProto13.swift in Sources */,
+				C9A174A249892705DD41AFBC /* LGProto14.swift in Sources */,
+				4D98A149069CD1C2B4441726 /* LGProto15.swift in Sources */,
+				57193332340304C7D0F59435 /* LGProto16.swift in Sources */,
+				6BE6FE3DCC03B244B9AC7DBC /* LGProto17.swift in Sources */,
+				7C450E1D8CDBF9F1E8908A91 /* LGShared.swift in Sources */,
 				B2CA2CC5BCB4DD5D58F6C5A1 /* LibrarySettingsView.swift in Sources */,
 				5034D548DBD4618C27B58073 /* LibraryStripView.swift in Sources */,
 				875FED3FFB2C90AEAF04377E /* MainMenuBuilder.swift in Sources */,
