@@ -211,12 +211,18 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// (the new run replaces it) or on intentional dismiss.
     private var modalChatSnapshot: LastDismissedSession?
 
-    private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
     var onPermissionsNeeded: (() -> Void)?
+    /// Fires when a summary completes its overlay-shown moment (success) or
+    /// hits a user-visible failure. Used by the onboarding demo card to know
+    /// whether the user's first hotkey press actually produced a result.
+    var onSummaryCompleted: ((Bool) -> Void)?
+    /// Fires when the user picks a suggestion (1/2/3 / equivalent). Index is
+    /// zero-based. Used by the onboarding demo card to record first-paste.
+    var onSuggestionPicked: ((Int) -> Void)?
 
     /// Combine subject for surfaces that want to subscribe rather than own
     /// the callback (the menubar already owns `onStatusChange`). Mirrors what
@@ -295,15 +301,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         ]
     }
 
-    /// Per-invocation client metadata. Merges `source = onboarding_sample`
-    /// when the onboarding mock window is the active capture target so the
-    /// server can distinguish first-run sample invocations from real ones.
+    /// Per-invocation client metadata. Currently identical to the static
+    /// snapshot; kept as an instance method so per-invocation context can be
+    /// merged in here if needed.
     func clientMetadata() -> [String: Any] {
-        var meta = Self.clientMetadata()
-        if onboardingSampleActive {
-            meta["source"] = "onboarding_sample"
-        }
-        return meta
+        Self.clientMetadata()
     }
 
     /// The active summary hotkey. Read-only mirror so surfaces (e.g. the
@@ -505,14 +507,6 @@ final class BlinkCoordinator: @unchecked Sendable {
             overlayInsertConsumesReturnValue = false
         }
         overlayInsertConsumeLock.unlock()
-    }
-
-    /// Flips the onboarding-sample flag. Main-thread only; the value is
-    /// read on the capture queue at session start, but the queue dispatches
-    /// to main for the runtime snapshot so a single hop is sufficient.
-    func setOnboardingSampleActive(_ active: Bool) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        onboardingSampleActive = active
     }
 
     private static func requiredPermissionsGranted(caller: String) -> Bool {
@@ -1927,6 +1921,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     clientMetadata: clientMetadata,
                     details: ["suggestion_count": self.currentSuggestions.count]
                 )
+                self.onSummaryCompleted?(true)
             }
         } catch {
             DispatchQueue.main.async { self.dismissGlassLoading() }
@@ -1954,6 +1949,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 ]
             )
             PendingRunStore.finish(requestID: requestID)
+            DispatchQueue.main.async { [weak self] in
+                self?.onSummaryCompleted?(false)
+            }
             reportFailure(
                 title: "Blink Failed",
                 statusText: "failed: \(shortErrorSummary(error))",
@@ -2490,12 +2488,14 @@ final class BlinkCoordinator: @unchecked Sendable {
         switch applyChoiceNumber(index) {
         case .ignored:
             return
-        case .expand(let index):
+        case .expand(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            expandSuggestion(index: index)
-        case .commit(let index):
+            expandSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
+        case .commit(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            insertSuggestion(index: index)
+            insertSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
         case .focusInput:
             overlay.focusCustomInput()
             status("type your own reply")

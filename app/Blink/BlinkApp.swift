@@ -23,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionsWindow: PermissionsWindowController?
     private var controlWindow: ControlWindowController?
     private var settingsWindow: SettingsWindowController?
-    private var onboardingSampleWindow: OnboardingChatMockWindowController?
+    private var onboardingDemoCard: OnboardingDemoCardWindowController?
+    private var welcomeWindow: WelcomeWindowController?
     private var runtimeStore: RuntimeConfigStore?
     private var eventClient: BlinkEventClient?
     private var nudgeCoordinator: NudgeCoordinator?
@@ -75,6 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         coordinator.onPermissionsNeeded = { [weak self] in
             self?.showPermissionsWindow()
+        }
+        coordinator.onSummaryCompleted = { [weak self] success in
+            self?.onboardingDemoCard?.noteSummaryCompleted(success: success)
+        }
+        coordinator.onSuggestionPicked = { [weak self] index in
+            self?.onboardingDemoCard?.noteSuggestionPicked(index: index)
         }
 
         menubar = MenubarController(
@@ -136,9 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isCustomInputActive: { [weak coordinator] in coordinator?.isCustomInputActive ?? false },
             isCollectingActive: { [weak coordinator] in coordinator?.isCollectingActive ?? false },
             isOverlayPinned: { [weak coordinator] in coordinator?.isOverlayPinned ?? false },
-            onSummarize: { [weak coordinator, weak nudges] pressedAt in
+            onSummarize: { [weak coordinator, weak nudges, weak self] pressedAt in
                 let summarizeEnteredAt = DispatchTime.now()
-                Task { @MainActor in nudges?.noteHotkeyInvoked() }
+                Task { @MainActor in
+                    nudges?.noteHotkeyInvoked()
+                    self?.onboardingDemoCard?.noteHotkeyInvoked()
+                }
                 coordinator?.summarizeFrontmostWindow(
                     pressedAt: pressedAt,
                     summarizeEnteredAt: summarizeEnteredAt
@@ -175,7 +185,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )
 
-        if shouldShowPermissionSetup() {
+        if Paths.requiresFirstRunOnboarding() {
+            // True first run: show the animated welcome slideshow, then hand
+            // off to the live in-window permissions step.
+            // Gated on the marker, not permissions, so a later permission
+            // revocation re-runs the wizard without replaying the intro.
+            runWelcomeSlideshow()
+        } else if shouldShowPermissionSetup() {
+            // Onboarded already, but permissions are missing — straight to
+            // the wizard, no intro.
             showPermissionsWindow()
         } else {
             showControlWindow()
@@ -261,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys?.stop()
         nudgeCoordinator?.stop()
         firstHotkeyOverlay.close(userClicked: false, animated: false)
+        onboardingDemoCard?.noteAppWillTerminate()
     }
 
     func showPermissionsWindow() {
@@ -278,44 +297,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 onFinished: { [weak self] in
                     self?.startHotkeysIfNeeded()
-                    self?.runOnboardingSample()
+                    self?.runOnboardingDemo()
                 }
             )
         }
         permissionsWindow?.show()
     }
 
-    /// Opens the chat-mock demo window and lets the user press the real
-    /// summary hotkey themselves — the demo's job is to teach them the key
-    /// they'll use forever. Permissions are guaranteed granted at this
-    /// point; the control window opens once the user closes the mock.
-    private func runOnboardingSample() {
-        guard onboardingSampleWindow == nil else {
-            onboardingSampleWindow?.show()
+    /// First-run only: the single-window welcome experience — "Welcome to
+    /// Blink" landing → 4-slide tour → live in-window permissions. Completion
+    /// (permissions granted + hotkey listening) hands off to the demo card. An
+    /// early manual close leaves the marker unset so onboarding re-runs next
+    /// launch; it no longer opens the separate AppKit wizard.
+    private func runWelcomeSlideshow() {
+        if let welcomeWindow {
+            welcomeWindow.show()
             return
         }
-        let fixture = OnboardingFixture.load()
-        coordinator.setOnboardingSampleActive(true)
-        let mock = OnboardingChatMockWindowController(
-            fixture: fixture,
-            hotkeyDisplay: coordinator.currentHotkey.displayString
-        ) { [weak self] in
-            guard let self else { return }
-            self.coordinator.setOnboardingSampleActive(false)
-            self.onboardingSampleWindow = nil
-            self.showControlWindow()
-            self.showFirstHotkeyNudgeIfNeeded()
+        let welcome = WelcomeWindowController(
+            eventClient: eventClient,
+            allowLogging: { [weak runtimeStore] in
+                runtimeStore?.allowEventLogging ?? false
+            },
+            clientMetadata: {
+                BlinkCoordinator.clientMetadata()
+            },
+            attemptHotkeyStart: { [weak self] in
+                self?.hotkeys?.start() ?? false
+            },
+            // If a prior session already reached permissions (then got
+            // relaunched mid-grant), resume there rather than replaying the
+            // landing + tour.
+            startAtPermissions: Paths.reachedOnboardingPermissions(),
+            onComplete: { [weak self] in
+                self?.welcomeWindow = nil
+                self?.runOnboardingDemo()
+            }
+        )
+        welcomeWindow = welcome
+        welcome.show()
+    }
+
+    /// Opens the first-run demo card and waits for the user to press the real
+    /// summary hotkey themselves on a window of their choice.
+    private func runOnboardingDemo() {
+        if let existing = onboardingDemoCard {
+            existing.show()
+            return
         }
-        onboardingSampleWindow = mock
-        mock.show()
-        // System Settings may still be the OS-level frontmost app from the
-        // last auto-chain hop. Re-activate Blink right after the mock opens
-        // so the global hotkey, when the user presses it, captures the
-        // mock window and not whatever Settings.app left behind.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            NSApp.activate(ignoringOtherApps: true)
-            self?.onboardingSampleWindow?.bringToFront()
-        }
+        let card = OnboardingDemoCardWindowController(
+            hotkeyDisplay: coordinator.currentHotkey.displayString,
+            hotkeyParts: coordinator.currentHotkey.displayParts,
+            eventClient: eventClient,
+            allowLogging: { [weak runtimeStore] in
+                runtimeStore?.allowEventLogging ?? false
+            },
+            clientMetadata: {
+                BlinkCoordinator.clientMetadata()
+            },
+            onOutcome: { [weak self] outcome in
+                guard let self else { return }
+                self.onboardingDemoCard = nil
+                switch outcome {
+                case .firstHotkeyLanded, .skipped:
+                    // The card is itself the first-hotkey nudge — mark the
+                    // marker so the legacy 4-second toast doesn't fire next.
+                    Paths.markFirstHotkeyNudgeShown()
+                    // Don't pop a window cold. Bounce the Dock icon — Blink is a
+                    // regular Dock app, so that's its always-visible home (no
+                    // menubar-overflow problem). The landed card has just told
+                    // the user Blink lives in the Dock; this draws the eye there.
+                    NSApp.requestUserAttention(.informationalRequest)
+                }
+            }
+        )
+        onboardingDemoCard = card
+        card.show()
     }
 
     func showControlWindow() {
