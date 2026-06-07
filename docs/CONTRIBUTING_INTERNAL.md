@@ -118,7 +118,7 @@ The script backs up each workspace's existing `.env` to `.env.bak.<timestamp>` b
 
 **The invariant:** after every release, `git rev-parse origin/main` and `git rev-parse origin/staging` point at the same commit. They are two names for the same canonical history. Anything that's on `main` is on `staging`, and vice versa. The only time they're allowed to diverge is during an active testing window — and only briefly.
 
-`staging` is the branch Railway watches and auto-deploys. `main` is what reviewers and humans treat as the source of truth. Both exist; neither is "ahead." Diverging them produces a half-shipped product where dogfood and `main` disagree about what features exist.
+`staging` is the branch the [`deploy-server.yml`](../.github/workflows/deploy-server.yml) GitHub Action deploys to Cloud Run (service `blink-server-staging`, `https://api-staging.useblink.dev`); `main` deploys to production (`blink-server`, `https://api.useblink.dev`). `main` is also what reviewers and humans treat as the source of truth. Both exist; neither is "ahead." Diverging them produces a half-shipped product where dogfood and `main` disagree about what features exist.
 
 Workflow:
 
@@ -129,7 +129,7 @@ Workflow:
    git push origin +my-change:staging
    ```
 
-   Railway picks up the new tip and redeploys. Dogfood and iterate against the branch.
+   The GitHub Action picks up the new tip and redeploys `server/` to Cloud Run (only if `server/**` changed). Dogfood and iterate against `https://api-staging.useblink.dev`.
 3. **Promote to `main`** by opening a PR (`gh pr create --base main`) and merging once it's validated.
 4. **Re-mirror `staging` to `main`** the moment the PR lands so the two pointers match again:
 
@@ -161,7 +161,7 @@ A few config and prompt surfaces have *two copies* — the loaded value at runti
 ## Server vs client deploy: they're independent
 
 - `bash app/scripts/install_local_app.sh` only rebuilds the macOS app bundle. It does NOT redeploy the server.
-- Pushing to the `staging` branch triggers a Railway server deploy. It does NOT update the bundled macOS app.
+- Pushing to the `staging` branch (with `server/**` changes) triggers a Cloud Run server deploy via the `deploy-server.yml` GitHub Action. It does NOT update the bundled macOS app.
 - When a change touches both sides (`server/*` and `app/Resources/*` or `app/python/*`), you need both: push to `staging` (or merge to `main` and re-mirror) AND rebuild the local app. Otherwise dogfood will show a half-deployed mix.
 
 ## Repository Map

@@ -33,12 +33,12 @@ For public Sparkle releases, use `app/scripts/release.sh` and verify the log con
 
 ## Branches & deploys
 
-`main` and `staging` are kept **in sync** — same tip, every release. `staging` is what Railway deploys, so the easiest way to dogfood a change is to fast-set `staging` to your feature branch first (`git push origin +my-branch:staging`), then PR to `main` once it's validated, then fast-set `staging` back to `main` (`git push origin +origin/main:staging`) so the two pointers match again. After every release the invariant `origin/main == origin/staging` should hold; divergence is a bug, not a workflow. See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy) for the full workflow and the anti-patterns to avoid.
+`main` and `staging` are kept **in sync** — same tip, every release. A push to `staging` or `main` runs the [`deploy-server.yml`](.github/workflows/deploy-server.yml) GitHub Action, which deploys `server/` to **Google Cloud Run** (project `blink-497308`, region `us-west1`): `staging` → service `blink-server-staging` at `https://api-staging.useblink.dev`, `main` → `blink-server` at `https://api.useblink.dev`. The deploy fires **only when files under `server/**` change**. So the easiest way to dogfood a server change is to fast-set `staging` to your feature branch first (`git push origin +my-branch:staging`), then PR to `main` once it's validated, then fast-set `staging` back to `main` (`git push origin +origin/main:staging`) so the two pointers match again. After every release the invariant `origin/main == origin/staging` should hold; divergence is a bug, not a workflow. Confirm a deploy landed with `curl -s https://api-staging.useblink.dev/v1/healthz` — the `version` field is the deployed commit SHA. See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy) for the full workflow and the anti-patterns to avoid.
 
 Rebuilds and deploys are **independent**:
 
 - `bash app/scripts/install_local_app.sh` rebuilds the macOS app only — does NOT redeploy the server.
-- Pushing `staging` redeploys the server only — does NOT update the bundled app.
+- Pushing `staging` redeploys the server only, and only when `server/**` changed — does NOT update the bundled app.
 
 When a change touches both sides, you need both.
 

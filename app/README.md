@@ -120,7 +120,7 @@ Create `app/scripts/config.env` locally; it is gitignored:
 
 ```bash
 BLINK_TEAM_ID=YOUR_TEAM_ID
-BLINK_PROXY_URL=https://your-railway-service.up.railway.app
+BLINK_PROXY_URL=https://api.useblink.dev
 BLINK_PROXY_TOKEN=revocable-dogfood-token
 ```
 
@@ -203,7 +203,7 @@ BLINK_R2_ACCESS_KEY_ID=<S3-compatible token id>
 BLINK_R2_SECRET_ACCESS_KEY=<S3-compatible token secret>
 
 # Bundled into Contents/Resources/proxy.env at build time
-BLINK_PROXY_URL=https://<railway-service>.up.railway.app/
+BLINK_PROXY_URL=https://api.useblink.dev/
 BLINK_PROXY_TOKEN=<bootstrap token>
 ```
 

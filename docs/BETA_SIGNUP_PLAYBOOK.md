@@ -6,7 +6,7 @@ What happens when someone hits **join the beta** on
 ## End-to-end flow
 
 1. Form on `site/src/pages/index.astro` POSTs `{email, source, hp}` to the
-   server's `POST /v1/beta-signup` (Railway).
+   server's `POST /v1/beta-signup` (Cloud Run, `https://api.useblink.dev`).
 2. Server (`server/main.py:beta_signup`):
    - drops honeypot submissions silently,
    - rate-limits per hashed IP (5/min, 50/day; configurable),
@@ -21,9 +21,10 @@ What happens when someone hits **join the beta** on
 
 ## When you'll find out
 
-- **Discord** — set `BLINK_DISCORD_SIGNUP_WEBHOOK_URL` on the Railway service
-  to a channel webhook URL. Each new signup posts an embed with the email,
-  source, and `signup_id`. Duplicate submits are silent.
+- **Discord** — set `BLINK_DISCORD_SIGNUP_WEBHOOK_URL` (GCP Secret Manager
+  `blink-discord-signup-webhook`, wired into the Cloud Run service by the deploy
+  workflow) to a channel webhook URL. Each new signup posts an embed with the
+  email, source, and `signup_id`. Duplicate submits are silent.
 - **PostHog** — funnel events:
   - `beta_signup_submitted` (client) → `beta_signup_recorded` (server) on the
     success path.
@@ -36,15 +37,18 @@ What happens when someone hits **join the beta** on
 
 1. In Discord: channel settings → **Integrations** → **Webhooks** →
    **New Webhook**. Name it `blink-signups`, copy the URL.
-2. On Railway, add the env var:
-   ```
-   BLINK_DISCORD_SIGNUP_WEBHOOK_URL=https://discord.com/api/webhooks/...
+2. Set the Secret Manager value (wired into the Cloud Run service by the deploy
+   workflow):
+   ```bash
+   printf 'https://discord.com/api/webhooks/...' \
+     | gcloud secrets versions add blink-discord-signup-webhook \
+         --project=blink-497308 --data-file=-
    ```
 3. Redeploy. To verify, submit a fresh email on the live site or curl
    directly (note the double quotes — single quotes would block the
    `$(date +%s)` substitution and every run would hit the duplicate path):
    ```bash
-   curl -X POST https://blink-production-7b5a.up.railway.app/v1/beta-signup \
+   curl -X POST https://api.useblink.dev/v1/beta-signup \
      -H 'content-type: application/json' \
      --data-raw "{\"email\":\"smoke+$(date +%s)@useblink.dev\",\"source\":\"smoke-test\"}"
    ```
@@ -61,7 +65,7 @@ small. Once volume grows past what's manual, switch to a daily batch.
    the invite, so the channel doubles as a worklist.
 2. **Pull the latest signups** to confirm the row landed:
    ```bash
-   railway run psql $DATABASE_URL \
+   psql "$DATABASE_URL" \
      -c "SELECT email_original, source, created_at
          FROM beta_signups
          ORDER BY created_at DESC LIMIT 25"
@@ -96,7 +100,7 @@ DELETE FROM beta_signups WHERE email_normalized = lower($1);
 - **Endpoint up?**
   ```bash
   curl -s -o /dev/null -w '%{http_code}\n' \
-    https://blink-production-7b5a.up.railway.app/v1/beta-signup \
+    https://api.useblink.dev/v1/beta-signup \
     -X POST -H 'content-type: application/json' \
     -d '{"email":"healthcheck@useblink.dev"}'
   ```
