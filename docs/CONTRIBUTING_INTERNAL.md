@@ -116,38 +116,34 @@ The script backs up each workspace's existing `.env` to `.env.bak.<timestamp>` b
 
 ## Branch strategy
 
-**The invariant:** after every release, `git rev-parse origin/main` and `git rev-parse origin/staging` point at the same commit. They are two names for the same canonical history. Anything that's on `main` is on `staging`, and vice versa. The only time they're allowed to diverge is during an active testing window — and only briefly.
+**The model:** `staging` is the **trunk** — the always-current branch where all work lands and accumulates. `main` is **downstream of `staging`**: it is advanced *from* `staging` at release time (`main` ← `staging`), never the reverse. Between releases `main` legitimately **lags** `staging` by whatever hasn't been promoted yet; that lag is normal, not drift. The cardinal rule: **never move `staging` backward to match `main`.** `main` is usually behind, so force-resetting `staging` to it (`git push origin +origin/main:staging`) throws away everything accumulated on the trunk. (This has bitten us: a force-reset of `staging` to a stale `main` silently dropped a fully-integrated multi-PR branch — recovered only by merging the lost tip back in.)
 
-`staging` is the branch the [`deploy-server.yml`](../.github/workflows/deploy-server.yml) GitHub Action deploys to Cloud Run (service `blink-server-staging`, `https://api-staging.useblink.dev`); `main` deploys to production (`blink-server`, `https://api.useblink.dev`). `main` is also what reviewers and humans treat as the source of truth. Both exist; neither is "ahead." Diverging them produces a half-shipped product where dogfood and `main` disagree about what features exist.
+`staging` is the branch the [`deploy-server.yml`](../.github/workflows/deploy-server.yml) GitHub Action deploys to Cloud Run (service `blink-server-staging`, `https://api-staging.useblink.dev`); `main` deploys to production (`blink-server`, `https://api.useblink.dev`). Dogfood runs against `staging`; production and releases run off `main`.
 
 Workflow:
 
-1. Branch off `main`: `git checkout -B my-change origin/main`.
-2. **Deploy to staging for testing** by fast-setting `staging` to your branch's tip:
+1. Branch off **`staging`** (the trunk), not `main`:
 
    ```bash
-   git push origin +my-change:staging
+   git fetch origin && git checkout -B my-change origin/staging
+   ```
+2. Do the work. Keep current by merging `origin/staging` in as it moves.
+3. **Land it on `staging`** by fast-forwarding `staging` to your branch's tip (or merging your branch into `staging`):
+
+   ```bash
+   git push origin HEAD:staging   # fast-forward — no force
    ```
 
    The GitHub Action picks up the new tip and redeploys `server/` to Cloud Run (only if `server/**` changed). Dogfood and iterate against `https://api-staging.useblink.dev`.
-3. **Promote to `main`** by opening a PR (`gh pr create --base main`) and merging once it's validated.
-4. **Re-mirror `staging` to `main`** the moment the PR lands so the two pointers match again:
-
-   ```bash
-   git push origin +origin/main:staging
-   ```
-
-   Skip this step and you have created drift. The longer you skip it, the more painful the resync.
-
-If a test branch's `staging` deploy gets abandoned (you decide not to promote), do *not* leave `staging` pointing at the abandoned branch. Re-mirror to `main` immediately so the invariant holds. Whatever was on staging-for-testing is then just a dead branch; archive it with a tag if you want to come back to it later (`git tag staging-archive-YYYY-MM-DD <abandoned-sha> && git push origin staging-archive-YYYY-MM-DD`).
+4. **Promote to production** by opening a PR (`gh pr create --base main`) and merging once it's validated. This advances `main` toward `staging` and deploys prod. `main` catching up to `staging` is the goal; `main` getting *ahead* of `staging` should never happen.
 
 Anti-patterns:
 
-- **Pushing WIP directly to `staging`** (no feature branch). Either you forget to PR it to `main`, or you PR it as a giant grab-bag later — either way `staging` accumulates commits `main` never sees.
-- **Forgetting the re-mirror step** after merging a PR. `main` moves ahead, `staging` stays behind, and dogfooders are testing a stale build that's missing whatever just landed.
-- **Long-lived staging-only branches** ("just keeping it on staging while I poke at it for a week"). That's how the two diverge by a hundred commits. If a test is going to take days, document it; better, finish it quickly so the invariant can be restored.
+- **Force-resetting `staging` to `main`** (`git push origin +origin/main:staging`), or branching off a stale `main` and force-pushing it onto `staging`. `main` is downstream and usually behind — either move rewinds the trunk and drops accumulated work. There is no "re-mirror `staging` to `main`" step; that was an old, wrong model.
+- **Rewriting `staging`'s history** (rebase, or any force-push that isn't a fast-forward). The deploy and every other workspace treat `staging` as the shared trunk — only ever fast-forward it.
+- **Long-lived feature branches off an old `staging`.** They drift and conflict; merge `origin/staging` in frequently, and land small.
 
-If you find `staging` has drifted, archive its tip with a tag (`git tag staging-archive-YYYY-MM-DD origin/staging && git push origin staging-archive-YYYY-MM-DD`) before forcing it back to `main`.
+If `staging` ever does get rewound or clobbered, **do not** force it backward again. Find the dropped tip (`git reflog`, the feature branch, or a `staging-archive-*` tag), **merge** it back onto the current `staging`, and fast-forward push. Archive a tip you're about to abandon with a tag (`git tag staging-archive-YYYY-MM-DD <sha> && git push origin staging-archive-YYYY-MM-DD`).
 
 ## What lives where (so you don't edit the fallback)
 
