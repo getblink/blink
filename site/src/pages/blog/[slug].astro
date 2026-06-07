@@ -1,0 +1,37 @@
+---
+import { getCollection, render } from "astro:content";
+import { CLUSTERS } from "../../content.config";
+import ArticleLayout from "../../layouts/ArticleLayout.astro";
+
+export async function getStaticPaths() {
+  const posts = await getCollection("blog", ({ data }) => !data.draft);
+  // Title lookup so `related` slugs can render as real titles (and so a
+  // related slug that points at a draft / missing post is silently dropped
+  // rather than rendering a dead link).
+  const titleBySlug = new Map(posts.map((post) => [post.id, post.data.title]));
+
+  return posts.map((post) => ({
+    params: { slug: post.id },
+    props: {
+      post,
+      related: (post.data.related ?? [])
+        .filter((slug) => titleBySlug.has(slug))
+        .map((slug) => ({ slug, title: titleBySlug.get(slug)! })),
+    },
+  }));
+}
+
+const { post, related } = Astro.props;
+const { Content } = await render(post);
+const clusterLabel = CLUSTERS[post.data.cluster] ?? post.data.cluster;
+---
+
+<ArticleLayout
+  title={post.data.title}
+  description={post.data.description}
+  publishedAt={post.data.publishedAt}
+  clusterLabel={clusterLabel}
+  related={related}
+>
+  <Content />
+</ArticleLayout>
