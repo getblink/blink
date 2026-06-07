@@ -128,7 +128,7 @@ enum ScreenAnnotator {
         )
 
         guard let annotated = context.makeImage() else { return nil }
-        return encodeJPEG(annotated, quality: 0.75)
+        return encodeJPEG(annotated, quality: 0.5)
     }
 
     /// Skip the caret marker on surfaces where AX caret data is known to

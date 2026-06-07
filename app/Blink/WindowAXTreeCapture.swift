@@ -229,12 +229,15 @@ enum WindowAXTreeCapture {
             line += " = \"\(value)\""
         }
         // Link/document destination, after name/value so the model can resolve
-        // where a link goes. Suppressed when it echoes the name, or when the
-        // value is already the same href verbatim (scheme included) so we don't
-        // print the destination twice.
-        if let url, url != name {
-            let valueIsURL = value.map { $0 == url || $0.hasSuffix("://" + url) } ?? false
-            if !valueIsURL {
+        // where a link goes. Suppressed when the name or value already conveys
+        // the same href (with or without scheme) — e.g. a bare-URL link whose
+        // visible text IS the URL — so we don't print it twice.
+        if let url {
+            func echoesURL(_ s: String?) -> Bool {
+                guard let s else { return false }
+                return s == url || s.hasSuffix("://" + url)
+            }
+            if !echoesURL(name), !echoesURL(value) {
                 line += " (\(url))"
             }
         }

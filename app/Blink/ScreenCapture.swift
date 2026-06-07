@@ -307,18 +307,16 @@ enum ScreenCapture {
 
     enum CaptureSizingSource { case ax, sck }
 
-    /// Cap on the captured pixel buffer's longest side. `image_prep.py`
-    /// downscales every upload to `request_image_max_dimension` (1600) before it
-    /// reaches Gemini, so capturing larger — e.g. a full 6016×3384 display for a
-    /// fullscreen app — burns capture *and* PNG-encode time on pixels we
-    /// immediately throw away (a 20MP grab + encode dominated warm-capture
-    /// latency on fullscreen Conductor). Sizing the SCStreamConfiguration buffer
-    /// to this cap makes ScreenCaptureKit scale on the GPU (`scalesToFit`), so
-    /// both the grab and the encode shrink, with no change to what the model
-    /// sees (the upload was already 1600px; `media_resolution=LOW` caps image
-    /// tokens regardless; the AX tree carries the text). Keep in sync with
-    /// image_prep.py's `request_image_max_dimension` default.
-    static let maxCaptureDimension = 1600
+    /// Cap on the captured pixel buffer's longest side. The frame is JPEG-encoded
+    /// at capture and uploaded as-is, so capturing larger — e.g. a full 6016×3384
+    /// display for a fullscreen app — burns capture *and* encode time plus upload
+    /// bytes on pixels Gemini never benefits from: at `media_resolution=LOW` the
+    /// image tokenizes the same regardless of byte size, and the AX tree carries
+    /// the exact text. Sizing the SCStreamConfiguration buffer to this cap makes
+    /// ScreenCaptureKit scale on the GPU (`scalesToFit`), shrinking the grab, the
+    /// encode, and the upload. 1024 + JPEG q0.5 measured ~71KB (vs ~221KB at
+    /// 1600/q0.75) with no legibility the model loses at LOW media-res.
+    static let maxCaptureDimension = 1024
 
     /// Aspect-preserving downscale of a pixel size so its longest side is at
     /// most `maxDim`. Returns the input unchanged (clamped ≥ 1) when already
@@ -919,9 +917,9 @@ enum ScreenCapture {
     /// Encode a captured CGImage straight to JPEG. Blink uploads this to the
     /// server (which forwards it to Gemini at MEDIA_RESOLUTION_LOW), so a
     /// moderately compressed JPEG keeps the upload small without a separate
-    /// re-compression pass. q≈0.75 is well clear of any artifacting the model
-    /// would see after its internal downsample.
-    private static func cgImageToJPEG(_ image: CGImage, quality: CGFloat = 0.75) -> Data? {
+    /// re-compression pass. q0.5 measured ~71KB at 1024px (vs ~221KB at
+    /// 1600/q0.75) with no legibility the model loses at LOW media-res.
+    private static func cgImageToJPEG(_ image: CGImage, quality: CGFloat = 0.5) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
         return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
