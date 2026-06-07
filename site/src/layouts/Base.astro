@@ -7,7 +7,6 @@ interface Props {
   description: string;
   ogType?: string;
   ogImage?: string;
-  animateLandingOnce?: boolean;
   publishedAt?: string;
 }
 
@@ -16,7 +15,6 @@ const {
   description,
   ogType = "website",
   ogImage = "/og-image.png",
-  animateLandingOnce = false,
   publishedAt,
 } = Astro.props;
 
@@ -76,7 +74,8 @@ const structuredData = {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#fafaf7" />
+    <meta name="theme-color" content="#f2f0e9" />
+    <link rel="icon" type="image/svg+xml" href="/blink-logo.svg" />
     <link rel="icon" type="image/png" href="/blink-icon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="canonical" href={canonicalURL} />
@@ -103,38 +102,6 @@ const structuredData = {
       type="application/ld+json"
       set:html={JSON.stringify(structuredData)}
     />
-
-    {
-      animateLandingOnce && (
-        <script
-          is:inline
-          set:html={`try {
-  var html = document.documentElement;
-  if (sessionStorage.getItem('blink:shell-animated')) {
-    html.classList.add('no-shell-animate');
-  } else {
-    html.classList.add('pending-pointer');
-    var startX = null;
-    var startY = null;
-    var trigger = function (event) {
-      if (startX === null) {
-        startX = event.clientX;
-        startY = event.clientY;
-        return;
-      }
-      var dx = event.clientX - startX;
-      var dy = event.clientY - startY;
-      if (dx * dx + dy * dy < 9) return;
-      html.classList.remove('pending-pointer');
-      try { sessionStorage.setItem('blink:shell-animated', '1'); } catch (e) {}
-      window.removeEventListener('pointermove', trigger);
-    };
-    window.addEventListener('pointermove', trigger);
-  }
-} catch (e) {}`}
-        />
-      )
-    }
 
     <Analytics />
   </head>

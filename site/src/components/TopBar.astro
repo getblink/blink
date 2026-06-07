@@ -1,0 +1,197 @@
+---
+import BrandMark from "./BrandMark.astro";
+
+// Section anchors are absolute (/#…) so the nav also works from /story.
+const links = [
+  { href: "/#how", label: "how it works" },
+  { href: "/#why", label: "why blink" },
+  { href: "/#privacy", label: "privacy" },
+  { href: "/#faq", label: "faq" },
+  { href: "/story", label: "story" },
+];
+---
+
+<header class="topbar">
+  <div class="container topbar__inner">
+    <a class="topbar__brand brand" href="/" aria-label="Blink, home">
+      <BrandMark size={25} />
+      <span>blink</span>
+    </a>
+
+    <nav class="topbar__nav" aria-label="Primary">
+      {links.map((l) => <a href={l.href}>{l.label}</a>)}
+    </nav>
+
+    <a class="btn btn--primary topbar__cta" href="/#join">
+      <span>join the beta</span>
+      <span class="btn__arrow" aria-hidden="true">→</span>
+    </a>
+  </div>
+</header>
+
+<script is:inline>
+  // Landing: keep the bar hidden over the hero, then drop the floating pill in
+  // once the hero scrolls past. Other pages (no hero) just pill on scroll.
+  // This script runs before <main> is parsed, so the hero isn't queryable yet —
+  // hide synchronously on the landing path (no first-paint flash of the bar
+  // over the hero), then wire up the scroll logic once the DOM is ready.
+  (() => {
+    const bar = document.querySelector(".topbar");
+    if (!bar) return;
+    if (location.pathname === "/") bar.classList.add("is-floating", "is-hidden");
+
+    const start = () => {
+      const hero = document.querySelector(".hero");
+      let ticking = false;
+      const update = () => {
+        ticking = false;
+        if (hero) {
+          const past = hero.getBoundingClientRect().bottom < 80;
+          bar.classList.add("is-floating"); // landing bar is always pill-shaped
+          bar.classList.toggle("is-hidden", !past);
+        } else {
+          bar.classList.toggle("is-floating", window.scrollY > 120);
+        }
+      };
+      const onScroll = () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(update);
+      };
+      update();
+      addEventListener("scroll", onScroll, { passive: true });
+      addEventListener("resize", onScroll, { passive: true });
+    };
+
+    if (document.readyState === "loading")
+      addEventListener("DOMContentLoaded", start);
+    else start();
+  })();
+</script>
+
+<style>
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    /* At rest the bar is transparent and floats over the top of the hero
+       card — no full-width strip. When you scroll past the hero it condenses
+       onto the inner pill (see .is-floating). */
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition:
+      transform 460ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 320ms ease,
+      background 280ms ease,
+      border-color 280ms ease,
+      padding-top 360ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* On the landing the hero already carries the wordmark, so the bar stays
+     hidden (tucked up off the top) until you scroll past the hero — then it
+     drops in as the floating pill. */
+  .topbar.is-hidden {
+    transform: translateY(-130%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .topbar__inner {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    height: var(--topbar-h);
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+    transition:
+      max-width 420ms cubic-bezier(0.16, 1, 0.3, 1),
+      height 360ms cubic-bezier(0.16, 1, 0.3, 1),
+      padding 360ms cubic-bezier(0.16, 1, 0.3, 1),
+      background 280ms ease,
+      box-shadow 360ms ease;
+  }
+
+  /* --- Floating pill: triggered (via JS) once you scroll past the hero. The
+     bar detaches from the top edge and condenses into a centered pill. --- */
+  .topbar.is-floating {
+    background: transparent;
+    border-color: transparent;
+    /* drop the bar-wide blur so only the pill frosts the content behind it */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding-top: clamp(8px, 1.1vw, 14px);
+  }
+  .topbar.is-floating .topbar__inner {
+    max-width: 900px;
+    height: 54px;
+    /* equal inset all round so the CTA sits concentric inside the pill */
+    padding-inline: 22px 7px;
+    background: oklch(98.5% 0.004 96 / 0.6);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--fg) 7%, transparent),
+      0 8px 24px -14px color-mix(in oklch, var(--ink) 32%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .topbar,
+    .topbar__inner {
+      transition: none;
+    }
+  }
+  .topbar__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+  }
+  .topbar__nav {
+    display: flex;
+    align-items: center;
+    gap: clamp(18px, 2.1vw, 30px);
+    margin-left: auto;
+  }
+  .topbar__nav a {
+    position: relative;
+    padding: 4px 0;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--fg-muted);
+    transition: color 150ms ease;
+  }
+  .topbar__nav a::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1.5px;
+    background: var(--sky);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .topbar__nav a:hover {
+    color: var(--fg);
+  }
+  .topbar__nav a:hover::after {
+    transform: scaleX(1);
+  }
+  .topbar__cta {
+    height: 40px;
+    padding: 0 18px;
+    font-size: 14px;
+  }
+
+  /* On small screens the nav collapses to logo + CTA. */
+  @media (max-width: 780px) {
+    .topbar__nav {
+      display: none;
+    }
+    .topbar__cta {
+      margin-left: auto;
+    }
+  }
+</style>
