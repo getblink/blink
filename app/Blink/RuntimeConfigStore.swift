@@ -71,6 +71,8 @@ struct StylePrefs: Codable, Equatable {
 }
 
 struct RuntimeConfigFile: Codable {
+    static let defaultLensAnimationSpeed = 1.25
+
     let version: Int
     var autoPaste: Bool
     var model: String
@@ -78,6 +80,10 @@ struct RuntimeConfigFile: Codable {
     var allowContentRetention: Bool
     var soundsEnabled: Bool
     var thinkingLevel: String?
+    /// Per-app-surface reasoning overrides, keyed by source bundle id. When a
+    /// capture comes from a bundle present here, this level wins over the
+    /// global `thinkingLevel`. Toggled via the overlay's ⌘T cycle.
+    var appThinkingLevels: [String: String]
     var outputFormat: String?
     var nudgesEnabled: Bool
     var lastNudgeAt: Date?
@@ -98,6 +104,7 @@ struct RuntimeConfigFile: Codable {
         case allowContentRetention = "allow_content_retention"
         case soundsEnabled = "sounds_enabled"
         case thinkingLevel = "thinking_level"
+        case appThinkingLevels = "app_thinking_levels"
         case outputFormat = "output_format"
         case nudgesEnabled = "nudges_enabled"
         case lastNudgeAt = "last_nudge_at"
@@ -116,6 +123,7 @@ struct RuntimeConfigFile: Codable {
         allowContentRetention: Bool,
         soundsEnabled: Bool,
         thinkingLevel: String?,
+        appThinkingLevels: [String: String] = [:],
         outputFormat: String? = nil,
         nudgesEnabled: Bool,
         lastNudgeAt: Date?,
@@ -123,7 +131,7 @@ struct RuntimeConfigFile: Codable {
         nudgeCooldownMinutes: Int,
         style: StylePrefs = .default,
         annotateScreenshots: Bool = true,
-        lensAnimationSpeed: Double = 2.0
+        lensAnimationSpeed: Double = RuntimeConfigFile.defaultLensAnimationSpeed
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -132,6 +140,7 @@ struct RuntimeConfigFile: Codable {
         self.allowContentRetention = allowContentRetention
         self.soundsEnabled = soundsEnabled
         self.thinkingLevel = thinkingLevel
+        self.appThinkingLevels = appThinkingLevels
         self.outputFormat = outputFormat
         self.nudgesEnabled = nudgesEnabled
         self.lastNudgeAt = lastNudgeAt
@@ -153,6 +162,7 @@ struct RuntimeConfigFile: Codable {
             ?? false
         soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        appThinkingLevels = try container.decodeIfPresent([String: String].self, forKey: .appThinkingLevels) ?? [:]
         outputFormat = try container.decodeIfPresent(String.self, forKey: .outputFormat)
         nudgesEnabled = try container.decodeIfPresent(Bool.self, forKey: .nudgesEnabled) ?? true
         lastNudgeAt = try container.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
@@ -160,7 +170,8 @@ struct RuntimeConfigFile: Codable {
         nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
         style = try container.decodeIfPresent(StylePrefs.self, forKey: .style) ?? .default
         annotateScreenshots = try container.decodeIfPresent(Bool.self, forKey: .annotateScreenshots) ?? true
-        lensAnimationSpeed = try container.decodeIfPresent(Double.self, forKey: .lensAnimationSpeed) ?? 2.0
+        lensAnimationSpeed = try container.decodeIfPresent(Double.self, forKey: .lensAnimationSpeed)
+            ?? Self.defaultLensAnimationSpeed
     }
 }
 
@@ -182,6 +193,9 @@ final class RuntimeConfigStore: ObservableObject {
         didSet { save() }
     }
     @Published var thinkingLevel: String? {
+        didSet { save() }
+    }
+    @Published var appThinkingLevels: [String: String] {
         didSet { save() }
     }
     @Published var outputFormat: String? {
@@ -223,6 +237,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.allowContentRetention = config.allowContentRetention
         self.soundsEnabled = config.soundsEnabled
         self.thinkingLevel = config.thinkingLevel
+        self.appThinkingLevels = config.appThinkingLevels
         self.outputFormat = config.outputFormat
         self.nudgesEnabled = config.nudgesEnabled
         self.lastNudgeAt = config.lastNudgeAt
@@ -242,6 +257,7 @@ final class RuntimeConfigStore: ObservableObject {
             allowContentRetention: allowContentRetention,
             soundsEnabled: soundsEnabled,
             thinkingLevel: thinkingLevel,
+            appThinkingLevels: appThinkingLevels,
             outputFormat: outputFormat,
             nudgesEnabled: nudgesEnabled,
             lastNudgeAt: lastNudgeAt,
@@ -251,6 +267,26 @@ final class RuntimeConfigStore: ObservableObject {
             annotateScreenshots: annotateScreenshots,
             lensAnimationSpeed: lensAnimationSpeed
         )
+    }
+
+    /// The reasoning level a capture from `bundleID` should use: the per-app
+    /// override when one exists, otherwise the global default. A nil bundle id
+    /// (unknown source) falls back to the global level.
+    func resolvedThinkingLevel(forBundle bundleID: String?) -> String? {
+        if let bundleID, let level = appThinkingLevels[bundleID] {
+            return level
+        }
+        return thinkingLevel
+    }
+
+    /// Advance the per-app reasoning override for `bundleID` one step along the
+    /// `Off → Low → Medium → High → Off` cycle and persist it. Returns the new
+    /// level. The starting point is the app's current resolved level.
+    @discardableResult
+    func cycleThinkingLevel(forBundle bundleID: String) -> String {
+        let next = ReasoningLevels.next(after: appThinkingLevels[bundleID] ?? thinkingLevel)
+        appThinkingLevels[bundleID] = next
+        return next
     }
 
     private static func loadOrCreateConfig() -> RuntimeConfigFile {
@@ -274,7 +310,7 @@ final class RuntimeConfigStore: ObservableObject {
             nudgeCooldownMinutes: 30,
             style: .default,
             annotateScreenshots: true,
-            lensAnimationSpeed: 2.0
+            lensAnimationSpeed: RuntimeConfigFile.defaultLensAnimationSpeed
         )
         write(config)
         return config

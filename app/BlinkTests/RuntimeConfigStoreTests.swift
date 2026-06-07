@@ -21,6 +21,7 @@ final class RuntimeConfigStoreTests: XCTestCase {
         XCTAssertEqual(config.allowContentRetention, false)
         XCTAssertEqual(config.soundsEnabled, true)
         XCTAssertNil(config.thinkingLevel)
+        XCTAssertEqual(config.lensAnimationSpeed, RuntimeConfigFile.defaultLensAnimationSpeed)
     }
 
     func testRuntimeConfigFileDecodesThinkingLevel() throws {
@@ -83,6 +84,36 @@ final class RuntimeConfigStoreTests: XCTestCase {
             let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: encoded)
             XCTAssertEqual(decoded.thinkingLevel, level)
         }
+    }
+
+    func testRuntimeConfigFileDefaultsAppThinkingLevelsWhenMissing() throws {
+        let data = """
+        { "version": 1 }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(RuntimeConfigFile.self, from: data)
+        XCTAssertEqual(config.appThinkingLevels, [:])
+    }
+
+    func testRuntimeConfigFileDecodesAndRoundTripsAppThinkingLevels() throws {
+        let data = """
+        {
+          "version": 1,
+          "app_thinking_levels": { "com.google.Chrome": "high", "com.tinyspeck.slackmacgap": "off" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(RuntimeConfigFile.self, from: data)
+        XCTAssertEqual(config.appThinkingLevels["com.google.Chrome"], "high")
+        XCTAssertEqual(config.appThinkingLevels["com.tinyspeck.slackmacgap"], "off")
+
+        let reEncoded = try JSONEncoder().encode(config)
+        let reDecoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: reEncoded)
+        XCTAssertEqual(reDecoded.appThinkingLevels, config.appThinkingLevels)
+
+        // Snake_case on disk so the Python side can read it.
+        let object = try JSONSerialization.jsonObject(with: reEncoded) as? [String: Any]
+        XCTAssertNotNil(object?["app_thinking_levels"])
     }
 
     func testRuntimeConfigFileDefaultsStyleWhenMissing() throws {

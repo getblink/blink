@@ -181,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onReroll: { [weak coordinator] in coordinator?.rerollCurrentSuggestions() },
             onTogglePin: { [weak coordinator] in coordinator?.toggleOverlayPin() },
+            onCycleThinking: { [weak coordinator] in coordinator?.cycleThinkingForCurrentSurface() },
             onArrowNav: { [weak coordinator] direction in coordinator?.handleArrowNav(direction) },
             onDismiss: { [weak coordinator] in coordinator?.dismissOverlay() }
         )

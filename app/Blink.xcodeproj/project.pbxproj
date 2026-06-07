@@ -23,6 +23,7 @@
 		291C3C14AA942E3B09776E48 /* PermissionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00FB45D42D711DC16F6248EE /* PermissionsModel.swift */; };
 		2AB661B5D3F9DC75B8F7A7D6 /* WelcomeCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574427E788F4E0E2B85B5BEB /* WelcomeCanvasView.swift */; };
 		2F95FEF1F15BB46568939DA6 /* LGProto09.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E586D98EF9B940DE8E3A04 /* LGProto09.swift */; };
+		30121C7B47E7702BD8B68F3C /* PythonWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178767E150507306B3071632 /* PythonWorker.swift */; };
 		306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111C775580802A86D963BB01 /* ArtifactWriter.swift */; };
 		33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */; };
 		379BE397E0BCBF416D7CF8ED /* SoundEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */; };
@@ -51,6 +52,7 @@
 		66FA88A067CF56A3B39B96AF /* LGProto07.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7169947353B72448A6E051 /* LGProto07.swift */; };
 		683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */; };
 		6BE6FE3DCC03B244B9AC7DBC /* LGProto17.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125535B1A3C0CFB2836E271A /* LGProto17.swift */; };
+		755514336CD2F985423E3434 /* PythonWorkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3885547A6D2E9E514BF97AD0 /* PythonWorkerTests.swift */; };
 		773D7A811078F87E4771C0DA /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = 71B7439E5F2E382C7BB997BB /* PermissionFlow */; };
 		7A67FB3C16E6F5FA23C06607 /* HotkeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */; };
 		7C450E1D8CDBF9F1E8908A91 /* LGShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034A209A75C65A639214FF01 /* LGShared.swift */; };
@@ -132,6 +134,7 @@
 		111C775580802A86D963BB01 /* ArtifactWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactWriter.swift; sourceTree = "<group>"; };
 		125535B1A3C0CFB2836E271A /* LGProto17.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto17.swift; sourceTree = "<group>"; };
 		154F4742F71E9F393ABEFA51 /* NudgeOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgeOverlay.swift; sourceTree = "<group>"; };
+		178767E150507306B3071632 /* PythonWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonWorker.swift; sourceTree = "<group>"; };
 		194BFB2BFBDC0ADD2669BAA7 /* SelectionCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCapture.swift; sourceTree = "<group>"; };
 		1B7FC3BD8861EF2CB3D0B422 /* GlassCaptureLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCaptureLoading.swift; sourceTree = "<group>"; };
 		1B874CA83CFFA290563A148F /* ModelChoices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelChoices.swift; sourceTree = "<group>"; };
@@ -148,6 +151,7 @@
 		320EFC3753704C215B9E8F68 /* OnboardingDemoCardWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingDemoCardWindow.swift; sourceTree = "<group>"; };
 		3721EC9B44F62F3925DA0994 /* LGProto06.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGProto06.swift; sourceTree = "<group>"; };
 		379DADF515629A9A726AA235 /* AdvancedSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedSettingsView.swift; sourceTree = "<group>"; };
+		3885547A6D2E9E514BF97AD0 /* PythonWorkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonWorkerTests.swift; sourceTree = "<group>"; };
 		3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		3B6A4F1D256A1BB62E0C9EEF /* AboutMeTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeTextEditor.swift; sourceTree = "<group>"; };
 		3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundEffects.swift; sourceTree = "<group>"; };
@@ -342,6 +346,7 @@
 				00FB45D42D711DC16F6248EE /* PermissionsModel.swift */,
 				D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */,
 				A9F3716E531AB6065FA4DA33 /* PythonRunner.swift */,
+				178767E150507306B3071632 /* PythonWorker.swift */,
 				27D0B2B2B307FC1ADBEE1FEF /* ReasoningLevels.swift */,
 				CF99A877E92A6ECE706AD047 /* RuntimeConfigStore.swift */,
 				F508C4F9E4A91770F8CAB40E /* RuntimeEnvironment.swift */,
@@ -403,6 +408,7 @@
 				040D699C80AB14DC7CA7180F /* FocusedContextCaptureTests.swift */,
 				2A5D0B7F3752EB8BEEA49662 /* HotkeyTests.swift */,
 				74B1FFD588F30CF37132F363 /* PendingRunStoreTests.swift */,
+				3885547A6D2E9E514BF97AD0 /* PythonWorkerTests.swift */,
 				F4A41FA81E0F7BC70D97E7F3 /* ReasoningLevelsTests.swift */,
 				A1963ECCAE188CCB829B8C18 /* RuntimeConfigStoreTests.swift */,
 				6243F10E6B85BAB16101F7ED /* RuntimeEnvironmentTests.swift */,
@@ -575,6 +581,7 @@
 				9BAE9B795541CD3B0E66653E /* PermissionsSettingsView.swift in Sources */,
 				B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */,
 				4E51D45A9FC41BF18AC711B8 /* PythonRunner.swift in Sources */,
+				30121C7B47E7702BD8B68F3C /* PythonWorker.swift in Sources */,
 				2798D0C6537E90C28F2675DC /* ReasoningLevels.swift in Sources */,
 				50A4A16EE854798A4369814C /* RuntimeConfigStore.swift in Sources */,
 				8D89F453B4B447F3C165D8C2 /* RuntimeEnvironment.swift in Sources */,
@@ -609,6 +616,7 @@
 				85F2AEEC97F66C7399E832C0 /* FocusedContextCaptureTests.swift in Sources */,
 				7A67FB3C16E6F5FA23C06607 /* HotkeyTests.swift in Sources */,
 				E2841BBE26D8D2E57611B2C8 /* PendingRunStoreTests.swift in Sources */,
+				755514336CD2F985423E3434 /* PythonWorkerTests.swift in Sources */,
 				A30D6C3A6254EAFAD013A514 /* ReasoningLevelsTests.swift in Sources */,
 				33C573A56F6C45BECD9B7AD1 /* RuntimeConfigStoreTests.swift in Sources */,
 				06D5F20E2A2C8DE388596F7B /* RuntimeEnvironmentTests.swift in Sources */,

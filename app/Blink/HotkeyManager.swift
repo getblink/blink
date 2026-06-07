@@ -81,6 +81,7 @@ final class HotkeyManager {
     private let onTextEditing: (TextEditingShortcut) -> Void
     private let onReroll: () -> Void
     private let onTogglePin: () -> Void
+    private let onCycleThinking: () -> Void
     private let onArrowNav: (OverlayArrowDirection) -> Void
     private let onDismiss: () -> Void
     private let tapStateLock = NSLock()
@@ -119,6 +120,7 @@ final class HotkeyManager {
         onTextEditing: @escaping (TextEditingShortcut) -> Void,
         onReroll: @escaping () -> Void,
         onTogglePin: @escaping () -> Void,
+        onCycleThinking: @escaping () -> Void,
         onArrowNav: @escaping (OverlayArrowDirection) -> Void,
         onDismiss: @escaping () -> Void
     ) {
@@ -141,6 +143,7 @@ final class HotkeyManager {
         self.onTextEditing = onTextEditing
         self.onReroll = onReroll
         self.onTogglePin = onTogglePin
+        self.onCycleThinking = onCycleThinking
         self.onArrowNav = onArrowNav
         self.onDismiss = onDismiss
     }
@@ -346,7 +349,7 @@ final class HotkeyManager {
             // the user can still dismiss, unpin, and reroll Blink.
             if manager.isOverlayPinned() && !manager.isCustomInputActive() {
                 switch command {
-                case .dismiss, .reroll, .togglePin:
+                case .dismiss, .reroll, .togglePin, .cycleThinking:
                     break
                 default:
                     return Unmanaged.passUnretained(event)
@@ -377,6 +380,9 @@ final class HotkeyManager {
                 return nil
             case .togglePin:
                 DispatchQueue.main.async { manager.onTogglePin() }
+                return nil
+            case .cycleThinking:
+                DispatchQueue.main.async { manager.onCycleThinking() }
                 return nil
             case .moveSelectionUp:
                 DispatchQueue.main.async { manager.onArrowNav(.up) }

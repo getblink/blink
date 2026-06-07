@@ -2142,6 +2142,7 @@ class BlinkOnceTests(unittest.TestCase):
                     proxy_settings: dict[str, str],
                     image_paths: list[Path],
                     stream_events: bool = False,
+                    opener: object = None,
                 ) -> dict[str, object]:
                     self.assertIn("stateful_context", request_payload)
                     self.assertEqual(request_payload["preferences"]["model"], "gemini-3.1-flash-lite-preview")

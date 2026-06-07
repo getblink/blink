@@ -118,6 +118,22 @@ enum RuntimeEnvironment {
         return isTruthy(env["BLINK_GLASS_LOADING"]) || isTruthy(env["TLDR_GLASS_LOADING"])
     }
 
+    /// The persistent Python worker (`blink_once.py --serve`): one long-lived
+    /// process + keep-alive connection reused across captures, so captures after
+    /// the first skip the process spawn and the TLS handshake. ON by default;
+    /// set `BLINK_PERSISTENT_WORKER=0` (or `TLDR_PERSISTENT_WORKER=0`) to force
+    /// the old spawn-per-capture path. Read fresh. If the worker fails to
+    /// launch, `PythonRunner` falls back to spawning per capture anyway, so this
+    /// is safe to toggle while dogfooding.
+    static func persistentWorkerEnabled() -> Bool {
+        let env = mergedEnvironment()
+        // Default on; honor an explicit override (opt-out or opt-in) when set.
+        if let raw = env["BLINK_PERSISTENT_WORKER"] ?? env["TLDR_PERSISTENT_WORKER"] {
+            return isTruthy(raw)
+        }
+        return true
+    }
+
     private static func isTruthy(_ value: String?) -> Bool {
         switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":

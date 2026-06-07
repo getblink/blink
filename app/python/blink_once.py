@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import http.client
+import io
 import json
 import os
 import re
 import shutil
+import ssl
 import sys
 import time
 import traceback
@@ -1282,8 +1285,15 @@ def build_response_payload(
     return payload
 
 
+# Set by the persistent worker (`--serve`) so every event it streams carries
+# the seq of the request it belongs to; stays None in one-shot CLI mode.
+_ACTIVE_SEQ: Any = None
+
+
 def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
     event = {"event": kind, **payload}
+    if _ACTIVE_SEQ is not None and "seq" not in event:
+        event["seq"] = _ACTIVE_SEQ
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
@@ -1681,6 +1691,80 @@ def _encode_multipart_request(
     return b"".join(parts), boundary
 
 
+def _default_opener(req: request.Request, timeout: float) -> Any:
+    """One-shot opener: a fresh connection per call (urllib's default). This is
+    the CLI path and is unchanged from the original `request.urlopen` call."""
+    return request.urlopen(req, timeout=timeout)
+
+
+class _KeepAliveOpener:
+    """Callable drop-in for `_default_opener` that reuses one HTTPS connection
+    across calls so sequential captures skip the TCP+TLS handshake (~90 ms each
+    against Cloud Run, measured). It mimics `urlopen`'s contract exactly —
+    returns a context-manager response and raises `urllib.error.HTTPError` /
+    `URLError` — so `generate_via_proxy`'s error handling needs no changes.
+
+    A pooled keep-alive socket can be idle-closed by the server between
+    captures; the first request on a dead socket fails, so we drop the
+    connection and retry once on a fresh one. A second failure is a real
+    network error and surfaces as `URLError`, identical to the one-shot path.
+    """
+
+    def __init__(self) -> None:
+        self._conn: http.client.HTTPSConnection | None = None
+        self._host: str | None = None
+
+    def _connect(self, host: str, timeout: float) -> http.client.HTTPSConnection:
+        if self._conn is not None and self._host == host:
+            return self._conn
+        self.close()
+        self._conn = http.client.HTTPSConnection(
+            host, timeout=timeout, context=ssl.create_default_context()
+        )
+        self._host = host
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except OSError:
+                pass
+        self._conn = None
+        self._host = None
+
+    def __call__(self, req: request.Request, timeout: float) -> Any:
+        parsed = parse.urlparse(req.full_url)
+        host = parsed.netloc
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        method = req.get_method()
+        headers = dict(req.header_items())
+        body = req.data
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                conn = self._connect(host, timeout)
+                conn.request(method, path, body=body, headers=headers)
+                resp = conn.getresponse()
+            except (http.client.HTTPException, OSError) as exc:
+                # Stale keep-alive socket -> drop it and retry once on a fresh
+                # connection. The second failure (attempt == 1) is real.
+                self.close()
+                last_exc = exc
+                continue
+            if resp.status >= 400:
+                # Don't reuse a connection after an error response body; the
+                # next capture reconnects. Re-raise as HTTPError so the existing
+                # 401-retry / error-payload handling below runs unchanged.
+                err_body = resp.read()
+                self.close()
+                raise error.HTTPError(
+                    req.full_url, resp.status, resp.reason, resp.headers, io.BytesIO(err_body)
+                )
+            return resp
+        raise error.URLError(last_exc or "keep-alive request failed")
+
+
 def generate_via_proxy(
     request_payload: dict[str, Any],
     settings: dict[str, Any],
@@ -1688,7 +1772,9 @@ def generate_via_proxy(
     image_paths: list[Path],
     stream_events: bool = False,
     retry_stale_device_token: bool = True,
+    opener: Any = None,
 ) -> dict[str, Any]:
+    opener = opener or _default_opener
     body, boundary = _encode_multipart_request(request_payload, image_paths)
     timeout_seconds = float(settings["timeout_seconds"])
     accept = "text/event-stream" if stream_events else "application/json"
@@ -1710,7 +1796,7 @@ def generate_via_proxy(
 
     started = time.perf_counter()
     try:
-        with request.urlopen(req, timeout=timeout_seconds) as response:
+        with opener(req, timeout_seconds) as response:
             response_status = getattr(response, "status", None) or getattr(response, "code", None)
             content_type = response.headers.get("content-type") if getattr(response, "headers", None) else None
             proxy_diagnostics = _proxy_diagnostics(
@@ -1796,6 +1882,7 @@ def generate_via_proxy(
                 image_paths=image_paths,
                 stream_events=stream_events,
                 retry_stale_device_token=False,
+                opener=opener,
             )
             warnings = retry_payload.setdefault("warnings", [])
             if isinstance(warnings, list):
@@ -1960,21 +2047,89 @@ def stream_phase_message(request_payload: dict[str, Any]) -> str:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one Blink screenshot request.")
-    parser.add_argument("--screenshot", type=Path, required=True, action="append")
-    parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, required=True)
+    # Required for an actual run, but optional at the argparse layer so the
+    # persistent worker can launch with just `--serve` and receive these
+    # per-request over stdin. `_run_request` enforces their presence.
+    parser.add_argument("--screenshot", type=Path, action="append")
+    parser.add_argument("--runtime", type=Path)
+    parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--prompt", type=Path)
     parser.add_argument("--host-profile", type=Path)
     parser.add_argument("--request-json", type=Path)
     parser.add_argument("--skip-gemini", action="store_true")
     parser.add_argument("--stream-events", action="store_true")
+    # Persistent worker mode: keep one process + one keep-alive connection
+    # alive across captures, reading {"seq", "argv"} request lines from stdin.
+    parser.add_argument("--serve", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     load_runtime_env()
+    if args.serve:
+        return _serve()
+    return _run_request(args)
+
+
+def _serve() -> int:
+    """Persistent worker. Reads one capture request per stdin line and runs it
+    on a reused keep-alive connection, so captures after the first skip both the
+    Python process spawn and the TLS handshake. Each request line is JSON:
+
+        {"seq": <int>, "argv": [<the same flags the one-shot CLI takes>]}
+
+    Every streamed event carries the matching `seq`, and a terminal
+    `worker_done` event marks the request boundary so the host can dispatch the
+    next capture. The worker outlives any single failed request: a bad request
+    line, bad argv, or a run/proxy error all degrade to an `error` +
+    `worker_done` pair, never a process exit. The host supervises liveness
+    (watchdog + respawn) on its side.
+    """
+    global _ACTIVE_SEQ
+    opener = _KeepAliveOpener()
+    emit_stream_event("worker_ready", {})
+    try:
+        for raw in sys.stdin:
+            line = raw.strip()
+            if not line:
+                continue
+            seq: Any = None
+            try:
+                msg = json.loads(line)
+                seq = msg.get("seq") if isinstance(msg, dict) else None
+                argv = msg.get("argv") if isinstance(msg, dict) else None
+            except json.JSONDecodeError:
+                argv = None
+            _ACTIVE_SEQ = seq
+            try:
+                if not isinstance(argv, list):
+                    raise ValueError("worker request missing 'argv' list")
+                req_args = parse_args([str(a) for a in argv])
+                if req_args.serve:
+                    raise ValueError("nested --serve is not allowed")
+                _run_request(req_args, opener=opener)
+            except SystemExit as exc:
+                # argparse aborts with SystemExit on bad flags; keep the worker.
+                emit_stream_event("error", {"message": f"worker: invalid argv ({exc.code})"})
+            except Exception as exc:  # noqa: BLE001 - worker must survive one bad request
+                # _run_request self-emits an 'error' event for run/proxy
+                # failures before re-raising; this also covers failures that
+                # happen before that point. A possible duplicate error event is
+                # harmless — the host reads through to `worker_done`.
+                emit_stream_event("error", {"message": f"worker: {exc}"})
+            finally:
+                emit_stream_event("worker_done", {})
+                _ACTIVE_SEQ = None
+    finally:
+        opener.close()
+    return 0
+
+
+def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
+    if args.runtime is None or args.out_dir is None or not args.screenshot:
+        raise ValueError("--runtime, --out-dir, and at least one --screenshot are required.")
     settings = load_json(args.settings, DEFAULT_SETTINGS)
     runtime = load_json(
         args.runtime,
@@ -2143,6 +2298,7 @@ def main(argv: list[str] | None = None) -> int:
                 proxy_settings=proxy_settings,
                 image_paths=screenshot_outputs,
                 stream_events=args.stream_events,
+                opener=opener,
             )
         if isinstance(response.get("frames"), list):
             diagnostics_by_index = {

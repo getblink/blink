@@ -117,6 +117,10 @@ final class BlinkCoordinator: @unchecked Sendable {
     private var currentSuggestionDetails: [SuggestionDetail] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    /// Bundle id of the app the current overlay's capture came from. Drives the
+    /// overlay ⌘T reasoning toggle's per-surface persistence. Set at capture
+    /// time; survives rerolls (same surface).
+    private var currentSurfaceBundleID: String?
     private var followUpHistory: [FollowUpTurn] = []
     private var tldrHistory: [TLDREntry] = []
     private var currentTldrIndex: Int = 0
@@ -320,7 +324,7 @@ final class BlinkCoordinator: @unchecked Sendable {
     @MainActor
     func prewarmCaptureFeedback() {
         soundEffects.prewarm()
-        glassLoading.prewarm()
+        glassLoading.prewarm(speed: runtimeStore.lensAnimationSpeed)
     }
 
     private func setOverlayActiveMirror(_ active: Bool) {
@@ -655,6 +659,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTogglePinKey = { [weak self] in
             guard let self else { return }
             self.overlay.setPinned(!self.overlay.isPinned)
+        }
+        overlay.onCycleThinkingKey = { [weak self] in
+            self?.cycleThinkingForCurrentSurface()
+        }
+        overlay.onSetReasoning = { [weak self] level in
+            self?.setReasoningForCurrentSurface(level)
+        }
+        overlay.reasoningOverrideValue = { [weak self] in
+            guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+            return self.runtimeStore.appThinkingLevels[bundle]
         }
         overlay.onPinnedChanged = { [weak self] pinned in
             self?.setOverlayPinnedMirror(pinned)
@@ -992,11 +1006,26 @@ final class BlinkCoordinator: @unchecked Sendable {
             if sessionFrontmost["app_name"] == nil, let name = frontmostApp["app_name"] {
                 sessionFrontmost["app_name"] = name
             }
+            // Per-app-surface reasoning: resolve the level for the captured
+            // bundle (override or global) into this session's runtime, and
+            // remember the bundle so the overlay's ⌘T toggle knows which
+            // surface it's cycling. ⌘T only affects the NEXT capture, so this
+            // session keeps whatever level was resolved at capture time.
+            let sourceBundleID = sessionFrontmost["bundle_id"] as? String
+            var sessionRuntime = runtime
+            DispatchQueue.main.sync {
+                sessionRuntime.thinkingLevel = self.runtimeStore.resolvedThinkingLevel(forBundle: sourceBundleID)
+                self.currentSurfaceBundleID = sourceBundleID
+            }
+            // The per-app map is a client-side resolution table (it names the
+            // apps you use); the resolved level is already baked into
+            // `thinkingLevel`, so keep the map out of the per-request runtime.json.
+            sessionRuntime.appThinkingLevels = [:]
             let active = CaptureSession(
                 requestID: requestID,
                 startedAt: startedAt,
                 startedPerf: monotonicNow(),
-                runtime: runtime,
+                runtime: sessionRuntime,
                 clientMetadata: clientMetadata,
                 frontmostApp: sessionFrontmost,
                 staging: staging,
@@ -1874,6 +1903,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard let self else { return }
                     self.overlay.setPinned(!self.overlay.isPinned)
                 }
+                self.overlay.onCycleThinkingKey = { [weak self] in
+                    self?.cycleThinkingForCurrentSurface()
+                }
+                self.overlay.onSetReasoning = { [weak self] level in
+                    self?.setReasoningForCurrentSurface(level)
+                }
+                self.overlay.reasoningOverrideValue = { [weak self] in
+                    guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+                    return self.runtimeStore.appThinkingLevels[bundle]
+                }
                 self.overlay.onPinnedChanged = { [weak self] pinned in
                     self?.setOverlayPinnedMirror(pinned)
                 }
@@ -1981,6 +2020,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         let requestID = UUID().uuidString.lowercased()
         let clientMetadata = self.clientMetadata()
         var runtime = runtimeStore.snapshot
+        // Keep the per-app resolution table out of the per-request runtime.json
+        // (the original capture's thinking_level is restored from request.json
+        // below). See the matching note in `startCaptureSession`.
+        runtime.appThinkingLevels = [:]
         let allowEventLogging = runtime.allowEventLogging
         let startedAt = Date()
         let followUpInstruction = rawInstruction?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2107,12 +2150,13 @@ final class BlinkCoordinator: @unchecked Sendable {
             self?.dismissOverlay(implicit: true)
         }
         overlay.beginSuggestionRefresh()
-        // The follow-up text has been captured into the request; clear the box
-        // now that the reroll is committed so it doesn't linger (and so the
-        // unchanged-suggestions completion path can't strand stale text).
-        if followUpInstruction?.isEmpty == false {
-            overlay.clearCustomInputText()
-        }
+        // The follow-up text has been captured into the request, but we leave it
+        // in the box through the loading state and clear it only once the
+        // response lands (in the success handler below). That keeps the user
+        // looking at what they asked while it generates, and a failed reroll
+        // leaves their text intact to retry. The clear runs in the shared
+        // completion handler, so both the changed and unchanged-suggestions
+        // branches consume it.
         status("rerolling suggestions...")
         emitEvent(
             requestID: requestID,
@@ -2161,8 +2205,15 @@ final class BlinkCoordinator: @unchecked Sendable {
                                 break
                             case .partialSummary:
                                 break
-                            case .partialSuggestions(let list):
-                                self.overlay.updateSuggestions(Array(list.prefix(3)))
+                            case .partialSuggestions:
+                                // Hold the faded cards until completion. The
+                                // reroll TL;DR is applied only at completion
+                                // (Option A — no streaming partials), so
+                                // streaming suggestions live here would churn
+                                // the cards under a frozen TL;DR. Letting both
+                                // land together at completion keeps them moving
+                                // as one (TL;DR first).
+                                break
                             }
                         }
                     }
@@ -2261,6 +2312,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                         guard let self else { return }
                         self.overlay.setPinned(!self.overlay.isPinned)
                     }
+                    self.overlay.onCycleThinkingKey = { [weak self] in
+                        self?.cycleThinkingForCurrentSurface()
+                    }
+                    self.overlay.onSetReasoning = { [weak self] level in
+                        self?.setReasoningForCurrentSurface(level)
+                    }
+                    self.overlay.reasoningOverrideValue = { [weak self] in
+                        guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+                        return self.runtimeStore.appThinkingLevels[bundle]
+                    }
                     self.overlay.onPinnedChanged = { [weak self] pinned in
                         self?.setOverlayPinnedMirror(pinned)
                     }
@@ -2309,6 +2370,13 @@ final class BlinkCoordinator: @unchecked Sendable {
                         self.currentTldrIndex = index
                         self.overlay.updateSummaryFromHistory(self.tldrHistory[index].tldr)
                         self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
+                    }
+                    // The submitted follow-up has now been answered, so clear the
+                    // input box — deferred from submit time so the text stayed
+                    // visible through the whole loading state. Only when a
+                    // follow-up instruction was actually sent.
+                    if followUpInstruction?.isEmpty == false {
+                        self.overlay.clearCustomInputText()
                     }
                     self.soundEffects.play(.resultReady)
                     self.status("ready - press 1/2/3 to expand")
@@ -2578,6 +2646,44 @@ final class BlinkCoordinator: @unchecked Sendable {
     func toggleOverlayPin() {
         guard overlay.isVisible else { return }
         overlay.setPinned(!overlay.isPinned)
+    }
+
+    /// ⌘T from the overlay: cycle the reasoning level for the app this capture
+    /// came from and persist it. The change applies to the NEXT capture from
+    /// that app — the current result keeps the level baked into its request —
+    /// so we just confirm the new level rather than re-rolling.
+    @MainActor
+    func cycleThinkingForCurrentSurface() {
+        guard overlay.isVisible else { return }
+        guard let bundle = currentSurfaceBundleID, !bundle.isEmpty else {
+            status("reasoning toggle: no app surface for this capture")
+            return
+        }
+        let newLevel = runtimeStore.cycleThinkingLevel(forBundle: bundle)
+        let title = ReasoningLevels.title(for: newLevel)
+        overlay.flashReasoningLevel(title)
+        status("reasoning for this app → \(title) (applies next capture)")
+    }
+
+    /// Set (or, with `nil`, clear) the per-app reasoning override for the
+    /// current capture's surface. Like the ⌘T cycle, this applies to the next
+    /// capture, not the current result. Driven by the overlay's right-click
+    /// "Reasoning" submenu.
+    @MainActor
+    func setReasoningForCurrentSurface(_ level: String?) {
+        guard overlay.isVisible else { return }
+        guard let bundle = currentSurfaceBundleID, !bundle.isEmpty else {
+            status("reasoning: no app surface for this capture")
+            return
+        }
+        if let level {
+            runtimeStore.appThinkingLevels[bundle] = level
+        } else {
+            runtimeStore.appThinkingLevels.removeValue(forKey: bundle)
+        }
+        let title = ReasoningLevels.title(for: runtimeStore.resolvedThinkingLevel(forBundle: bundle))
+        overlay.flashReasoningLevel(title)
+        status("reasoning for this app → \(title) (applies next capture)")
     }
 
     @MainActor

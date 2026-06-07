@@ -34,4 +34,20 @@ final class ReasoningLevelsTests: XCTestCase {
             XCTAssertEqual(ReasoningLevels.value(for: title), level, "round-trip failed for \(level)")
         }
     }
+
+    func testNextCyclesOffLowMediumHighAndWraps() {
+        XCTAssertEqual(ReasoningLevels.next(after: "off"), "low")
+        XCTAssertEqual(ReasoningLevels.next(after: "low"), "medium")
+        XCTAssertEqual(ReasoningLevels.next(after: "medium"), "high")
+        XCTAssertEqual(ReasoningLevels.next(after: "high"), "off")
+    }
+
+    func testNextFromDefaultOrUnknownEntersAtOff() {
+        XCTAssertEqual(ReasoningLevels.next(after: nil), "off")
+        XCTAssertEqual(ReasoningLevels.next(after: "bogus"), "off")
+    }
+
+    func testNextIsCaseInsensitive() {
+        XCTAssertEqual(ReasoningLevels.next(after: "HIGH"), "off")
+    }
 }
