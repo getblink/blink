@@ -1,169 +1,133 @@
 ---
 import Base from "../layouts/Base.astro";
+import TopBar from "../components/TopBar.astro";
 import MetaFooter from "../components/MetaFooter.astro";
-import BrandMark from "../components/BrandMark.astro";
 
 const title = "What is Blink?";
 const description =
-  "Blink is a local-first Mac assistant for the replies hiding in plain sight: it reads your screen, drafts the next words, and stays quiet until you need it.";
+  "Blink is a Mac assistant for the replies hiding in plain sight: it reads your screen, drafts the next words, and stays quiet until you need it.";
 ---
 
 <Base title={title} description={description} ogType="article">
-  <main class="shell shell--scroll">
-    <header class="row meta">
-      <a class="cell" href="/">
-        <BrandMark />
-        <span>blink</span>
-      </a>
-      <div class="cell muted">story / 02</div>
-      <div class="cell"></div>
-    </header>
+  <TopBar />
 
-    <section class="row article-row">
-      <div class="cell article-cell">
-        <article class="article">
-          <h1>what is blink?</h1>
+  <main class="story">
+    <article class="container article">
+      <p class="article__eyebrow">the story</p>
+      <h1>what is blink?</h1>
 
-          <p>
-            the slowest thing on my computer is me typing.
-          </p>
+      <p>the slowest thing on my computer is me typing.</p>
 
-          <p>
-            a lot of what i put on the screen is contextual continuation: the
-            thread already tells me what to say back, and the agent already
-            gave me the answer. by the end of the day i've typed thousands of
-            words that any reasonable person in my seat would have typed the
-            same way.
-          </p>
+      <p>
+        a lot of what i put on the screen is contextual continuation: the thread
+        already tells me what to say back, and the agent already gave me the
+        answer. by the end of the day i've typed thousands of words that any
+        reasonable person in my seat would have typed the same way.
+      </p>
 
-          <p>
-            so blink is built on a simple bet: most replies aren't original,
-            and once a tool can see what you see, it can write them for you.
-          </p>
+      <p>
+        so blink is built on a simple bet: most replies aren't original, and
+        once a tool can see what you see, it can write them for you.
+      </p>
 
-          <p>
-            the idea isn't new and the model isn't the hard part. the hard
-            part is making it fast and quiet enough that you forget it's
-            there.
-          </p>
+      <p>
+        the idea isn't new and the model isn't the hard part. the hard part is
+        making it fast and quiet enough that you forget it's there.
+      </p>
 
-          <p>
-            right now this matters most for anyone working with agents. every agent is a thread that wants a
-            response, and the response is usually a function of context the
-            agent just gave you. running four claude code sessions at once
-            stops being a context-switching tax and starts feeling closer to
-            piloting.
-          </p>
+      <p>
+        right now this matters most for anyone working with agents. every agent
+        is a thread that wants a response, and the response is usually a function
+        of context the agent just gave you. running four claude code sessions at
+        once stops being a context-switching tax and starts feeling closer to
+        piloting.
+      </p>
 
-          <p>
-            it doesn't stop there. the same loop fits most of what people do
-            at a computer. email, messages, comments, reviews, posts. anywhere
-            the reply is a function of what's already on screen, and blink
-            collapses it into a keystroke.
-          </p>
+      <p>
+        it doesn't stop there. the same loop fits most of what people do at a
+        computer. email, messages, comments, reviews, posts. anywhere the reply
+        is a function of what's already on screen, and blink collapses it into a
+        keystroke.
+      </p>
 
-          <p>
-            when this works, your day stops grinding to a halt. the agent gets unblocked,
-            the slack thread moves on without you. your keyboard stops being the
-            bottleneck on responses you'd already finished in your head, and
-            your attention is free for the small number of things that
-            actually require you.
-          </p>
+      <p>
+        when this works, your day stops grinding to a halt. the agent gets
+        unblocked, the slack thread moves on without you. your keyboard stops
+        being the bottleneck on responses you'd already finished in your head,
+        and your attention is free for the small number of things that actually
+        require you.
+      </p>
 
-          <p>
-            the future i'm building toward is one where your computer
-            operates with you. it watches what you're doing, knows how you'd respond,
-            and stays out of the way until you decide. the words you would
-            have typed are already there, ready. typing becomes the mode you
-            switch into when you actually have something new to say.
-          </p>
+      <p>
+        the future i'm building toward is one where your computer operates with
+        you. it watches what you're doing, knows how you'd respond, and stays out
+        of the way until you decide. the words you would have typed are already
+        there, ready. typing becomes the mode you switch into when you actually
+        have something new to say.
+      </p>
 
-          <p>
-            blink reads your screen and writes the rest. once you try it,
-            you won't go back.
-          </p>
-        </article>
-      </div>
-    </section>
+      <p>
+        blink reads your screen and writes the rest. once you try it, you won't
+        go back.
+      </p>
 
-    <MetaFooter />
+      <p class="article__back">
+        <a href="/#join">join the beta →</a>
+      </p>
+    </article>
   </main>
 
+  <MetaFooter />
+
   <style>
-    /* The blink cell is an <a> for back-nav; suppress the global link underline */
-    header a.cell {
-      border-bottom: 0;
+    .story {
+      padding-block: clamp(48px, 8vh, 104px) clamp(64px, 10vh, 128px);
     }
-
-    .article-row {
-      grid-template-columns: 1fr;
-      min-height: 0;
-    }
-
-    .article-cell {
-      padding: clamp(48px, 7vh, 88px) clamp(28px, 5vw, 64px)
-        clamp(64px, 9vh, 112px);
-      align-items: flex-start;
-      justify-content: center;
-    }
-
     .article {
-      width: 100%;
-      max-width: 640px;
+      max-width: 680px;
     }
-
+    .article__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--fg-muted);
+      margin-bottom: 20px;
+    }
+    .article__eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--sky);
+    }
     .article h1 {
-      font-size: clamp(40px, 5.5vw, 64px);
-      font-weight: 700;
-      letter-spacing: -0.045em;
+      font-size: clamp(2.4rem, 5vw, 3.6rem);
+      font-weight: 720;
+      letter-spacing: -0.04em;
       line-height: 1;
-      margin-bottom: 32px;
+      margin-bottom: 36px;
       color: var(--fg);
     }
-
-    .article h2 {
-      font-size: clamp(20px, 2vw, 24px);
-      font-weight: 700;
-      letter-spacing: -0.015em;
-      line-height: 1.25;
-      margin-top: 56px;
-      margin-bottom: 16px;
-      color: var(--fg);
-    }
-
     .article p {
       font-size: clamp(16px, 1.3vw, 18px);
-      line-height: 1.65;
-      color: #2a2a2a;
-      margin-bottom: 18px;
+      line-height: 1.7;
+      color: var(--fg-2);
+      margin-bottom: 20px;
       text-wrap: pretty;
     }
-
-    .article .lede {
-      font-size: clamp(18px, 1.5vw, 21px);
+    .article__back {
+      margin-top: 40px;
+    }
+    .article__back a {
+      font-weight: 600;
       color: var(--fg);
-      font-weight: 500;
-      line-height: 1.55;
-      margin-bottom: 28px;
+      border-bottom: 1px solid var(--line-soft);
+      transition: border-color 140ms ease;
     }
-
-    .article a {
-      border-bottom: 1px solid var(--fg);
-    }
-
-    .article a:hover {
-      background: var(--accent-soft);
-      color: var(--fg);
-    }
-
-    @media (max-width: 880px) {
-      .article-cell {
-        padding: 40px 20px 64px;
-      }
-
-      .article h2 {
-        margin-top: 40px;
-      }
+    .article__back a:hover {
+      border-bottom-color: var(--fg);
     }
   </style>
 </Base>

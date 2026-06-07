@@ -1,0 +1,104 @@
+---
+import BrandMark from "./BrandMark.astro";
+
+// Section anchors are absolute (/#…) so the nav also works from /story.
+const links = [
+  { href: "/#how", label: "how it works" },
+  { href: "/#why", label: "why blink" },
+  { href: "/#privacy", label: "privacy" },
+  { href: "/#faq", label: "faq" },
+  { href: "/story", label: "story" },
+];
+---
+
+<header class="topbar">
+  <div class="container topbar__inner">
+    <a class="topbar__brand brand" href="/" aria-label="Blink, home">
+      <BrandMark size={25} />
+      <span>blink</span>
+    </a>
+
+    <nav class="topbar__nav" aria-label="Primary">
+      {links.map((l) => <a href={l.href}>{l.label}</a>)}
+    </nav>
+
+    <a class="btn btn--primary topbar__cta" href="/#join">
+      <span>join the beta</span>
+      <span class="btn__arrow" aria-hidden="true">→</span>
+    </a>
+  </div>
+</header>
+
+<style>
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: oklch(97.6% 0.006 96 / 0.8);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border-bottom: 1px solid var(--line-faint);
+  }
+  .topbar__inner {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    height: var(--topbar-h);
+  }
+  .topbar__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+  }
+  .topbar__nav {
+    display: flex;
+    align-items: center;
+    gap: clamp(18px, 2.1vw, 30px);
+    margin-left: auto;
+  }
+  .topbar__nav a {
+    position: relative;
+    padding: 4px 0;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--fg-muted);
+    transition: color 150ms ease;
+  }
+  .topbar__nav a::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1.5px;
+    background: var(--sky);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .topbar__nav a:hover {
+    color: var(--fg);
+  }
+  .topbar__nav a:hover::after {
+    transform: scaleX(1);
+  }
+  .topbar__cta {
+    height: 40px;
+    padding: 0 18px;
+    font-size: 14px;
+  }
+
+  /* On small screens the nav collapses to logo + CTA. */
+  @media (max-width: 780px) {
+    .topbar__nav {
+      display: none;
+    }
+    .topbar__cta {
+      margin-left: auto;
+    }
+  }
+</style>
