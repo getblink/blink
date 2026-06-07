@@ -147,7 +147,7 @@ bricked between launch and a successful mint round-trip. When
 
 The mint endpoint's per-IP rate limit reads `X-Forwarded-For` only when
 `BLINK_TRUST_PROXY_HEADERS=true`. Set this when the server runs behind a
-trusted reverse proxy (Railway, Cloudflare, etc.); otherwise the limit
+trusted reverse proxy (Cloud Run / Google Frontend, Cloudflare, etc.); otherwise the limit
 falls back to `request.client.host`.
 
 Error responses:

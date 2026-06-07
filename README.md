@@ -30,7 +30,7 @@ Grab the latest beta DMG from [useblink.dev](https://useblink.dev). Open the DMG
 
 ## Self-Host The Server
 
-The backend is a small FastAPI app that can run on Railway or any Python host with Postgres. See [server/README.md](server/README.md) for environment variables, database schema, and endpoint contracts.
+The backend is a small FastAPI app. We deploy it to Google Cloud Run, but it'll run on any Python host with Postgres. See [server/README.md](server/README.md) for environment variables, database schema, and endpoint contracts.
 
 ## Build From Source
 
@@ -47,7 +47,7 @@ For release builds, use `app/scripts/release.sh`; it signs and notarizes the app
 ## Repository Map
 
 - `app/` contains the shipped Blink.app Swift surface and bundled Python runner.
-- `server/` contains the FastAPI backend and Railway deployment notes.
+- `server/` contains the FastAPI backend and Cloud Run deployment notes.
 - `site/` contains the Astro landing page for `useblink.dev`.
 - `scratchpad/` contains experimental capture, fixture, and sweep tooling.
 - `experiments/blink-copy-paste/` contains the archived intelligent copy-paste tester app.

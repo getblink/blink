@@ -68,4 +68,25 @@ final class SoundEffects {
         sound.volume = event.volume
         sound.play()
     }
+
+    /// Warm the audio output route at launch so the first real `play(.capture)`
+    /// on the hot path doesn't pay Core Audio's first-playback spin-up — which
+    /// otherwise lands as a late chime on the first capture after launch. Plays
+    /// the capture sound once at volume 0 (inaudible), independent of the
+    /// sounds-enabled setting. Runs off the hot path, seconds before any real
+    /// capture, so it can't race a real playback (the next `play` restores the
+    /// event volume before sounding).
+    func prewarm() {
+        let sound: NSSound
+        if let cached = sounds[.capture] {
+            sound = cached
+        } else if let loaded = NSSound(named: NSSound.Name(Event.capture.soundName)) {
+            sounds[.capture] = loaded
+            sound = loaded
+        } else {
+            return
+        }
+        sound.volume = 0
+        sound.play()
+    }
 }

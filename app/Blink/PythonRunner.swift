@@ -47,14 +47,28 @@ enum PythonRunner {
     }
 
     final class StreamingRun {
-        fileprivate let process: Process
         private let stateLock = NSLock()
         private var _bundleDir: String?
         private var _firstTokenAt: Date?
         private var _finalReceived = false
+        private let isRunningProvider: () -> Bool
+        private let terminateHandler: () -> Void
 
+        /// Spawn-per-capture backing: liveness and cancellation map directly to
+        /// the one-shot process this run owns.
         fileprivate init(process: Process) {
-            self.process = process
+            self.isRunningProvider = { process.isRunning }
+            self.terminateHandler = { if process.isRunning { process.terminate() } }
+        }
+
+        /// Worker backing: liveness and cancellation are delegated to the
+        /// shared `PythonWorker`, which owns the long-lived process. Cancelling
+        /// a worker-backed run kills + respawns the worker (interrupt ==
+        /// kill+respawn), matching the spawn path's "terminate the process"
+        /// semantics without taking the whole worker down permanently.
+        init(isRunning: @escaping () -> Bool, terminate: @escaping () -> Void) {
+            self.isRunningProvider = isRunning
+            self.terminateHandler = terminate
         }
 
         var bundleDir: String? {
@@ -72,30 +86,24 @@ enum PythonRunner {
             return _finalReceived
         }
 
-        fileprivate func setBundleDir(_ dir: String) {
+        func setBundleDir(_ dir: String) {
             stateLock.lock(); defer { stateLock.unlock() }
             if _bundleDir == nil { _bundleDir = dir }
         }
 
-        fileprivate func markFirstToken(_ date: Date) {
+        func markFirstToken(_ date: Date) {
             stateLock.lock(); defer { stateLock.unlock() }
             if _firstTokenAt == nil { _firstTokenAt = date }
         }
 
-        fileprivate func markFinalReceived() {
+        func markFinalReceived() {
             stateLock.lock(); defer { stateLock.unlock() }
             _finalReceived = true
         }
 
-        var isRunning: Bool {
-            process.isRunning
-        }
+        var isRunning: Bool { isRunningProvider() }
 
-        func terminate() {
-            if process.isRunning {
-                process.terminate()
-            }
-        }
+        func terminate() { terminateHandler() }
     }
 
     static func runOnceSync(
@@ -206,34 +214,38 @@ enum PythonRunner {
             throw RunError.noScript
         }
 
+        let screenshots = screenshotPNGs ?? screenshotPNG.map { [$0] } ?? []
+        let perRequestArgs = streamingArgs(
+            screenshots: screenshots,
+            runtimeJSON: runtimeJSON,
+            settingsJSON: settingsJSON,
+            prompt: prompt,
+            requestJSON: requestJSON,
+            outputParent: outputParent,
+            hostProfileJSON: hostProfileJSON,
+            skipGemini: skipGemini
+        )
+
+        // Persistent-worker path: reuse one long-lived `blink_once.py --serve`
+        // process + its keep-alive connection across captures, so captures
+        // after the first skip the process spawn and the TLS handshake. If the
+        // worker can't even launch, fall through to the proven spawn-per-capture
+        // path for this capture (a broken worker degrades, never blocks).
+        if RuntimeEnvironment.persistentWorkerEnabled() {
+            do {
+                return try sharedWorker(config: config).capture(
+                    perRequestArgs: perRequestArgs,
+                    onRunStarted: onRunStarted,
+                    onEvent: onEvent
+                )
+            } catch PythonWorker.WorkerError.unavailable {
+                // Worker failed to launch; the spawn path below still works.
+            }
+        }
+
         let process = Process()
         process.executableURL = python
-        let screenshots = screenshotPNGs ?? screenshotPNG.map { [$0] } ?? []
-        var args = [
-            script.path,
-            "--runtime", runtimeJSON.path,
-            "--out-dir", outputParent.path,
-            "--stream-events",
-        ]
-        for screenshot in screenshots {
-            args += ["--screenshot", screenshot.path]
-        }
-        if let settingsJSON {
-            args += ["--settings", settingsJSON.path]
-        }
-        if let prompt {
-            args += ["--prompt", prompt.path]
-        }
-        if let requestJSON {
-            args += ["--request-json", requestJSON.path]
-        }
-        if let hostProfileJSON {
-            args += ["--host-profile", hostProfileJSON.path]
-        }
-        if skipGemini {
-            args.append("--skip-gemini")
-        }
-        process.arguments = args
+        process.arguments = [script.path] + perRequestArgs
         process.environment = buildEnvironment(config: config)
 
         let stdout = Pipe()
@@ -381,7 +393,59 @@ enum PythonRunner {
         )
     }
 
-    private static func decodeSuggestionDetails(
+    /// The per-request flags shared by both the spawn path and the worker
+    /// path. The spawn path prepends the script path; the worker sends this
+    /// array as the request's `argv`.
+    static func streamingArgs(
+        screenshots: [URL],
+        runtimeJSON: URL,
+        settingsJSON: URL?,
+        prompt: URL?,
+        requestJSON: URL?,
+        outputParent: URL,
+        hostProfileJSON: URL?,
+        skipGemini: Bool
+    ) -> [String] {
+        var args = [
+            "--runtime", runtimeJSON.path,
+            "--out-dir", outputParent.path,
+            "--stream-events",
+        ]
+        for screenshot in screenshots {
+            args += ["--screenshot", screenshot.path]
+        }
+        if let settingsJSON {
+            args += ["--settings", settingsJSON.path]
+        }
+        if let prompt {
+            args += ["--prompt", prompt.path]
+        }
+        if let requestJSON {
+            args += ["--request-json", requestJSON.path]
+        }
+        if let hostProfileJSON {
+            args += ["--host-profile", hostProfileJSON.path]
+        }
+        if skipGemini {
+            args.append("--skip-gemini")
+        }
+        return args
+    }
+
+    // One persistent worker per app process. Created lazily on first use and
+    // reused across captures; respawned internally if it dies.
+    private static let workerLock = NSLock()
+    private static var workerInstance: PythonWorker?
+
+    static func sharedWorker(config: Config) -> PythonWorker {
+        workerLock.lock(); defer { workerLock.unlock() }
+        if let workerInstance { return workerInstance }
+        let worker = PythonWorker(config: config)
+        workerInstance = worker
+        return worker
+    }
+
+    static func decodeSuggestionDetails(
         from object: [String: Any],
         fallbackSuggestions: [String]
     ) -> [SuggestionDetail] {
@@ -406,7 +470,7 @@ enum PythonRunner {
         return details.isEmpty ? fallbackSuggestions.map(SuggestionDetail.plain) : details
     }
 
-    private static func buildEnvironment(config: Config) -> [String: String] {
+    static func buildEnvironment(config: Config) -> [String: String] {
         var env = RuntimeEnvironment.mergedEnvironment()
         if let key = config.geminiApiKey {
             env["GEMINI_API_KEY"] = key

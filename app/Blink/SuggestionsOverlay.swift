@@ -7,6 +7,7 @@ enum OverlayArrowDirection {
 
 final class SuggestionsPanel: NSPanel {
     var onLocalKeyDown: ((NSEvent) -> Bool)?
+    var onContextMenu: ((NSEvent) -> Bool)?
     weak var customReplyField: CustomReplyField?
 
     override var canBecomeKey: Bool { true }
@@ -22,6 +23,12 @@ final class SuggestionsPanel: NSPanel {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        // Right-click (or control-click) anywhere on the overlay raises the
+        // context menu, regardless of which subview was hit.
+        if event.type == .rightMouseDown
+            || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+            if onContextMenu?(event) == true { return }
+        }
         // Selectable suggestion text means the window's field editor can be
         // first responder while the overlay is up — give the overlay router
         // first crack at keyDowns so 1-4/Enter/Esc keep steering the panel
@@ -72,10 +79,11 @@ private final class SelectableSuggestionTextField: NSTextField {
     private static let dragThreshold: CGFloat = 4.0
 
     override func mouseDown(with event: NSEvent) {
-        // Double / triple click flips to word / line selection; let AppKit
-        // own that path so users keep the standard selection gestures.
+        // The second click is the user's commit gesture. Drag still enters
+        // native text selection below; a double-click should not strand the
+        // card in copy/select mode.
         if event.clickCount > 1 {
-            super.mouseDown(with: event)
+            onClick?()
             return
         }
         guard let window else {
@@ -336,8 +344,9 @@ private final class TLDRPagerView: NSView {
     var currentIndex: Int = 0 { didSet { needsDisplay = true } }
     var onDotTapped: ((Int) -> Void)?
 
-    private static let dotDiameter: CGFloat = 6
-    private static let dotSpacing: CGFloat = 10
+    private static let dotDiameter: CGFloat = 7
+    private static let dotSpacing: CGFloat = 18
+    private static let hitRadius: CGFloat = 14
 
     override func draw(_ dirtyRect: NSRect) {
         guard dotCount > 1 else { return }
@@ -366,16 +375,18 @@ private final class TLDRPagerView: NSView {
         let spacing = TLDRPagerView.dotSpacing
         let totalWidth = CGFloat(dotCount) * d + CGFloat(dotCount - 1) * (spacing - d)
         let startX = (bounds.width - totalWidth) / 2
-        // Slop = half the inter-dot spacing minus 1px so adjacent dots'
-        // hit regions never overlap. With spacing=10 this gives a 4px slop
-        // and a 2px dead zone centered on each midpoint.
-        let hitSlop: CGFloat = spacing / 2 - 1
+        let centerY = bounds.height / 2
+        var best: (index: Int, distance: CGFloat)?
         for i in 0..<dotCount {
             let centerX = startX + CGFloat(i) * spacing + d / 2
-            if abs(point.x - centerX) <= hitSlop {
-                onDotTapped?(i)
-                return
+            let distance = hypot(point.x - centerX, point.y - centerY)
+            guard distance <= TLDRPagerView.hitRadius else { continue }
+            if best == nil || distance < best!.distance {
+                best = (i, distance)
             }
+        }
+        if let best {
+            onDotTapped?(best.index)
         }
     }
 }
@@ -395,7 +406,14 @@ private final class SuggestionCardClickTarget: NSObject {
     }
 }
 
-final class SuggestionsOverlay: NSObject {
+/// Opaque "stuck sticker" fill sat behind a glass pane's content. Faded in
+/// when the overlay is pinned so the card reads as pressed flat against the
+/// screen (solid, non-glass) rather than floating glass; faded back out on
+/// unpin. Tagged as its own type so the pin toggle can find every fill by
+/// walking the live view tree (which survives the dynamic card rebuilds).
+private final class StickerFillView: NSVisualEffectView {}
+
+final class SuggestionsOverlay: NSObject, NSGestureRecognizerDelegate, NSMenuDelegate {
     private enum CustomInputMode: Equatable {
         case followUp
         case write
@@ -404,13 +422,16 @@ final class SuggestionsOverlay: NSObject {
     private enum Layout {
         static let panelWidth: CGFloat = 560
         static let shadowBleed: CGFloat = 36
-        static let pinButtonSize: CGFloat = 16
-        static let pinButtonRightInset: CGFloat = 14
-        static let pinButtonTopInset: CGFloat = 12
         static let summaryMinHeight: CGFloat = 144
         static let loadingMinHeight: CGFloat = 56
         static let loadingDotSize: CGFloat = 8
         static let loadingDotTextGap: CGFloat = 10
+        // Compact loading puck used by the window-anchored placements. A small
+        // accent-tinted pill (pulsing dot + short "Reading…" label) — present
+        // enough to signal work, unobtrusive enough to scan past. Width is
+        // content-sized in `show()`; padding sets the horizontal breathing room.
+        static let loadingPuckHeight: CGFloat = 34
+        static let loadingPuckPaddingX: CGFloat = 17
         static let sectionGap: CGFloat = 14
         static let suggestionGap: CGFloat = 8
         static let summaryFontSize: CGFloat = 16
@@ -418,7 +439,11 @@ final class SuggestionsOverlay: NSObject {
         static let tagFontSize: CGFloat = 12
         static let hintFontSize: CGFloat = 12
         static let summaryTopInset: CGFloat = 26
-        static let summaryBottomInset: CGFloat = 18
+        // Bottom inset of the summary body. Sized to give the TL;DR breathing
+        // room and to host the follow-up pager dots (bottom-pinned in the same
+        // card) without crowding the last line — now that the instructions
+        // hint no longer occupies this band.
+        static let summaryBottomInset: CGFloat = 30
         static let summaryHintHeight: CGFloat = 18
         static let summaryHintGap: CGFloat = 12
         static let refreshPillHeight: CGFloat = 62
@@ -522,6 +547,18 @@ final class SuggestionsOverlay: NSObject {
         let attachmentChips: NSStackView?
     }
 
+    private struct SummaryRenderPlan {
+        let displayText: String
+        let visibleTextHeight: CGFloat
+        let fullTextHeight: CGFloat
+        let isExpandable: Bool
+        let maximumNumberOfLines: Int
+
+        var expansionDelta: CGFloat {
+            max(0, fullTextHeight - visibleTextHeight)
+        }
+    }
+
     private var panel: SuggestionsPanel?
     /// Screen the next panel should be centered on. Set by the coordinator
     /// from the latest `ScreenCapture.Capture.windowFramePoints` so the
@@ -533,6 +570,18 @@ final class SuggestionsOverlay: NSObject {
     /// Only consulted at panel construction; once a panel exists, recenter
     /// logic uses `panel.screen` and ignores this value.
     var preferredScreen: NSScreen?
+    /// AppKit-screen rect (bottom-left origin) of the captured window, set by
+    /// the coordinator before `showLoading`. Consulted by `panelOrigin` when
+    /// the placement is a window-anchored mode so the overlay lands relative
+    /// to the focused window instead of screen-center. Nil falls back to
+    /// centered placement, preserving prior behavior for non-capture entry
+    /// points (Settings, manual show calls in tests).
+    var anchorRect: NSRect?
+    /// Placement mode captured at `show()` time so the streaming follow-ups
+    /// (`updateSummary` / `updateSuggestionDetails`) reposition the panel
+    /// consistently with where the loading state first landed — no jump from
+    /// a corner puck to a centered card mid-stream.
+    private var loadingPlacement: LoadingPlacement = .centered
     // Close handle for the active multi-frame submit-prompt pill. Set by
     // `showSubmitPrompt()`; invoked + cleared by `dismissSubmitPrompt()`
     // (or replaced if `showSubmitPrompt()` is called again).
@@ -553,6 +602,12 @@ final class SuggestionsOverlay: NSObject {
     private var refreshStatusLabel: NSTextField?
     private var loadingPulseDot: NSView?
     private var isLoadingState: Bool = false
+    /// True while the loading state is rendered as the compact corner/side
+    /// puck (window-anchored placements) rather than the full-width centered
+    /// pill. Gates the puck-specific layout in `show()`, the no-op in
+    /// `updateLoadingPhase` (the puck has no text), and the full-width restore
+    /// in `updateSummary`'s loading→result transition.
+    private var loadingIsCompactPuck: Bool = false
     private var isSuggestionRefreshing: Bool = false
     private var softErrorPanel: NSPanel?
     private var summaryBaseFrame: NSRect = .zero
@@ -595,6 +650,8 @@ final class SuggestionsOverlay: NSObject {
     private var currentHeightDelta: CGFloat = 0
     private var customInputHeightDelta: CGFloat = 0
     private(set) var summaryFullText: String = ""
+    private var summaryIsExpanded = false
+    private var summaryIsExpandable = false
     private(set) var previousFrontmost: NSRunningApplication?
     private var hasPlayedSuggestionArrival = false
     private var isDismissing = false
@@ -603,7 +660,6 @@ final class SuggestionsOverlay: NSObject {
     /// the previous app *without* dismissing the overlay. Esc still dismisses.
     /// Toggled via Cmd+P.
     private(set) var isPinned: Bool = false
-    private var pinButton: NSButton?
     private var summaryHintLabel: NSTextField?
     private var summaryHintBaseText: String?
     private var tldrPagerView: TLDRPagerView?
@@ -620,6 +676,16 @@ final class SuggestionsOverlay: NSObject {
     var onTextEditingKey: ((TextEditingShortcut) -> Bool)?
     var onRerollKey: (() -> Void)?
     var onTogglePinKey: (() -> Void)?
+    var onCycleThinkingKey: (() -> Void)?
+    /// Set the reasoning override for the current app surface (nil = clear the
+    /// override and fall back to the global default). Wired by the coordinator;
+    /// driven by the overlay's right-click "Reasoning" submenu.
+    var onSetReasoning: ((String?) -> Void)?
+    /// Current per-app reasoning override value ("off"/"low"/"medium"/"high"),
+    /// or nil when there's no override. Read when building the context menu so
+    /// the active level is checkmarked.
+    var reasoningOverrideValue: (() -> String?)?
+    private var contextMenuOpen = false
     /// Implicit dismiss path — double-click outside the panel. The
     /// coordinator routes this to `dismissOverlay(implicit: true)`
     /// so the LDS snapshot is tagged as auto-resume eligible. Esc
@@ -736,6 +802,86 @@ final class SuggestionsOverlay: NSObject {
     /// bottom on the target screen.
     private func computeMaxPanelHeight(for screenFrame: NSRect) -> CGFloat {
         max(0, screenFrame.height - 2 * Layout.screenSafetyMargin)
+    }
+
+    /// Clamp a panel x so the panel never extends past the visible screen,
+    /// mirroring `clampedPanelY` for the horizontal axis. Falls back to
+    /// horizontal centering when the panel is wider than the screen budget.
+    private func clampedPanelX(
+        preferredX: CGFloat,
+        panelWidth: CGFloat,
+        screenFrame: NSRect
+    ) -> CGFloat {
+        let margin = Layout.screenSafetyMargin
+        let minX = screenFrame.minX + margin
+        let maxX = screenFrame.maxX - panelWidth - margin
+        if maxX < minX {
+            return screenFrame.midX - panelWidth / 2
+        }
+        return max(minX, min(preferredX, maxX))
+    }
+
+    /// Resolve the panel origin for the current placement. Every origin-from-
+    /// scratch site (show + the streaming `updateSummary`/`updateSuggestion`
+    /// follow-ups) routes through here so the loading state and the finished
+    /// card land in the same place. `.centered` (or a nil `anchorRect`)
+    /// reproduces the historical screen-centered placement exactly.
+    ///
+    /// The visible card sits `shadowBleed` inside the panel on every edge, so
+    /// the anchored modes offset by `shadowBleed` to land the *visible* edge —
+    /// not the invisible shadow perimeter — at the intended inset.
+    private func panelOrigin(
+        panelWidth: CGFloat,
+        panelHeight: CGFloat,
+        screenFrame: NSRect
+    ) -> NSPoint {
+        // Inset of the visible card from the window edge in anchored modes.
+        let gap: CGFloat = 16
+        let bleed = Layout.shadowBleed
+
+        guard loadingPlacement != .centered, let anchor = anchorRect else {
+            let y = clampedPanelY(
+                preferredCenterY: screenFrame.midY - panelHeight / 2,
+                panelHeight: panelHeight,
+                screenFrame: screenFrame
+            )
+            // Preserve the current x on in-place grows — matches the historical
+            // centered behavior, including a user's horizontal drag. `close()`
+            // nils `panel` before each `show()`, so the first placement (no
+            // panel yet) still centers horizontally.
+            let x = panel?.frame.origin.x ?? (screenFrame.midX - panelWidth / 2)
+            return NSPoint(x: x, y: y)
+        }
+
+        // Pin the visible right edge just inside the window's right edge for
+        // both anchored modes; corner also pins the visible bottom edge just
+        // inside the window's bottom, while side centers vertically on the
+        // window. As the panel grows (loading puck -> tall card), the pinned
+        // corner/edge stays put and the card expands up / left from it.
+        let desiredVisibleRight = anchor.maxX - gap
+        let x = clampedPanelX(
+            preferredX: desiredVisibleRight + bleed - panelWidth,
+            panelWidth: panelWidth,
+            screenFrame: screenFrame
+        )
+
+        let preferredY: CGFloat
+        switch loadingPlacement {
+        case .windowCorner:
+            // Visible bottom edge at (window bottom + gap).
+            preferredY = (anchor.minY + gap) - bleed
+        case .windowSide:
+            // Vertically centered on the window.
+            preferredY = anchor.midY - panelHeight / 2
+        case .centered:
+            preferredY = screenFrame.midY - panelHeight / 2
+        }
+        let y = clampedPanelY(
+            preferredCenterY: preferredY,
+            panelHeight: panelHeight,
+            screenFrame: screenFrame
+        )
+        return NSPoint(x: x, y: y)
     }
 
     /// Build the NSScrollView used in overflowing mode. Hosts the summary
@@ -880,7 +1026,7 @@ final class SuggestionsOverlay: NSObject {
             tldr: tldr,
             suggestionDetails: suggestionDetails,
             showsCustomInput: true,
-            hintText: Self.suggestionHintText,
+            hintText: nil,
             showsTldrHeader: true
         )
     }
@@ -892,8 +1038,8 @@ final class SuggestionsOverlay: NSObject {
     func setPinned(_ pinned: Bool) {
         guard pinned != isPinned else { return }
         isPinned = pinned
-        if let pinButton {
-            applyPinButtonAppearance(pinButton, pinned: pinned)
+        if isVisible {
+            playStickAnimation(pinning: pinned)
         }
         refreshHintLabel()
         onPinnedChanged?(pinned)
@@ -974,7 +1120,13 @@ final class SuggestionsOverlay: NSObject {
 
     private func installTLDRPagerIfNeeded(in host: NSView) -> TLDRPagerView {
         if let existing = tldrPagerView { return existing }
-        let pager = TLDRPagerView(frame: NSRect(x: 0, y: 4, width: host.bounds.width, height: 10))
+        // Span the full bottom inset so the dots center in that band rather
+        // than sitting squished against the card's bottom edge. The dots are
+        // drawn at the view's vertical center (see TLDRPagerView.draw), so a
+        // band-height view = vertically centered dots.
+        let pager = TLDRPagerView(
+            frame: NSRect(x: 0, y: 0, width: host.bounds.width, height: Layout.summaryBottomInset)
+        )
         // Keep the pager spanning the host's width and pinned to the bottom
         // so layout changes (panel resize, host re-layout) don't strand it.
         pager.autoresizingMask = [.width, .maxYMargin]
@@ -985,6 +1137,69 @@ final class SuggestionsOverlay: NSObject {
         host.addSubview(pager)
         tldrPagerView = pager
         return pager
+    }
+
+    private func installSummaryClickHandler(on label: NSTextField, in host: NSView? = nil, isExpandable: Bool) {
+        removeSummaryClickHandlers(from: label)
+        let click = NSClickGestureRecognizer(target: self, action: #selector(summaryLabelClicked(_:)))
+        click.numberOfClicksRequired = 1
+        click.delegate = self
+        label.addGestureRecognizer(click)
+        updateSummaryTooltip(on: label, isExpandable: isExpandable)
+        guard let host else { return }
+        removeSummaryClickHandlers(from: host)
+        let cardClick = NSClickGestureRecognizer(target: self, action: #selector(summaryLabelClicked(_:)))
+        cardClick.numberOfClicksRequired = 1
+        cardClick.delegate = self
+        host.addGestureRecognizer(cardClick)
+        host.toolTip = label.toolTip
+    }
+
+    private func removeSummaryClickHandlers(from view: NSView) {
+        for recognizer in view.gestureRecognizers where recognizer is NSClickGestureRecognizer {
+            view.removeGestureRecognizer(recognizer)
+        }
+    }
+
+    private func updateSummaryTooltip(on label: NSTextField, isExpandable: Bool) {
+        guard isExpandable else {
+            label.toolTip = nil
+            return
+        }
+        label.toolTip = summaryIsExpanded ? "Click to collapse TL;DR" : "Click to expand TL;DR"
+    }
+
+    @objc private func summaryLabelClicked(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        toggleSummaryExpansion()
+    }
+
+    // MARK: - NSGestureRecognizerDelegate
+
+    func gestureRecognizer(
+        _ gestureRecognizer: NSGestureRecognizer,
+        shouldAttemptToRecognizeWith event: NSEvent
+    ) -> Bool {
+        // Hand clicks that land on the pager dots to the pager's own
+        // mouseDown. The summary expand/collapse recognizer spans the whole
+        // card, so without this it swallows dot clicks (and silently no-ops
+        // when the summary isn't expandable) — making the pager feel dead.
+        guard let pager = tldrPagerView, !pager.isHidden, pager.window != nil else {
+            return true
+        }
+        let pointInPager = pager.convert(event.locationInWindow, from: nil)
+        return !pager.bounds.contains(pointInPager)
+    }
+
+    /// Expand/collapse the TL;DR. Shared by the summary click handler and the
+    /// Enter-key path (used when no suggestion is on screen to expand on).
+    @discardableResult
+    private func toggleSummaryExpansion() -> Bool {
+        guard summaryIsExpandable, !isLoadingState else { return false }
+        collapseSuggestions()
+        summaryIsExpanded.toggle()
+        updateSummary(summaryFullText, allowsShrink: true, commitsLayout: true, preservesExpansion: true)
+        return true
     }
 
     func showLoading(tldr: String) {
@@ -1032,6 +1247,18 @@ final class SuggestionsOverlay: NSObject {
     ) {
         close()
 
+        // Read fresh each show() so editing `.env.local` + a new capture
+        // picks up a placement change; latched into the property so the
+        // streaming follow-ups reposition consistently.
+        loadingPlacement = RuntimeEnvironment.loadingPlacement()
+
+        // Compact-puck loading layout only for the window-anchored placements
+        // with a known window rect; centered loading keeps the full-width
+        // pill. Latched so the loading->result transition and `updateLoadingPhase`
+        // can branch consistently.
+        let loadingPuck = isLoading && loadingPlacement != .centered && anchorRect != nil
+        loadingIsCompactPuck = loadingPuck
+
         let visibleSuggestions = Array(suggestionDetails.prefix(3))
         // Loading state keeps the medium weight for visual contrast with the
         // pulsing dot; the actual Blink body is regular weight so the bold
@@ -1046,28 +1273,30 @@ final class SuggestionsOverlay: NSObject {
         let summaryTextY = Layout.summaryBottomInset + hintBlockHeight + thumbBlockHeight
         let useHeader = showsTldrHeader && !isLoading
         let bodyBoldPrefix = useHeader ? "tl;dr" : nil
-        // The tldr renders into a single label that grows the panel to
-        // fit. We deliberately don't switch to a collapsible scrollview
-        // for long tldrs: that branch diverged visually from the
-        // in-place `updateSummary` path (which has no such concept), so
-        // the same content rendered differently on streaming-finalize
-        // (no toggle) vs resume (with toggle).
-        let fullSummaryTextHeight: CGFloat = isLoading
-            ? 0
-            : measureHeight(
-                tldr,
+        // The model returns one plain TL;DR string. The overlay decides
+        // whether that string needs a collapsed line cap and click-to-expand.
+        let summaryRenderPlan = isLoading
+            ? SummaryRenderPlan(
+                displayText: tldr,
+                visibleTextHeight: 0,
+                fullTextHeight: 0,
+                isExpandable: false,
+                maximumNumberOfLines: 0
+            )
+            : makeSummaryRenderPlan(
+                text: tldr,
                 width: summaryLabelWidth,
                 font: summaryFont,
-                lineSpacing: Layout.summaryLineSpacing,
-                boldPrefix: bodyBoldPrefix
+                boldPrefix: bodyBoldPrefix,
+                expanded: false
             )
         let summaryHeight: CGFloat
         if isLoading {
-            summaryHeight = Layout.loadingMinHeight
+            summaryHeight = loadingPuck ? Layout.loadingPuckHeight : Layout.loadingMinHeight
         } else {
             summaryHeight = max(
                 Layout.summaryMinHeight,
-                fullSummaryTextHeight + summaryTextY + Layout.summaryTopInset
+                summaryRenderPlan.visibleTextHeight + summaryTextY + Layout.summaryTopInset
             )
         }
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
@@ -1092,7 +1321,17 @@ final class SuggestionsOverlay: NSObject {
         let contentHeight = summaryHeight
             + (stackHeight == 0 ? 0 : Layout.sectionGap + stackHeight)
             + bottomHintBlockHeight
-        let panelWidth = Layout.panelWidth + Layout.shadowBleed * 2
+        // The compact puck uses a narrow panel so only the small visible pill
+        // sits over the source window (no wide invisible click dead-zone). The
+        // loading->result transition widens it back to the standard width.
+        // Width is content-sized to fit [dot][gap][label] plus side padding so
+        // the "Reading…" label reads as a tidy pill.
+        let puckTextWidth = loadingPuck ? ceil(measureLoadingTextWidth(tldr, font: summaryFont)) : 0
+        let puckWidth = Layout.loadingPuckPaddingX
+            + Layout.loadingDotSize + Layout.loadingDotTextGap + puckTextWidth
+            + Layout.loadingPuckPaddingX
+        let cardWidth = loadingPuck ? puckWidth : contentWidth
+        let panelWidth = cardWidth + Layout.shadowBleed * 2
         let flatPanelHeight = contentHeight + Layout.shadowBleed * 2
 
         // Overflow plan: the scrollable area is summary + suggestion stack;
@@ -1103,9 +1342,10 @@ final class SuggestionsOverlay: NSObject {
         // `expandSuggestion` doesn't have to transition flat→scrolled mid-flight.
         let scrollerContentHeight = summaryHeight
             + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
-        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+        let suggestionMaxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
             expandedHeights[$0] - collapsedHeights[$0]
         }.max() ?? 0
+        let maxExpandDelta = max(suggestionMaxExpandDelta, summaryRenderPlan.expansionDelta)
         let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
 
         let targetScreen = preferredScreen ?? NSScreen.main
@@ -1127,15 +1367,10 @@ final class SuggestionsOverlay: NSObject {
             ? (effectiveScrollerHeight + pinnedHeight + 2 * Layout.shadowBleed)
             : flatPanelHeight
 
-        let preferredCenterY = screenFrame.midY - panelHeight / 2
-        let originY = clampedPanelY(
-            preferredCenterY: preferredCenterY,
+        let origin = panelOrigin(
+            panelWidth: panelWidth,
             panelHeight: panelHeight,
             screenFrame: screenFrame
-        )
-        let origin = NSPoint(
-            x: screenFrame.midX - panelWidth / 2,
-            y: originY
         )
         let frame = NSRect(origin: origin, size: NSSize(width: panelWidth, height: panelHeight))
 
@@ -1173,6 +1408,9 @@ final class SuggestionsOverlay: NSObject {
         }
         panel.onLocalKeyDown = { [weak self] event in
             self?.handleLocalKeyDown(event) ?? false
+        }
+        panel.onContextMenu = { [weak self] event in
+            self?.showContextMenu(for: event) ?? false
         }
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
@@ -1217,16 +1455,12 @@ final class SuggestionsOverlay: NSObject {
 
         let contentX = cardHostX
         let summaryY = cardHostTopY - summaryHeight
-        let summaryFrame = NSRect(x: contentX, y: summaryY, width: contentWidth, height: summaryHeight)
-        let summary = makeGlassPane(frame: summaryFrame, cornerRadius: 24)
+        let summaryFrame = NSRect(x: contentX, y: summaryY, width: cardWidth, height: summaryHeight)
+        let summary = makeGlassPane(
+            frame: summaryFrame,
+            cornerRadius: loadingPuck ? summaryHeight / 2 : 24
+        )
 
-        // Skip the pin affordance during the loading shimmer — the panel is
-        // momentarily an unactionable "Reading the screen…" pill and the
-        // pin icon would just be visual noise. updateSummary's wasLoading
-        // branch installs it when the real tldr arrives.
-        if !isLoading {
-            installPinButton(in: summary.content, summaryHeight: summaryHeight)
-        }
 
         if let hintText {
             self.summaryHintBaseText = hintText
@@ -1285,7 +1519,41 @@ final class SuggestionsOverlay: NSObject {
         }
 
         let summaryLabel: NSTextField
-        if isLoading {
+        if loadingPuck {
+            // Window-anchored loading: a small liquid-glass pill — one pulsing
+            // monochrome dot + the "Reading…" label — that tells a first-time
+            // user what Blink is doing while staying out of the way. The glass
+            // is left bare (no color wash) so it reads as native frosted glass;
+            // the streaming `updateSummary` path reframes this same label into
+            // the real tldr when the pill grows into the card.
+            let textHeight = ceil(summaryFont.ascender - summaryFont.descender)
+            let centerY = summaryFrame.height / 2
+            let dotX = Layout.loadingPuckPaddingX
+            let dot = installLoadingDot(
+                in: summary.content,
+                at: NSRect(
+                    x: dotX,
+                    y: centerY - Layout.loadingDotSize / 2,
+                    width: Layout.loadingDotSize,
+                    height: Layout.loadingDotSize
+                ),
+                color: .labelColor
+            )
+            loadingPulseDot = dot
+            let labelX = dotX + Layout.loadingDotSize + Layout.loadingDotTextGap
+            summaryLabel = label(
+                frame: NSRect(
+                    x: labelX,
+                    y: centerY - textHeight / 2,
+                    width: summaryFrame.width - labelX - Layout.loadingPuckPaddingX + 6,
+                    height: textHeight
+                ),
+                text: tldr,
+                font: summaryFont,
+                color: .labelColor,
+                singleLine: true
+            )
+        } else if isLoading {
             // Compact loading layout: a centered horizontal group of
             // [pulsing dot] [placeholder text] sitting at vertical center
             // of the (much shorter) summary card. We size and position the
@@ -1328,11 +1596,17 @@ final class SuggestionsOverlay: NSObject {
                     width: contentWidth - 48,
                     height: summaryHeight - summaryTextY - Layout.summaryTopInset
                 ),
-                text: tldr,
+                text: summaryRenderPlan.displayText,
                 font: summaryFont,
                 color: .labelColor,
                 lineSpacing: Layout.summaryLineSpacing,
-                boldPrefix: bodyBoldPrefix
+                boldPrefix: bodyBoldPrefix,
+                maximumNumberOfLines: summaryRenderPlan.maximumNumberOfLines
+            )
+            installSummaryClickHandler(
+                on: summaryLabel,
+                in: summary.content,
+                isExpandable: summaryRenderPlan.isExpandable
             )
         }
         summary.content.addSubview(summaryLabel)
@@ -1495,6 +1769,8 @@ final class SuggestionsOverlay: NSObject {
         self.currentHeightDelta = 0
         self.customInputHeightDelta = 0
         self.expandedSuggestionIndex = nil
+        self.summaryIsExpanded = false
+        self.summaryIsExpandable = summaryRenderPlan.isExpandable
         self.hasPlayedSuggestionArrival = false
         self.isLoadingState = isLoading
         self.summaryFullText = tldr
@@ -1549,7 +1825,8 @@ final class SuggestionsOverlay: NSObject {
     /// pulsing dot or growing the card. Used for `.phase` events from the
     /// streaming pipeline ("Reading screen…", "Calling Gemini…", etc.).
     func updateLoadingPhase(_ text: String) {
-        guard isLoadingState, let summaryCard, let summaryLabel else {
+        // The compact puck shows no text — phase messages are a no-op there.
+        guard isLoadingState, !loadingIsCompactPuck, let summaryCard, let summaryLabel else {
             return
         }
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: .medium)
@@ -1591,27 +1868,53 @@ final class SuggestionsOverlay: NSObject {
         currentHeightDelta = 0
         customInputField?.onFocusChanged?(false)
         panel?.customReplyField = nil
+        // Dim the follow-up pill (not the suggestions) to signal work in
+        // flight. The current suggestions stay legible until the new ones
+        // cross-fade in on completion.
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Layout.animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for card in suggestionCards {
-                card.outer.animator().alphaValue = 0.44
-            }
+            customInputCard?.animator().alphaValue = 0.5
         }
     }
 
     func endSuggestionRefresh() {
         isSuggestionRefreshing = false
+        // `beginSuggestionRefresh()` detached the panel's custom-reply
+        // reference so keystrokes were swallowed during the reroll. The
+        // unchanged-suggestions completion path ends the refresh WITHOUT
+        // rebuilding the field, so re-attach the still-live field here —
+        // otherwise the box stays visibly present but silently uneditable.
+        if let field = customInputField {
+            panel?.customReplyField = field
+        }
+        // Restore the follow-up pill dimmed by beginSuggestionRefresh().
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Layout.animationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            for card in suggestionCards {
-                card.outer.animator().alphaValue = 1
-            }
+            customInputCard?.animator().alphaValue = 1
         }
     }
 
     func updateSummary(_ text: String) {
+        updateSummary(text, allowsShrink: false, commitsLayout: false, preservesExpansion: false)
+    }
+
+    func updateSummaryForFinalResult(_ text: String) {
+        updateSummary(text, allowsShrink: false, commitsLayout: true, preservesExpansion: false)
+    }
+
+    func updateSummaryFromHistory(_ text: String) {
+        collapseSuggestions()
+        updateSummary(text, allowsShrink: true, commitsLayout: true, preservesExpansion: false)
+    }
+
+    private func updateSummary(
+        _ text: String,
+        allowsShrink: Bool,
+        commitsLayout: Bool,
+        preservesExpansion: Bool
+    ) {
         guard let panel,
               let contentView,
               let summaryCard,
@@ -1625,50 +1928,99 @@ final class SuggestionsOverlay: NSObject {
         // snapshot, so a stale value here meant the resumed panel showed
         // "Reading the screen…" instead of the real tldr.
         summaryFullText = text
+        if !preservesExpansion {
+            summaryIsExpanded = false
+        }
         let wasLoading = isLoadingState
+        // Capture before tearDownLoadingState() clears the flag below.
+        let wasCompactPuck = loadingIsCompactPuck
         if wasLoading {
             tearDownLoadingState()
+            if wasCompactPuck {
+                // The narrow corner/side puck unfolds into the full-width
+                // result card. Widen the panel and reset the summary card's
+                // baseline width to the standard width *before* the grow math
+                // below repositions/resizes from these baselines. Origin is
+                // recomputed via panelOrigin in the grow branch, so the
+                // card's pinned window edge stays put as it expands.
+                let fullPanelWidth = Layout.panelWidth + 2 * Layout.shadowBleed
+                panel.setFrame(
+                    NSRect(
+                        x: panel.frame.minX,
+                        y: panel.frame.minY,
+                        width: fullPanelWidth,
+                        height: panel.frame.height
+                    ),
+                    display: false,
+                    animate: false
+                )
+                contentView.frame.size.width = fullPanelWidth
+                summaryBaseFrame.size.width = Layout.panelWidth
+                summaryLabel.isHidden = false
+            }
             // Streaming-loading path: now that the real summary is on screen,
             // promote the panel to key so its local handler intercepts stray
             // keystrokes. Mirrors the immediate-show path in `show(...)`.
             panel.makeKey()
-            // `showLoading` passed `hintText: nil`, so `summaryTextY` was
-            // computed with `hintBlockHeight = 0` — i.e. no reserved space
-            // above the bottom inset for the hint label we're about to
-            // install. Without this adjustment, `requiredSummaryHeight`
-            // below would size the card to the text alone, and the
-            // installed hint would overlap the bottom line of the tldr.
+            // No in-summary instructions hint anymore — the body sits on the
+            // plain bottom inset (`showLoading` already computed `summaryTextY`
+            // with `hintBlockHeight = 0`, so this is just an explicit restate).
             summaryTextY = Layout.summaryBottomInset
-                + Layout.summaryHintHeight
-                + Layout.summaryHintGap
-            installSuggestionHintIfNeeded(Self.suggestionHintText)
-            if pinButton == nil, let summaryContent {
-                installPinButton(in: summaryContent, summaryHeight: summaryContent.bounds.height)
-            }
         }
         let bodyBoldPrefix: String? = showsTldrHeader ? "tl;dr" : nil
         let font = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let labelWidth = Layout.panelWidth - 48
+        var renderPlan = makeSummaryRenderPlan(
+            text: text,
+            width: labelWidth,
+            font: font,
+            boldPrefix: bodyBoldPrefix,
+            expanded: summaryIsExpanded
+        )
+        if !renderPlan.isExpandable {
+            summaryIsExpanded = false
+            renderPlan = makeSummaryRenderPlan(
+                text: text,
+                width: labelWidth,
+                font: font,
+                boldPrefix: bodyBoldPrefix,
+                expanded: false
+            )
+        }
+        summaryIsExpandable = renderPlan.isExpandable
+        installSummaryClickHandler(
+            on: summaryLabel,
+            in: summaryContent,
+            isExpandable: renderPlan.isExpandable
+        )
         // When transitioning out of loading the card was clamped to the
         // compact loadingMinHeight; grow it to at least summaryMinHeight so
         // multi-line content has the normal breathing room.
-        let floor = wasLoading ? Layout.summaryMinHeight : summaryBaseFrame.height
+        let currentSummaryHeight = summaryCard.frame.height > 0
+            ? summaryCard.frame.height
+            : summaryBaseFrame.height
+        let floor = (wasLoading || allowsShrink) ? Layout.summaryMinHeight : summaryBaseFrame.height
         let requiredSummaryHeight = max(
             floor,
-            measureHeight(text, width: labelWidth, font: font, lineSpacing: Layout.summaryLineSpacing, boldPrefix: bodyBoldPrefix)
+            renderPlan.visibleTextHeight
                 + summaryTextY
                 + Layout.summaryTopInset
         )
-        let summaryDelta = requiredSummaryHeight - summaryBaseFrame.height
-        if summaryDelta > 0 {
+        let baselineSummaryHeight = (allowsShrink || commitsLayout)
+            ? currentSummaryHeight
+            : summaryBaseFrame.height
+        let summaryDelta = requiredSummaryHeight - baselineSummaryHeight
+        let shouldResizeSummary = summaryDelta > 0 || (allowsShrink && abs(summaryDelta) > 0.5)
+        if shouldResizeSummary {
             if let scroller = scrollContainer, let doc = scrollDocumentView {
-                // Scrolled mode: grow documentView and (where there's room
-                // in the budget) the scrollView + panel. Match the original
-                // delta-from-show-time semantics — keep summaryBaseFrame and
-                // documentViewBaseHeight anchored to the baseline. Include
-                // `currentHeightDelta` so a late updateSummary arriving while
-                // a card is expanded doesn't shrink the doc.
-                let newDocHeight = documentViewBaseHeight + summaryDelta + currentHeightDelta
+                // Scrolled mode: resize documentView and (where there's room
+                // in the budget) the scrollView + panel. The streaming path
+                // keeps the old delta-from-show-time semantics; pager/final
+                // paths use the currently rendered height so they can shrink.
+                let baseDocHeight = (allowsShrink || commitsLayout)
+                    ? doc.frame.height
+                    : documentViewBaseHeight + currentHeightDelta
+                let newDocHeight = max(requiredSummaryHeight, baseDocHeight + summaryDelta)
                 let screenFrame = resolvedScreenFrame(panel: panel)
                 let computedMax = computeMaxPanelHeight(for: screenFrame)
                 let (newScrollerHeight, newPanelHeight) = scrolledLayoutHeights(
@@ -1676,17 +2028,16 @@ final class SuggestionsOverlay: NSObject {
                     pinnedHeight: pinnedAreaHeight,
                     maxPanelHeight: computedMax
                 )
-                // Resize panel (recenter on each grow, matching the pre-fix
-                // updateSummary behavior).
-                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-                let originY = clampedPanelY(
-                    preferredCenterY: preferredCenterY,
+                // Reposition on each grow per the active placement (recenter
+                // for centered; re-anchor for the window-anchored modes).
+                let origin = panelOrigin(
+                    panelWidth: panel.frame.width,
                     panelHeight: newPanelHeight,
                     screenFrame: screenFrame
                 )
                 let newFrame = NSRect(
-                    x: panel.frame.origin.x,
-                    y: originY,
+                    x: origin.x,
+                    y: origin.y,
                     width: panel.frame.width,
                     height: newPanelHeight
                 )
@@ -1708,16 +2059,13 @@ final class SuggestionsOverlay: NSObject {
                     width: summaryBaseFrame.width,
                     height: requiredSummaryHeight
                 )
+                syncSummaryContentFrame()
                 summaryLabel.frame = NSRect(
                     x: 24,
                     y: summaryTextY,
                     width: labelWidth,
                     height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
                 )
-                if wasLoading {
-                    summaryBaseFrame = summaryCard.frame
-                    documentViewBaseHeight = newDocHeight
-                }
                 // Anchor the viewport to the top of the document so each
                 // streamed token stays visible (otherwise the doc grows above
                 // a fixed-origin clipView and the summary scrolls off the
@@ -1729,23 +2077,26 @@ final class SuggestionsOverlay: NSObject {
                 scroller.reflectScrolledClipView(scroller.contentView)
                 refreshScrollFadeMask()
             } else {
-                // Flat mode: existing behavior — panel grows. Apply y-clamp so
-                // the panel can't be positioned off-screen. Don't cap the
+                // Flat mode: resize around the summary while keeping the cards
+                // below anchored. Apply y-clamp so the panel can't be positioned
+                // off-screen. Don't cap the
                 // panel height itself — the final `updateSuggestionDetails`
                 // re-evaluates the layout and transitions to scrolled mode if
                 // the full content exceeds the budget. Capping mid-stream
                 // would clip the summary against cards below it.
                 let screenFrame = resolvedScreenFrame(panel: panel)
-                let newPanelHeight = basePanelHeight + summaryDelta
-                let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-                let originY = clampedPanelY(
-                    preferredCenterY: preferredCenterY,
+                let panelBaseHeight = (allowsShrink || commitsLayout)
+                    ? panel.frame.height
+                    : basePanelHeight
+                let newPanelHeight = panelBaseHeight + summaryDelta
+                let origin = panelOrigin(
+                    panelWidth: panel.frame.width,
                     panelHeight: newPanelHeight,
                     screenFrame: screenFrame
                 )
                 let newFrame = NSRect(
-                    x: panel.frame.origin.x,
-                    y: originY,
+                    x: origin.x,
+                    y: origin.y,
                     width: panel.frame.width,
                     height: newPanelHeight
                 )
@@ -1758,16 +2109,13 @@ final class SuggestionsOverlay: NSObject {
                     width: summaryBaseFrame.width,
                     height: requiredSummaryHeight
                 )
+                syncSummaryContentFrame()
                 summaryLabel.frame = NSRect(
                     x: 24,
                     y: summaryTextY,
                     width: labelWidth,
                     height: requiredSummaryHeight - summaryTextY - Layout.summaryTopInset
                 )
-                if wasLoading {
-                    summaryBaseFrame = summaryCard.frame
-                    basePanelHeight = newPanelHeight
-                }
             }
         } else if wasLoading {
             // Even when the new text fits in summaryBaseFrame, the loading
@@ -1782,13 +2130,23 @@ final class SuggestionsOverlay: NSObject {
         }
         setLabelText(
             summaryLabel,
-            text: text,
+            text: renderPlan.displayText,
             font: font,
             color: .labelColor,
             lineSpacing: Layout.summaryLineSpacing,
             singleLine: false,
-            boldPrefix: bodyBoldPrefix
+            boldPrefix: bodyBoldPrefix,
+            maximumNumberOfLines: renderPlan.maximumNumberOfLines
         )
+        if wasLoading || commitsLayout {
+            summaryBaseFrame = summaryCard.frame
+            basePanelHeight = panel.frame.height
+            basePanelTopY = panel.frame.maxY
+            if let scroller = scrollContainer, let doc = scrollDocumentView {
+                scrollerBaseHeight = scroller.frame.height
+                documentViewBaseHeight = doc.frame.height
+            }
+        }
     }
 
     func updateSuggestions(_ suggestions: [String]) {
@@ -1806,8 +2164,14 @@ final class SuggestionsOverlay: NSObject {
             endSuggestionRefresh()
         }
 
-        for card in suggestionCards {
-            card.outer.removeFromSuperview()
+        // On a follow-up refresh, keep the outgoing cards on screen so they
+        // can cross-fade into the new ones (clearer than an instant swap).
+        // On a first render there's nothing to dissolve from, so remove now.
+        let outgoingCardViews = shouldAnimateRefresh ? suggestionCards.map(\.outer) : []
+        if outgoingCardViews.isEmpty {
+            for card in suggestionCards {
+                card.outer.removeFromSuperview()
+            }
         }
         suggestionCards = []
         suggestionClickTargets = []
@@ -1825,10 +2189,13 @@ final class SuggestionsOverlay: NSObject {
         expandedSuggestionIndex = nil
 
         let suggestionFont = NSFont.systemFont(ofSize: Layout.suggestionFontSize)
+        let summaryFont = NSFont.systemFont(ofSize: Layout.summaryFontSize, weight: showsTldrHeader ? .regular : .medium)
         let hintFont = NSFont.systemFont(ofSize: Layout.hintFontSize)
         let bottomHintText: String? = nil
         let contentWidth = Layout.panelWidth
         let suggestionLabelWidth = contentWidth - Layout.suggestionTextX - Layout.cardPaddingX
+        let summaryLabelWidth = contentWidth - 48
+        let summaryBodyBoldPrefix = showsTldrHeader ? "tl;dr" : nil
         let collapsedHeights = visibleSuggestions.map {
             collapsedHeight(for: $0, width: suggestionLabelWidth, font: suggestionFont)
         }
@@ -1852,9 +2219,17 @@ final class SuggestionsOverlay: NSObject {
         let contentHeight = summaryHeight + Layout.sectionGap + stackHeight + bottomHintBlockHeight
         let scrollerContentHeight = summaryHeight
             + (suggestionStackHeight > 0 ? Layout.sectionGap + suggestionStackHeight : 0)
-        let maxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
+        let suggestionMaxExpandDelta: CGFloat = (0..<visibleSuggestions.count).map {
             expandedHeights[$0] - collapsedHeights[$0]
         }.max() ?? 0
+        let summaryRenderPlan = makeSummaryRenderPlan(
+            text: summaryFullText,
+            width: summaryLabelWidth,
+            font: summaryFont,
+            boldPrefix: summaryBodyBoldPrefix,
+            expanded: false
+        )
+        let maxExpandDelta = max(suggestionMaxExpandDelta, summaryRenderPlan.expansionDelta)
         let pinnedHeight = max(0, contentHeight - scrollerContentHeight)
 
         let screenFrame = resolvedScreenFrame(panel: panel)
@@ -1876,15 +2251,14 @@ final class SuggestionsOverlay: NSObject {
         // attempted "anchor current top to preserve user drag" was
         // wrong because the streaming-driven first render then walked
         // the panel down per-token instead of expanding from center.
-        let preferredCenterY = screenFrame.midY - newPanelHeight / 2
-        let newOriginY = clampedPanelY(
-            preferredCenterY: preferredCenterY,
+        let newOrigin = panelOrigin(
+            panelWidth: newPanelWidth,
             panelHeight: newPanelHeight,
             screenFrame: screenFrame
         )
         let newFrame = NSRect(
-            x: panel.frame.origin.x,
-            y: newOriginY,
+            x: newOrigin.x,
+            y: newOrigin.y,
             width: newPanelWidth,
             height: newPanelHeight
         )
@@ -2074,7 +2448,7 @@ final class SuggestionsOverlay: NSObject {
         self.customInputHeightDelta = 0
         let refreshArrivalViews = cards.map(\.outer)
         if shouldAnimateRefresh, !cards.isEmpty {
-            playArrivalAnimation(summary: nil, cards: refreshArrivalViews)
+            playRefreshTransition(outgoing: outgoingCardViews, incoming: refreshArrivalViews)
         } else if !hasPlayedSuggestionArrival, !cards.isEmpty {
             hasPlayedSuggestionArrival = true
             playArrivalAnimation(summary: summaryCard, cards: cards.map(\.outer))
@@ -2139,6 +2513,13 @@ final class SuggestionsOverlay: NSObject {
     func restoreCustomInputText(_ text: String) {
         guard let field = customInputField else { return }
         field.stringValue = text
+    }
+
+    /// Empty the custom-input box. Used after a follow-up instruction is
+    /// submitted so the consumed text doesn't linger into the next turn.
+    @MainActor
+    func clearCustomInputText() {
+        customInputField?.stringValue = ""
     }
 
     private var customInputEditorText: String {
@@ -2607,6 +2988,8 @@ final class SuggestionsOverlay: NSObject {
         summaryContent = nil
         summaryLabel = nil
         summaryFullText = ""
+        summaryIsExpanded = false
+        summaryIsExpandable = false
         refreshStatusPill = nil
         refreshStatusLabel = nil
         summaryTextY = 0
@@ -2624,7 +3007,6 @@ final class SuggestionsOverlay: NSObject {
         customWriteButton = nil
         bottomHintLabel = nil
         bottomHintBaseFrame = .zero
-        pinButton = nil
         tldrPagerView = nil
         showsTldrHeader = false
         expandedSuggestionIndex = nil
@@ -2799,6 +3181,15 @@ final class SuggestionsOverlay: NSObject {
         }
     }
 
+    /// Brief top-of-screen confirmation after the ⌘T reasoning toggle. The
+    /// chosen level applies to the next capture, so the copy says so.
+    func flashReasoningLevel(_ title: String) {
+        let screen = panel?.screen ?? NSScreen.main
+        if let screen {
+            ReasoningLevelPill.show(on: screen, title: title)
+        }
+    }
+
     /// Drops the "Hit ↩ to send to tl;dr" pill in from the menubar and
     /// keeps it visible until `dismissSubmitPrompt()` (no auto-fade). Safe
     /// to call repeatedly — a previous pill is closed first.
@@ -2829,6 +3220,7 @@ final class SuggestionsOverlay: NSObject {
             inner.autoresizingMask = [.width, .height]
             glass.contentView = inner
             suppressOutline(glass)
+            addStickerFill(to: inner, cornerRadius: cornerRadius)
             return GlassPane(outer: glass, content: inner)
         }
 
@@ -2845,7 +3237,33 @@ final class SuggestionsOverlay: NSObject {
         // hosting layer composites rounded.
         visual.maskImage = Self.roundedMaskImage(cornerRadius: cornerRadius)
         suppressOutline(visual)
+        addStickerFill(to: visual, cornerRadius: cornerRadius)
         return GlassPane(outer: visual, content: visual)
+    }
+
+    /// Install the opaque sticker fill at the back of a glass pane's content,
+    /// matched to the corner radius and starting at the current pinned alpha.
+    private func addStickerFill(to content: NSView, cornerRadius: CGFloat) {
+        let fill = StickerFillView(frame: content.bounds)
+        // A frosted vibrancy material (matte blur), deliberately NOT the
+        // refractive Liquid Glass — pinning reads as "frosted sticker pressed
+        // flat" rather than the floating glass.
+        fill.material = .popover
+        fill.blendingMode = .behindWindow
+        fill.state = .active
+        fill.maskImage = Self.roundedMaskImage(cornerRadius: cornerRadius)
+        fill.autoresizingMask = [.width, .height]
+        fill.alphaValue = isPinned ? 1 : 0
+        content.addSubview(fill, positioned: .below, relativeTo: nil)
+    }
+
+    /// The frost fill nested inside a single glass pane (its sticker layer).
+    private func stickerFill(in pane: NSView) -> StickerFillView? {
+        for sub in pane.subviews {
+            if let fill = sub as? StickerFillView { return fill }
+            if let fill = stickerFill(in: sub) { return fill }
+        }
+        return nil
     }
 
     private static func roundedMaskImage(cornerRadius: CGFloat) -> NSImage {
@@ -2897,51 +3315,31 @@ final class SuggestionsOverlay: NSObject {
     /// Pin lives in the top-right corner of the tldr glass pane. Hosted by
     /// summary.content so it auto-clips with the card and the rest of the
     /// panel keeps `isMovableByWindowBackground` drag intact.
-    private func installPinButton(in host: NSView, summaryHeight: CGFloat) {
-        let pin = NSButton(frame: pinButtonFrame(summaryHeight: summaryHeight))
-        pin.isBordered = false
-        pin.bezelStyle = .regularSquare
-        pin.imagePosition = .imageOnly
-        pin.imageScaling = .scaleProportionallyDown
-        pin.target = self
-        pin.action = #selector(pinButtonClicked(_:))
-        pin.toolTip = "Pin (\u{2318}P)"
-        pin.focusRingType = .none
-        // Bottom-margin flexible: as summary.content grows in height the pin
-        // stays anchored to the top edge.
-        pin.autoresizingMask = [.minYMargin]
-        applyPinButtonAppearance(pin, pinned: isPinned)
-        host.addSubview(pin)
-        pinButton = pin
-    }
-
-    private func pinButtonFrame(summaryHeight: CGFloat) -> NSRect {
-        let x = Layout.panelWidth - Layout.pinButtonSize - Layout.pinButtonRightInset
-        let y = summaryHeight - Layout.pinButtonSize - Layout.pinButtonTopInset
-        return NSRect(x: x, y: y, width: Layout.pinButtonSize, height: Layout.pinButtonSize)
-    }
-
-    private func applyPinButtonAppearance(_ button: NSButton, pinned: Bool) {
-        let name = pinned ? "pin.fill" : "pin"
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: pinned ? "Unpin" : "Pin")
-        if let image {
-            image.isTemplate = true
-            button.image = image
+    /// Keep the glass pane's inner content view sized to the (outer) summary
+    /// card after a resize. On macOS 26 the content view is a separate NSView
+    /// hosted by `NSGlassEffectView`; keeping it matched to the card means
+    /// manually-positioned subviews (the summary label) and the bottom-pinned
+    /// pager stay anchored correctly. No-op on the legacy path, where the
+    /// content view *is* the card.
+    private func syncSummaryContentFrame() {
+        guard let card = summaryCard, let content = summaryContent, content !== card else { return }
+        let target = NSRect(origin: .zero, size: card.frame.size)
+        if content.frame != target {
+            content.frame = target
         }
-        button.contentTintColor = pinned ? NSColor.labelColor : NSColor.tertiaryLabelColor
     }
 
-    @objc private func pinButtonClicked(_ sender: NSButton) {
-        onTogglePinKey?()
-    }
-
-    private func installLoadingDot(in host: NSView, at frame: NSRect) -> NSView {
+    private func installLoadingDot(
+        in host: NSView,
+        at frame: NSRect,
+        color: NSColor = .controlAccentColor
+    ) -> NSView {
         let dot = NSView(frame: frame)
         dot.wantsLayer = true
         dot.layer?.cornerRadius = frame.height / 2
-        dot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        // Composite above the glass material so the accent reads cleanly
-        // through the frosted backdrop.
+        dot.layer?.backgroundColor = color.cgColor
+        // Composite above the glass material so the dot reads cleanly through
+        // the frosted backdrop.
         dot.layer?.zPosition = 1
         host.addSubview(dot)
 
@@ -2961,6 +3359,7 @@ final class SuggestionsOverlay: NSObject {
         loadingPulseDot?.removeFromSuperview()
         loadingPulseDot = nil
         isLoadingState = false
+        loadingIsCompactPuck = false
     }
 
     private func showRefreshStatusPill() {
@@ -3026,6 +3425,34 @@ final class SuggestionsOverlay: NSObject {
         }
     }
 
+    /// Cross-fade the outgoing suggestion cards into the incoming set after a
+    /// follow-up reroll. A dissolve-in-place reads as "these refreshed" and
+    /// makes it easier to spot what changed than the slide-up arrival used for
+    /// a first render. Outgoing views are removed once faded out.
+    private func playRefreshTransition(outgoing: [NSView], incoming: [NSView]) {
+        for view in incoming { view.alphaValue = 0 }
+        if !outgoing.isEmpty {
+            // Stop stale cards from intercepting clicks while they fade.
+            for view in outgoing {
+                for recognizer in view.gestureRecognizers {
+                    view.removeGestureRecognizer(recognizer)
+                }
+            }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = Layout.animationDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                for view in outgoing { view.animator().alphaValue = 0 }
+            }, completionHandler: {
+                for view in outgoing { view.removeFromSuperview() }
+            })
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Layout.momentDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for view in incoming { view.animator().alphaValue = 1 }
+        }
+    }
+
     private func playArrivalAnimation(summary: NSView?, cards: [NSView]) {
         animateScale(view: summary, from: 0.96, to: 1.0, duration: Layout.momentDuration)
         for (index, card) in cards.enumerated() {
@@ -3056,6 +3483,81 @@ final class SuggestionsOverlay: NSObject {
         animation.duration = duration
         view.layer?.add(animation, forKey: "arrivalScale")
         view.layer?.setAffineTransform(CGAffineTransform(scaleX: to, y: to))
+    }
+
+    /// A tactile "sticker" press: on pin the whole overlay squashes flat for a
+    /// beat (like pressing a sticker down), on unpin it stretches and lifts
+    /// (peeling back up), then settles. Pure transform on the content layer —
+    /// it returns to identity, so nothing about the layout actually moves.
+    /// Stick (or peel) the overlay as a staggered cascade — the summary, then
+    /// each suggestion, then the input pill animate one after another, so the
+    /// whole overlay reads as settling onto the surface rather than one flat
+    /// scale. Pin cascades top-down; unpin peels bottom-up.
+    private func playStickAnimation(pinning: Bool) {
+        var panes: [NSView] = []
+        if let summaryCard { panes.append(summaryCard) }
+        panes.append(contentsOf: suggestionCards.map(\.outer))
+        if let customInputCard { panes.append(customInputCard) }
+        guard !panes.isEmpty else { return }
+
+        let ordered = pinning ? panes : Array(panes.reversed())
+        let stagger = 0.05
+        for (index, pane) in ordered.enumerated() {
+            let delay = Double(index) * stagger
+            if delay == 0 {
+                stickPane(pane, pinning: pinning)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.stickPane(pane, pinning: pinning)
+                }
+            }
+        }
+    }
+
+    /// One pane's stick: an overdamped scale press (no rebound — adhesive grabs
+    /// it; damping is held above critical ≈41 so the scale can't overshoot) plus
+    /// its frost fading in/out, so each card presses and goes solid as the
+    /// cascade reaches it.
+    private func stickPane(_ pane: NSView, pinning: Bool) {
+        if let layer = pane.layer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            ensureCenterAnchor(layer)
+            CATransaction.commit()
+
+            let spring = CASpringAnimation(keyPath: "transform.scale")
+            spring.fromValue = pinning ? 1.045 : 0.955
+            spring.toValue = 1.0
+            spring.mass = 1.0
+            // Soft and critically damped: a gentle settle, no rebound. Low
+            // stiffness keeps the curve from feeling snappy/harsh.
+            spring.stiffness = 210
+            spring.damping = 29
+            spring.initialVelocity = 0
+            spring.duration = spring.settlingDuration
+            layer.add(spring, forKey: "stickAnimation")
+        }
+        if let fill = stickerFill(in: pane) {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.32
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                fill.animator().alphaValue = pinning ? 1 : 0
+            }
+        }
+    }
+
+    /// Re-pivot a layer to its center (so a scale animation squashes in place
+    /// rather than from a corner), preserving its on-screen position. Idempotent.
+    private func ensureCenterAnchor(_ layer: CALayer) {
+        let target = CGPoint(x: 0.5, y: 0.5)
+        guard layer.anchorPoint != target else { return }
+        let bounds = layer.bounds
+        let old = layer.anchorPoint
+        layer.position = CGPoint(
+            x: layer.position.x + (target.x - old.x) * bounds.width,
+            y: layer.position.y + (target.y - old.y) * bounds.height
+        )
+        layer.anchorPoint = target
     }
 
     private func makeSuggestionCard(
@@ -3862,8 +4364,82 @@ final class SuggestionsOverlay: NSObject {
         lastOutsideClickAt = 0
     }
 
+    // MARK: - Context menu
+
+    private func showContextMenu(for event: NSEvent) -> Bool {
+        guard let panel, let host = panel.contentView, !isLoadingState else { return false }
+        NSMenu.popUpContextMenu(buildContextMenu(), with: event, for: host)
+        return true
+    }
+
+    private func buildContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+
+        let pin = NSMenuItem(
+            title: isPinned ? "Unpin overlay" : "Pin overlay",
+            action: #selector(contextTogglePin), keyEquivalent: ""
+        )
+        pin.target = self
+        pin.state = isPinned ? .on : .off
+        menu.addItem(pin)
+
+        let reroll = NSMenuItem(title: "Reroll suggestions", action: #selector(contextReroll), keyEquivalent: "")
+        reroll.target = self
+        menu.addItem(reroll)
+
+        menu.addItem(.separator())
+
+        let reasoning = NSMenuItem(title: "Reasoning", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let current = reasoningOverrideValue?() ?? nil
+        for title in ReasoningLevels.titles {
+            let value = ReasoningLevels.value(for: title)  // nil for "Default"
+            let item = NSMenuItem(title: title, action: #selector(contextSetReasoning(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            item.state = (value == current) ? .on : .off
+            submenu.addItem(item)
+        }
+        reasoning.submenu = submenu
+        menu.addItem(reasoning)
+
+        menu.addItem(.separator())
+
+        let copy = NSMenuItem(title: "Copy summary", action: #selector(contextCopySummary), keyEquivalent: "")
+        copy.target = self
+        copy.isEnabled = !summaryFullText.isEmpty
+        menu.addItem(copy)
+
+        let dismiss = NSMenuItem(title: "Dismiss", action: #selector(contextDismiss), keyEquivalent: "")
+        dismiss.target = self
+        menu.addItem(dismiss)
+
+        return menu
+    }
+
+    @objc private func contextTogglePin() { onTogglePinKey?() }
+    @objc private func contextReroll() { onRerollKey?() }
+    @objc private func contextSetReasoning(_ sender: NSMenuItem) {
+        onSetReasoning?(sender.representedObject as? String)
+    }
+    @objc private func contextDismiss() { onDismissKey?() }
+    @objc private func contextCopySummary() {
+        let text = summaryFullText
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) { contextMenuOpen = true }
+    func menuDidClose(_ menu: NSMenu) { contextMenuOpen = false }
+
     private func handleMouseDownForDismiss(_ event: NSEvent) {
         guard let panel else { return }
+        // Don't treat clicks made while the context menu is up as outside-clicks.
+        guard !contextMenuOpen else { return }
         // Pin means "stay open until I say otherwise." Esc still
         // dismisses; outside-click does not.
         if isPinned {
@@ -3916,6 +4492,11 @@ final class SuggestionsOverlay: NSObject {
             onDismissKey?()
             return true
         case .insert:
+            // With no suggestion to act on, Enter expands/collapses the
+            // summary instead of propagating to the source app.
+            if suggestionCards.isEmpty, summaryIsExpandable, !isLoadingState {
+                return toggleSummaryExpansion()
+            }
             return onInsertKey?() ?? false
         case .insertCustomInput:
             return onCustomInsertKey?() ?? true
@@ -3934,6 +4515,9 @@ final class SuggestionsOverlay: NSObject {
         case .togglePin:
             onTogglePinKey?()
             return true
+        case .cycleThinking:
+            onCycleThinkingKey?()
+            return true
         case .textEditing(let shortcut):
             return onTextEditingKey?(shortcut) ?? false
         }
@@ -3949,6 +4533,39 @@ final class SuggestionsOverlay: NSObject {
         setCustomInputMode(customInputMode == .followUp ? .write : .followUp, focusField: false)
     }
 
+    private func makeSummaryRenderPlan(
+        text: String,
+        width: CGFloat,
+        font: NSFont,
+        boldPrefix: String?,
+        expanded: Bool
+    ) -> SummaryRenderPlan {
+        let tldrText = TLDROverlayText(text)
+        let fullText = tldrText.displayText
+        let displayText = expanded ? fullText : tldrText.collapsedDisplayText
+        let fullHeight = measureHeight(
+            fullText,
+            width: width,
+            font: font,
+            lineSpacing: Layout.summaryLineSpacing,
+            boldPrefix: boldPrefix
+        )
+        let visibleHeight = measureHeight(
+            displayText,
+            width: width,
+            font: font,
+            lineSpacing: Layout.summaryLineSpacing,
+            boldPrefix: boldPrefix
+        )
+        return SummaryRenderPlan(
+            displayText: displayText,
+            visibleTextHeight: expanded ? fullHeight : visibleHeight,
+            fullTextHeight: fullHeight,
+            isExpandable: tldrText.isCollapsedAtParagraphBreak,
+            maximumNumberOfLines: 0
+        )
+    }
+
     private func label(
         frame: NSRect,
         text: String,
@@ -3956,7 +4573,8 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat = 0,
         singleLine: Bool = false,
-        boldPrefix: String? = nil
+        boldPrefix: String? = nil,
+        maximumNumberOfLines: Int = 0
     ) -> NSTextField {
         let label = NSTextField(labelWithString: "")
         label.frame = frame
@@ -3971,7 +4589,8 @@ final class SuggestionsOverlay: NSObject {
             color: color,
             lineSpacing: lineSpacing,
             singleLine: singleLine,
-            boldPrefix: boldPrefix
+            boldPrefix: boldPrefix,
+            maximumNumberOfLines: maximumNumberOfLines
         )
         return label
     }
@@ -3983,12 +4602,19 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat,
         singleLine: Bool,
-        boldPrefix: String? = nil
+        boldPrefix: String? = nil,
+        maximumNumberOfLines: Int = 0
     ) {
         label.font = font
         label.textColor = color
+        let isLineLimited = maximumNumberOfLines > 0
+        label.maximumNumberOfLines = singleLine ? 1 : maximumNumberOfLines
         label.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         label.usesSingleLineMode = singleLine
+        if let cell = label.cell as? NSTextFieldCell {
+            cell.truncatesLastVisibleLine = singleLine || isLineLimited
+            cell.wraps = !singleLine
+        }
         if boldPrefix != nil {
             label.attributedStringValue = makeBodyAttributedString(
                 text: text,
@@ -3996,7 +4622,8 @@ final class SuggestionsOverlay: NSObject {
                 color: color,
                 lineSpacing: lineSpacing,
                 singleLine: singleLine,
-                boldPrefix: boldPrefix
+                boldPrefix: boldPrefix,
+                maximumNumberOfLines: maximumNumberOfLines
             )
             return
         }
@@ -4032,7 +4659,8 @@ final class SuggestionsOverlay: NSObject {
                 color: .labelColor,
                 lineSpacing: lineSpacing,
                 singleLine: false,
-                boldPrefix: boldPrefix
+                boldPrefix: boldPrefix,
+                maximumNumberOfLines: 0
             )
         } else {
             let paragraph = NSMutableParagraphStyle()
@@ -4065,7 +4693,8 @@ final class SuggestionsOverlay: NSObject {
         color: NSColor,
         lineSpacing: CGFloat,
         singleLine: Bool,
-        boldPrefix: String?
+        boldPrefix: String?,
+        maximumNumberOfLines: Int = 0
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         if let boldPrefix {
@@ -4086,6 +4715,29 @@ final class SuggestionsOverlay: NSObject {
         let bodyPara = NSMutableParagraphStyle()
         bodyPara.lineBreakMode = singleLine ? .byTruncatingTail : .byWordWrapping
         bodyPara.lineSpacing = lineSpacing
+        // Render the trailing "Show more" affordance in a dimmer color so it
+        // reads as a control rather than part of the summary body.
+        let showMore = TLDROverlayText.showMoreText
+        if !singleLine, text.hasSuffix(showMore), text.count > showMore.count {
+            let splitIndex = text.index(text.endIndex, offsetBy: -showMore.count)
+            result.append(NSAttributedString(
+                string: String(text[..<splitIndex]),
+                attributes: [
+                    .font: font,
+                    .foregroundColor: color,
+                    .paragraphStyle: bodyPara,
+                ]
+            ))
+            result.append(NSAttributedString(
+                string: showMore,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                    .paragraphStyle: bodyPara,
+                ]
+            ))
+            return result
+        }
         result.append(NSAttributedString(
             string: text,
             attributes: [
@@ -4232,6 +4884,137 @@ private enum CopyConfirmationPill {
                 panel.close()
             }
         }
+    }
+}
+
+/// Transient confirmation for the overlay's ⌘T reasoning toggle, reading
+/// "Reasoning: <level> · next capture" with a neutral accent tint.
+///
+/// A single reusable pill: rapid cycling updates the live pill's text and
+/// re-extends its timer in place (with a small pulse) instead of spawning a
+/// new panel per keypress. A generation token guards the exit animation so a
+/// dismissal already in flight can't tear down a pill that a newer press has
+/// just revived.
+private enum ReasoningLevelPill {
+    private static let pillWidth: CGFloat = 340
+    private static let pillHeight: CGFloat = 44
+    /// Vertical travel for fade-in / fade-out. Small enough that the motion
+    /// stays fully on screen — no clipping against the menu-bar edge.
+    private static let slide: CGFloat = 6
+
+    private static var panel: NSPanel?
+    private static var dismissItem: DispatchWorkItem?
+    private static var generation = 0
+
+    static func show(on screen: NSScreen, title: String) {
+        let text = "Reasoning: \(title) · next capture"
+        let x = screen.frame.midX - pillWidth / 2
+        let landFrame = NSRect(
+            x: x,
+            y: screen.visibleFrame.maxY - 12 - pillHeight,
+            width: pillWidth,
+            height: pillHeight
+        )
+
+        generation += 1
+        let gen = generation
+
+        // Each press is its own toast: retire the current one (quick fade +
+        // small drift, fully on screen) and bring a fresh one in.
+        if let leaving = panel {
+            panel = nil
+            animateOut(leaving)
+        }
+
+        let enterFrame = landFrame.offsetBy(dx: 0, dy: -slide)
+        let newPanel = NSPanel(
+            contentRect: enterFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        newPanel.level = .screenSaver
+        newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        newPanel.isOpaque = false
+        newPanel.backgroundColor = .clear
+        newPanel.hasShadow = false
+        newPanel.ignoresMouseEvents = true
+        newPanel.isReleasedWhenClosed = false
+        newPanel.alphaValue = 0
+
+        let container = NSView(frame: NSRect(origin: .zero, size: enterFrame.size))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        newPanel.contentView = container
+
+        let pill = NSView(frame: NSRect(origin: .zero, size: enterFrame.size))
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.92).cgColor
+        pill.layer?.cornerRadius = pillHeight / 2
+        pill.layer?.shadowColor = NSColor.black.cgColor
+        pill.layer?.shadowOpacity = 0.25
+        pill.layer?.shadowRadius = 8
+        pill.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        container.addSubview(pill)
+
+        let iconSize: CGFloat = 18
+        let iconY = (pillHeight - iconSize) / 2
+        let icon = NSImageView(frame: NSRect(x: 18, y: iconY, width: iconSize, height: iconSize))
+        icon.image = NSImage(systemSymbolName: "gauge.medium", accessibilityDescription: nil)
+        icon.contentTintColor = .white
+        pill.addSubview(icon)
+
+        let labelX: CGFloat = 18 + iconSize + 10
+        let labelH: CGFloat = 20
+        let labelField = NSTextField(labelWithString: text)
+        labelField.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        labelField.textColor = .white
+        labelField.frame = NSRect(x: labelX, y: (pillHeight - labelH) / 2, width: pillWidth - labelX - 18, height: labelH)
+        labelField.isEditable = false
+        labelField.isSelectable = false
+        labelField.isBordered = false
+        labelField.drawsBackground = false
+        labelField.lineBreakMode = .byTruncatingTail
+        pill.addSubview(labelField)
+
+        newPanel.orderFrontRegardless()
+        panel = newPanel
+
+        // Gentle fade + rise into place. No spring overshoot, no scale pulse.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.20
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            newPanel.animator().setFrame(landFrame, display: true)
+            newPanel.animator().alphaValue = 1
+        }
+        scheduleDismiss(after: 1.4, generation: gen)
+    }
+
+    /// Fade the panel out with a small drift (staying on screen) and close it.
+    private static func animateOut(_ panel: NSPanel) {
+        let exitFrame = panel.frame.offsetBy(dx: 0, dy: slide)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().setFrame(exitFrame, display: true)
+            panel.animator().alphaValue = 0
+        }, completionHandler: {
+            panel.close()
+        })
+    }
+
+    private static func scheduleDismiss(after delay: TimeInterval, generation gen: Int) {
+        dismissItem?.cancel()
+        let item = DispatchWorkItem {
+            // A newer press already retired this pill and scheduled its own
+            // dismiss; only act if we're still current.
+            guard gen == generation, let leaving = panel else { return }
+            panel = nil
+            dismissItem = nil
+            animateOut(leaving)
+        }
+        dismissItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 }
 

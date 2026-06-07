@@ -56,7 +56,7 @@ enum ImageDiagnostics {
             || uniqueColors.count <= 4
 
         let screenshot: [String: Any] = [
-            "mime_type": "image/png",
+            "mime_type": "image/jpeg",
             "byte_size": pngData.count,
             "width": width,
             "height": height,

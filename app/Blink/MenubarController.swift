@@ -3,7 +3,7 @@ import Combine
 import Sparkle
 
 @MainActor
-final class MenubarController: NSObject {
+final class MenubarController: NSObject, NSMenuDelegate {
     private let coordinator: BlinkCoordinator
     private let runtimeStore: RuntimeConfigStore
     private let onShowPermissions: () -> Void
@@ -17,6 +17,7 @@ final class MenubarController: NSObject {
     private var soundsMenuItem: NSMenuItem?
     private var nudgesObserver: AnyCancellable?
     private var nudgesMenuItem: NSMenuItem?
+    private var launchAtLoginMenuItem: NSMenuItem?
     private var updateMenuItem: NSMenuItem?
     private weak var updaterController: SPUStandardUpdaterController?
     private var thinkingTimer: Timer?
@@ -113,6 +114,7 @@ final class MenubarController: NSObject {
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
 
         statusLabel = NSMenuItem(title: "Idle - press \(hotkeyDisplay)", action: nil, keyEquivalent: "")
         statusLabel.isEnabled = false
@@ -141,6 +143,11 @@ final class MenubarController: NSObject {
         nudgesItem.toolTip = "Briefly remind you to use Blink when you're shuttling between apps"
         nudgesMenuItem = nudgesItem
         menu.addItem(nudgesItem)
+        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = LoginItem.isEnabled ? .on : .off
+        launchAtLoginMenuItem = loginItem
+        menu.addItem(loginItem)
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
         updateItem.target = self
         updateItem.isEnabled = updaterController != nil
@@ -232,6 +239,19 @@ final class MenubarController: NSObject {
 
     @objc private func toggleNudges(_ sender: NSMenuItem) {
         runtimeStore.nudgesEnabled.toggle()
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let nowEnabled = LoginItem.setEnabled(!LoginItem.isEnabled)
+        sender.state = nowEnabled ? .on : .off
+    }
+
+    // MARK: - NSMenuDelegate
+
+    /// Refresh the launch-at-login checkmark each time the menu opens, in case
+    /// the user changed it in System Settings › Login Items.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        launchAtLoginMenuItem?.state = LoginItem.isEnabled ? .on : .off
     }
 
     @objc private func checkForUpdates(_ sender: NSMenuItem) {

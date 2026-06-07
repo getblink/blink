@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import struct
 import sys
 import tempfile
 import unittest
-import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -15,29 +13,6 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import blink_once
-from image_prep import prepare_request_image
-
-
-def write_test_png(path: Path, *, width: int = 96, height: int = 96) -> None:
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + kind
-            + data
-            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-        )
-
-    rows = bytearray()
-    for y in range(height):
-        rows.append(0)
-        for x in range(width):
-            rows.extend(((x * 3) % 256, (y * 5) % 256, ((x + y) * 7) % 256))
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(bytes(rows), level=0))
-        + chunk(b"IEND", b"")
-    )
 
 
 class BlinkOnceTests(unittest.TestCase):
@@ -657,80 +632,6 @@ class BlinkOnceTests(unittest.TestCase):
                     ]
                 )
 
-    def test_generate_appends_image_parts_in_order(self) -> None:
-        captured: dict[str, Any] = {}
-
-        class FakePart:
-            def __init__(self, data: bytes, mime_type: str) -> None:
-                self.data = data
-                self.mime_type = mime_type
-
-            @classmethod
-            def from_bytes(cls, *, data: bytes, mime_type: str) -> "FakePart":
-                return cls(data, mime_type)
-
-        class FakeTypes:
-            class HttpOptions:
-                def __init__(self, **_: Any) -> None:
-                    pass
-
-            Part = FakePart
-
-        class FakeResponse:
-            text = '{"tldr":"Frame two matters.","suggestions":["One","Two","Three"]}'
-            usage_metadata = {"total_token_count": 1}
-
-        class FakeModels:
-            def generate_content(self, **kwargs: Any) -> FakeResponse:
-                captured.update(kwargs)
-                return FakeResponse()
-
-        class FakeClient:
-            models = FakeModels()
-
-        class FakeGenAI:
-            Client = mock.Mock(return_value=FakeClient())
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            first = root / "first.png"
-            second = root / "second.png"
-            first.write_bytes(b"one")
-            second.write_bytes(b"two")
-            with mock.patch.dict(
-                sys.modules,
-                {
-                    "google": mock.Mock(genai=FakeGenAI),
-                    "google.genai": mock.Mock(types=FakeTypes),
-                },
-            ), mock.patch.object(
-                blink_once,
-                "prepare_screenshot_part",
-                side_effect=[
-                    (FakePart(b"one", "image/png"), {"image_bytes_original": 1, "image_bytes_compressed": 1, "image_prepare_ms": 0}),
-                    (FakePart(b"two", "image/png"), {"image_bytes_original": 1, "image_bytes_compressed": 1, "image_prepare_ms": 0}),
-                ],
-            ), mock.patch.object(
-                blink_once,
-                "build_generate_config",
-                return_value={"config": True},
-            ):
-                blink_once.generate(
-                    [first, second],
-                    "PROMPT",
-                    {
-                        "model": "gemini-3.1-flash-lite-preview",
-                        "temperature": 0.2,
-                        "max_output_tokens": 512,
-                        "media_resolution": "MEDIA_RESOLUTION_LOW",
-                        "timeout_seconds": 120,
-                    },
-                )
-
-        contents = captured["contents"]
-        self.assertEqual([part.data for part in contents[:2]], [b"one", b"two"])
-        self.assertEqual(contents[2], blink_once.MODEL_CONTENT_TEXT)
-
     def test_parse_json_response_accepts_plain_json(self) -> None:
         parsed, error = blink_once.parse_json_response(
             '{"tldr":"You are replying.","suggestions":["a","b","c"]}'
@@ -854,76 +755,9 @@ class BlinkOnceTests(unittest.TestCase):
 
     def test_default_settings_use_gemini_three_sampling_defaults(self) -> None:
         self.assertEqual(blink_once.DEFAULT_SETTINGS["temperature"], 1.0)
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "high")
-
-    def test_build_generate_config_passes_through_and_adds_thinking_when_needed(self) -> None:
-        captured_config: dict[str, Any] = {}
-        captured_thinking: dict[str, Any] = {}
-
-        class FakeThinkingConfig:
-            def __init__(self, **kwargs: Any) -> None:
-                captured_thinking.update(kwargs)
-
-        class FakeGenerateContentConfig:
-            def __init__(self, **kwargs: Any) -> None:
-                captured_config.update(kwargs)
-
-        class FakeTypes:
-            ThinkingConfig = FakeThinkingConfig
-            GenerateContentConfig = FakeGenerateContentConfig
-
-        base_settings = {
-            "model": "gemini-3.1-flash-lite-preview",
-            "temperature": 0.2,
-            "max_output_tokens": 512,
-            "media_resolution": "MEDIA_RESOLUTION_LOW",
-        }
-        with mock.patch.object(blink_once, "response_schema", return_value={"schema": "ok"}):
-            blink_once.build_generate_config(FakeTypes, "PROMPT", base_settings)
-        self.assertEqual(captured_config["system_instruction"], "PROMPT")
-        self.assertEqual(captured_config["temperature"], 0.2)
-        self.assertEqual(captured_config["max_output_tokens"], 512)
-        self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_LOW")
-        self.assertEqual(captured_config["response_mime_type"], "application/json")
-        self.assertIn("response_schema", captured_config)
-        self.assertNotIn("thinking_config", captured_config)
-        self.assertEqual(captured_thinking, {})
-
-        self.assertEqual(captured_config["max_output_tokens"], 512)
-
-        captured_config.clear()
-        captured_thinking.clear()
-        thinking_settings = dict(base_settings, model="gemini-3.1-pro-preview")
-        with mock.patch.object(blink_once, "response_schema", return_value={"schema": "ok"}):
-            blink_once.build_generate_config(FakeTypes, "PROMPT", thinking_settings)
-        self.assertIn("thinking_config", captured_config)
-        self.assertEqual(captured_thinking, {"thinking_level": "high"})
-        self.assertNotIn("thinking_budget", captured_thinking)
-        self.assertEqual(captured_config["max_output_tokens"], 2048)
-
-        captured_config.clear()
-        flash_preview_settings = dict(base_settings, model="gemini-3-flash-preview")
-        with mock.patch.object(blink_once, "response_schema", return_value={"schema": "ok"}):
-            blink_once.build_generate_config(FakeTypes, "PROMPT", flash_preview_settings)
-        self.assertEqual(captured_config["media_resolution"], "MEDIA_RESOLUTION_MEDIUM")
-
-    def test_max_output_tokens_for_model(self) -> None:
-        self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3.1-pro-preview"), 2048)
-        self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3-flash-preview"), 2048)
-        self.assertEqual(blink_once.max_output_tokens_for_model("gemini-3.5-flash"), 2048)
-        self.assertIsNone(blink_once.max_output_tokens_for_model("gemini-3.1-flash-lite-preview"))
-        self.assertIsNone(blink_once.max_output_tokens_for_model("gemma-4-26b-a4b-it"))
-        self.assertIsNone(blink_once.max_output_tokens_for_model(""))
-
-    def test_thinking_level_for_model(self) -> None:
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3.1-pro-preview"), "high")
-        self.assertEqual(blink_once.thinking_level_for_model("Gemini-3-Pro"), "high")
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3-flash-preview"), "high")
-        self.assertEqual(blink_once.thinking_level_for_model("gemini-3.5-flash"), "high")
-        self.assertIsNone(blink_once.thinking_level_for_model("gemini-3.1-flash-lite-preview"))
-        self.assertIsNone(blink_once.thinking_level_for_model("gemma-4-26b-a4b-it"))
-        self.assertIsNone(blink_once.thinking_level_for_model("gemini-2.5-flash"))
-        self.assertIsNone(blink_once.thinking_level_for_model(""))
+        self.assertEqual(
+            blink_once.DEFAULT_SETTINGS["media_resolution"], "MEDIA_RESOLUTION_LOW"
+        )
 
     def test_media_resolution_guard_forces_medium_on_flash_preview(self) -> None:
         self.assertEqual(
@@ -951,44 +785,6 @@ class BlinkOnceTests(unittest.TestCase):
             ),
             "MEDIA_RESOLUTION_LOW",
         )
-
-    def test_image_prep_falls_back_to_png_when_disabled(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            screenshot = root / "screenshot.png"
-            write_test_png(screenshot)
-
-            prepared = prepare_request_image(
-                screenshot,
-                {"preprocess_request_images": False},
-                dest_dir=root,
-            )
-
-            self.assertEqual(prepared["bytes_data"], screenshot.read_bytes())
-            self.assertEqual(prepared["mime_type"], "image/png")
-            self.assertEqual(prepared["original_bytes"], prepared["request_bytes"])
-            self.assertEqual(prepared["log"]["status"], "original")
-
-    def test_image_prep_emits_jpeg_when_enabled(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            screenshot = root / "screenshot.png"
-            write_test_png(screenshot, width=1600, height=1200)
-
-            prepared = prepare_request_image(
-                screenshot,
-                {
-                    "preprocess_request_images": True,
-                    "request_image_format": "jpeg",
-                    "request_image_max_dimension": 1600,
-                    "request_image_jpeg_quality": 70,
-                },
-                dest_dir=root,
-            )
-
-        self.assertEqual(prepared["mime_type"], "image/jpeg")
-        self.assertLess(prepared["request_bytes"], prepared["original_bytes"])
-        self.assertEqual(prepared["log"]["status"], "processed")
 
     def test_extract_partial_suggestions(self) -> None:
         self.assertEqual(blink_once.extract_partial_suggestions(""), [])
@@ -1050,8 +846,10 @@ class BlinkOnceTests(unittest.TestCase):
         )
         self.assertEqual(payload["status"], "schema_mismatch")
 
-    def test_missing_credentials_writes_error_artifacts(self) -> None:
-        old_key = os.environ.pop("GEMINI_API_KEY", None)
+    def test_missing_proxy_writes_error_artifacts(self) -> None:
+        # setUp clears all proxy env vars, so no proxy is configured. With the
+        # local-Gemini path removed, main() must raise a clear "No proxy
+        # configured" error rather than fall back to a direct Gemini call.
         old_runtime_dir = os.environ.get("BLINK_RUNTIME_DIR")
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -1088,10 +886,8 @@ class BlinkOnceTests(unittest.TestCase):
                 self.assertTrue((bundles[0] / "stderr.log").exists())
                 run = json.loads((bundles[0] / "run.json").read_text(encoding="utf-8"))
                 self.assertEqual(run["status"], "error")
-                self.assertIn("GEMINI_API_KEY", run["error"])
+                self.assertIn("No proxy configured", run["error"])
         finally:
-            if old_key is not None:
-                os.environ["GEMINI_API_KEY"] = old_key
             if old_runtime_dir is None:
                 os.environ.pop("BLINK_RUNTIME_DIR", None)
             else:
@@ -1144,69 +940,79 @@ class BlinkOnceTests(unittest.TestCase):
             self.assertEqual(model_context["generation_path"], "skip_gemini")
             self.assertEqual(model_context["model_input_scope"], "actual_local_gemini_input")
 
-    def test_run_json_records_image_diagnostics(self) -> None:
-        old_key = os.environ.get("GEMINI_API_KEY")
-        try:
-            os.environ["GEMINI_API_KEY"] = "test-key"
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                screenshot = root / "screenshot.png"
-                screenshot.write_bytes(b"fake-png")
-                runtime = root / "runtime.json"
-                runtime.write_text(
-                    json.dumps(
-                        {
-                            "version": 1,
-                            "auto_paste": True,
-                            "model": "gemini-3.1-flash-lite-preview",
-                        }
-                    ),
-                    encoding="utf-8",
+    def test_run_json_records_proxy_response(self) -> None:
+        # The local-Gemini path is gone; a normal (non-skip) run goes through
+        # the proxy. Verify run.json records the proxy response fields.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            screenshot = root / "screenshot.png"
+            screenshot.write_bytes(b"fake-png")
+            runtime = root / "runtime.json"
+            runtime.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "auto_paste": True,
+                        "model": "gemini-3.1-flash-lite-preview",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            request_json = root / "request.json"
+            request_json.write_text(
+                json.dumps({"request_id": "req-run-json"}),
+                encoding="utf-8",
+            )
+            out_dir = root / "runs"
+            stdout = StringIO()
+            fake_response = {
+                "status": "ok",
+                "tldr": "Sarah needs a reply.",
+                "suggestions": ["One", "Two", "Three"],
+                "suggestion_details": [
+                    {"text": "One", "tags": ["Reply"]},
+                    {"text": "Two", "tags": ["Reply"]},
+                    {"text": "Three", "tags": ["Reply"]},
+                ],
+                "raw": "{}",
+                "usage": None,
+                "duration_ms": 12,
+                "parse_error": None,
+                "warnings": [],
+                "request_id": "req-run-json",
+                "model": "gemini-3.1-flash-lite-preview",
+            }
+            with (
+                mock.patch.object(
+                    blink_once,
+                    "proxy_settings_from_env",
+                    return_value={"url": "https://proxy.example", "token": "token"},
+                ),
+                mock.patch.object(blink_once, "generate_via_proxy", return_value=fake_response),
+                redirect_stdout(stdout),
+            ):
+                code = blink_once.main(
+                    [
+                        "--screenshot",
+                        str(screenshot),
+                        "--runtime",
+                        str(runtime),
+                        "--request-json",
+                        str(request_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
                 )
-                out_dir = root / "runs"
-                stdout = StringIO()
-                fake_response = {
-                    "status": "ok",
-                    "tldr": "Sarah needs a reply.",
-                    "suggestions": ["One", "Two", "Three"],
-                    "raw": "{}",
-                    "usage": None,
-                    "duration_ms": 12,
-                    "parse_error": None,
-                    "warnings": [],
-                    "request_id": None,
-                    "model": "gemini-3.1-flash-lite-preview",
-                    "image_bytes_original": 1000,
-                    "image_bytes_compressed": 420,
-                    "image_prepare_ms": 7,
-                    "media_resolution_resolved": "MEDIA_RESOLUTION_LOW",
-                }
-                with mock.patch.object(blink_once, "generate", return_value=fake_response):
-                    with redirect_stdout(stdout):
-                        code = blink_once.main(
-                            [
-                                "--screenshot",
-                                str(screenshot),
-                                "--runtime",
-                                str(runtime),
-                                "--out-dir",
-                                str(out_dir),
-                            ]
-                        )
 
-                self.assertEqual(code, 0)
-                bundle = next(out_dir.iterdir())
-                run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
-                self.assertEqual(run["image_bytes_original"], 1000)
-                self.assertEqual(run["image_bytes_compressed"], 420)
-                self.assertEqual(run["image_prepare_ms"], 7)
-                self.assertEqual(run["media_resolution_resolved"], "MEDIA_RESOLUTION_LOW")
-                self.assertEqual(run["response"]["media_resolution_resolved"], "MEDIA_RESOLUTION_LOW")
-        finally:
-            if old_key is None:
-                os.environ.pop("GEMINI_API_KEY", None)
-            else:
-                os.environ["GEMINI_API_KEY"] = old_key
+            self.assertEqual(code, 0)
+            bundle = next(out_dir.iterdir())
+            run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(run["status"], "ok")
+            self.assertEqual(run["request_id"], "req-run-json")
+            self.assertEqual(run["response"]["tldr"], "Sarah needs a reply.")
+            self.assertEqual(run["response"]["suggestions"], ["One", "Two", "Three"])
+            self.assertEqual(run["response"]["model"], "gemini-3.1-flash-lite-preview")
+            self.assertEqual(run["response"]["duration_ms"], 12)
 
     def test_stream_events_skip_gemini_emits_ndjson_final(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2336,6 +2142,7 @@ class BlinkOnceTests(unittest.TestCase):
                     proxy_settings: dict[str, str],
                     image_paths: list[Path],
                     stream_events: bool = False,
+                    opener: object = None,
                 ) -> dict[str, object]:
                     self.assertIn("stateful_context", request_payload)
                     self.assertEqual(request_payload["preferences"]["model"], "gemini-3.1-flash-lite-preview")

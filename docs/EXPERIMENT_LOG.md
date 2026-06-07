@@ -26,6 +26,18 @@ See also:
 
 ---
 
+## 2026-05-30 — AX tree focus-anchored truncation probe
+
+- **Hypothesis:** When an AX tree exceeds the server character budget, selecting a window around the user's focused/nearby node will preserve the relevant reading region better than the current "first N chars" clamp, without raising the model input budget.
+- **Setup:** Added `experiments/ax_tree_truncation/`, an offline probe that loads a saved Gemini request, Blink request envelope, or raw AX tree; extracts `<ax_tree>` text; and writes side-by-side `head`, `tail`, and `anchor` budget selections plus metrics. The anchor can be simulated by line index, line ratio, or text match so we can test the budgeting policy before modifying `WindowAXTreeCapture`.
+- **Input type(s):** Saved TLDR Gemini request containing a flat indented AX tree from a Conductor capture.
+- **Outcome:** Harness implemented and smoke-tested with an 8k char budget anchored on `Terminal input`. The current head clamp kept lines `0..179` and dropped the anchor; the tail strategy kept lines `109..286`; the anchor strategy kept root ancestors plus an anchored window, preserving line `286` while inserting an omission marker for the skipped middle.
+- **Evidence / examples:** `experiments/ax_tree_truncation/truncation_probe.py`, `experiments/ax_tree_truncation/README.md`, local smoke output at `.context/ax-tree-truncation-probe/`.
+- **Decision:** Use this as the test bed for focus/mouse-anchored truncation. A wider backtest across 30 saved appshot AX text fixtures / 180 probe runs had zero probe failures and zero anchor-drop cases for the anchor strategy, while the current head clamp dropped simulated anchors in 104 runs. Promoted the anchored-window selector into `WindowAXTreeCapture` as the default client-side budget pass, with the server clamp left as a backstop.
+- **Next step:** Dogfood on a massive page that previously logged `clamped=true` and confirm staging now sees `clamped=false` or, if still clamped, that the uploaded tree contains elision markers around the anchored region rather than a plain prefix.
+
+---
+
 ## 2026-05-07 — TLDR instant single-frame + double-tap multi-window
 
 - **Hypothesis:** Splitting the trigger into "single press = submit instantly" and "double tap = collect multiple frames across any windows/apps" makes the most common case (snap one window) feel snappier than the prior 600ms debounce, while still enabling cross-surface summaries (e.g. Slack thread plus the linked Linear ticket) that the same-window guard previously refused.

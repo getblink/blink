@@ -8,5 +8,4 @@ tests/
 .env
 .env.*
 !.env.example
-railway.json
 Procfile

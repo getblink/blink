@@ -43,11 +43,59 @@ enum ScreenCapture {
                 if let owner = owner { return "no capturable window for \(owner)" }
                 return "no capturable window"
             case .imageEncodingFailed:
-                return "couldn't encode capture as PNG"
+                return "couldn't encode capture as JPEG"
             case .permissionDenied:
                 return "Screen Recording permission not granted"
             case .underlying(let err):
                 return "ScreenCaptureKit: \(err.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Prewarm
+
+    private static let prewarmLock = NSLock()
+    private static var lastPrewarmAt: Date?
+    /// SCK stays warm for a while after a fetch, so re-warming more often than
+    /// this just spams the daemon. App-activation can fire rapidly when the user
+    /// alt-tabs; this debounces it.
+    private static let prewarmMinInterval: TimeInterval = 3.0
+
+    /// Warm the ScreenCaptureKit XPC connection ahead of a real capture.
+    ///
+    /// The first `SCShareableContent` fetch / `captureImage` after launch (or a
+    /// long idle) establishes the connection to the capture daemon and costs
+    /// ~0.8s more than a warm one (measured: 1.30s cold vs 0.49s warm on a
+    /// Conductor capture). This does a throwaway content fetch and discards it;
+    /// the real capture still re-fetches fresh content because the window list
+    /// must be current at capture time.
+    ///
+    /// Permission-gated via preflight so a background warm (e.g. on every app
+    /// switch) can never trigger a surprise Screen Recording prompt — if it's
+    /// not granted yet we simply skip, and the real capture surfaces the prompt.
+    /// Debounced and safe to call from any thread.
+    static func prewarm() {
+        guard CGPreflightScreenCaptureAccess() else { return }
+
+        prewarmLock.lock()
+        if let last = lastPrewarmAt, Date().timeIntervalSince(last) < prewarmMinInterval {
+            prewarmLock.unlock()
+            return
+        }
+        lastPrewarmAt = Date()
+        prewarmLock.unlock()
+
+        Task.detached(priority: .utility) {
+            let started = Date()
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(
+                    false, onScreenWindowsOnly: false
+                )
+                TCCDiagnostics.log(
+                    "screen_capture_prewarm_ok elapsed_ms=\(Int(Date().timeIntervalSince(started) * 1000))"
+                )
+            } catch {
+                logSCKError("screen_capture_prewarm_failed", error: error)
             }
         }
     }
@@ -65,7 +113,8 @@ enum ScreenCapture {
         preferredGlobalRect: CGRect? = nil,
         shareableContent cachedContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil,
-        axIsFullscreen: Bool = false
+        axIsFullscreen: Bool = false,
+        confirmCapture: Bool = true
     ) async throws -> Capture {
         let startedAt = Date()
         TCCDiagnostics.log(
@@ -93,14 +142,18 @@ enum ScreenCapture {
         TCCDiagnostics.log("screen_capture_owner pid=\(pid) owner_name=\(ownerName ?? "nil")")
 
         let content: SCShareableContent
+        let contentStartedAt = Date()
         do {
             content = try await shareableContent(
                 preferred: cachedContent,
                 pid: pid,
                 preferredGlobalRect: preferredGlobalRect
             )
+            // elapsed_ms isolates the SCShareableContent cost (the cold-start
+            // suspect prewarm() targets) from the rest of the capture. Reused
+            // content (multi-frame) should report ~0ms; a cold fetch ~hundreds.
             TCCDiagnostics.log(
-                "shareable_content_success pid=\(pid) windows=\(content.windows.count) displays=\(content.displays.count)"
+                "shareable_content_success pid=\(pid) windows=\(content.windows.count) displays=\(content.displays.count) elapsed_ms=\(Int(Date().timeIntervalSince(contentStartedAt) * 1000))"
             )
         } catch {
             logSCKError("shareable_content_failed", error: error)
@@ -113,6 +166,16 @@ enum ScreenCapture {
             }
             throw CaptureError.underlying(error)
         }
+
+        // Windows owned by Blink itself (the capture-confirmation flash, the
+        // glass loading lens, the suggestions overlay). Excluded from any
+        // *display* capture so a Blink surface that happens to be on screen at
+        // capture time never bleeds into the screenshot — most importantly the
+        // instant loading lens now shown at hotkey press (before this capture
+        // runs), but also the collecting overlay during a multi-frame append.
+        // Per-window capture (`desktopIndependentWindow`) already isolates the
+        // target window, so this only matters for the display paths below.
+        let ownWindows = content.windows.filter { $0.owningApplication?.processID == ownPID }
 
         // Fullscreen apps live on their own macOS Space. Capturing them via a
         // per-window SCK filter from a different Space is the failure mode
@@ -131,9 +194,11 @@ enum ScreenCapture {
                 "fullscreen_display_capture_attempt pid=\(pid) ax_rect=\(NSStringFromRect(axRect)) display_id=\(display.displayID) display_frame=\(NSStringFromRect(display.frame))"
             )
             do {
-                let pngData = try await captureDisplayPNG(display)
-                await MainActor.run {
-                    CaptureConfirmationOverlay.flash(frame: display.frame)
+                let pngData = try await captureDisplayPNG(display, excludingWindows: ownWindows)
+                if confirmCapture {
+                    await MainActor.run {
+                        CaptureConfirmationOverlay.flash(frame: display.frame)
+                    }
                 }
                 return Capture(
                     pngData: pngData,
@@ -180,9 +245,11 @@ enum ScreenCapture {
                 TCCDiagnostics.log(
                     "display_capture_attempt display_id=\(display.displayID) frame=\(NSStringFromRect(display.frame))"
                 )
-                let pngData = try await captureDisplayPNG(display)
-                await MainActor.run {
-                    CaptureConfirmationOverlay.flash(frame: display.frame)
+                let pngData = try await captureDisplayPNG(display, excludingWindows: ownWindows)
+                if confirmCapture {
+                    await MainActor.run {
+                        CaptureConfirmationOverlay.flash(frame: display.frame)
+                    }
                 }
                 return Capture(
                     pngData: pngData,
@@ -217,11 +284,13 @@ enum ScreenCapture {
             captureSize: sizing.size,
             scale: scale
         )
-        guard let pngData = cgImageToPNG(cgImage) else {
+        guard let pngData = cgImageToJPEG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
-        await MainActor.run {
-            CaptureConfirmationOverlay.flash(frame: window.frame)
+        if confirmCapture {
+            await MainActor.run {
+                CaptureConfirmationOverlay.flash(frame: window.frame)
+            }
         }
         return Capture(
             pngData: pngData,
@@ -237,6 +306,36 @@ enum ScreenCapture {
     }
 
     enum CaptureSizingSource { case ax, sck }
+
+    /// Cap on the captured pixel buffer's longest side. The frame is JPEG-encoded
+    /// at capture and uploaded as-is, so capturing larger — e.g. a full 6016×3384
+    /// display for a fullscreen app — burns capture *and* encode time plus upload
+    /// bytes on pixels Gemini never benefits from: at `media_resolution=LOW` the
+    /// image tokenizes the same regardless of byte size, and the AX tree carries
+    /// the exact text. Sizing the SCStreamConfiguration buffer to this cap makes
+    /// ScreenCaptureKit scale on the GPU (`scalesToFit`), shrinking the grab, the
+    /// encode, and the upload. 1024 + JPEG q0.5 measured ~71KB (vs ~221KB at
+    /// 1600/q0.75) with no legibility the model loses at LOW media-res.
+    static let maxCaptureDimension = 1024
+
+    /// Aspect-preserving downscale of a pixel size so its longest side is at
+    /// most `maxDim`. Returns the input unchanged (clamped ≥ 1) when already
+    /// within the cap. Pure for testing.
+    static func cappedPixelSize(
+        width: Int,
+        height: Int,
+        max maxDim: Int = maxCaptureDimension
+    ) -> (width: Int, height: Int) {
+        let longest = Swift.max(width, height)
+        guard longest > maxDim, longest > 0, maxDim > 0 else {
+            return (Swift.max(1, width), Swift.max(1, height))
+        }
+        let ratio = CGFloat(maxDim) / CGFloat(longest)
+        return (
+            Swift.max(1, Int((CGFloat(width) * ratio).rounded())),
+            Swift.max(1, Int((CGFloat(height) * ratio).rounded()))
+        )
+    }
 
     // Pick the size we should ask SCK to render into. AX dims are preferred
     // when available because SCK's window.frame can lie (e.g. Chrome surfaces
@@ -274,7 +373,8 @@ enum ScreenCapture {
         preferredGlobalRect: CGRect? = nil,
         shareableContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil,
-        axIsFullscreen: Bool = false
+        axIsFullscreen: Bool = false,
+        confirmCapture: Bool = true
     ) throws -> Capture {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<Capture, Error>!
@@ -284,7 +384,8 @@ enum ScreenCapture {
                     preferredGlobalRect: preferredGlobalRect,
                     shareableContent: shareableContent,
                     preferredPID: preferredPID,
-                    axIsFullscreen: axIsFullscreen
+                    axIsFullscreen: axIsFullscreen,
+                    confirmCapture: confirmCapture
                 ))
             }
             catch { result = .failure(error) }
@@ -465,6 +566,47 @@ enum ScreenCapture {
         return nil
     }
 
+    /// Best-effort rect (CG-global, top-left origin, +Y down) of the topmost
+    /// standard-layer on-screen window not owned by `ownPID`. Resolved purely
+    /// from `CGWindowListCopyWindowInfo` z-order — a cheap, synchronous,
+    /// in-process query (no `SCShareableContent` round-trip), so it is safe to
+    /// call on the main thread at hotkey time. Used to anchor the instant
+    /// capture acknowledgment to the same window the real capture is most
+    /// likely to pick. Returns nil when nothing suitable is on screen, in
+    /// which case the caller simply skips the instant visual. Mirrors the
+    /// front-to-back walk in `topmostNonSelfOwnerPID`.
+    static func frontmostCapturableWindowRect(excluding ownPID: pid_t) -> CGRect? {
+        guard let infoList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return nil
+        }
+        return frontmostCapturableWindowRect(in: infoList, excluding: ownPID)
+    }
+
+    /// Pure core of `frontmostCapturableWindowRect`, split out — like
+    /// `topmostNonSelfOwnerPID` — so the z-order / layer / bounds-parsing walk
+    /// can be unit-tested without a live window server. Returns the bounds of
+    /// the topmost standard-layer on-screen window not owned by `ownPID`.
+    static func frontmostCapturableWindowRect(
+        in windows: [[String: Any]],
+        excluding ownPID: pid_t
+    ) -> CGRect? {
+        for window in windows {
+            guard let ownerNumber = window[kCGWindowOwnerPID as String] as? NSNumber else { continue }
+            guard ownerNumber.int32Value != ownPID else { continue }
+            guard let layerNumber = window[kCGWindowLayer as String] as? NSNumber,
+                  layerNumber.intValue == 0 else { continue }
+            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+               let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+               bounds.width >= 80, bounds.height >= 80 {
+                return bounds
+            }
+        }
+        return nil
+    }
+
     private static func candidateWindows(in content: SCShareableContent, pid: pid_t) -> [SCWindow] {
         content.windows.filter { window in
             window.owningApplication?.processID == pid
@@ -612,18 +754,23 @@ enum ScreenCapture {
         // for some Chrome window states (reports a wide-short strip while
         // Chrome's content layer is normally proportioned), and the AX rect
         // — when available — is a more faithful source for window dims.
-        config.width = max(1, Int(captureSize.width) * scale)
-        config.height = max(1, Int(captureSize.height) * scale)
+        let capped = cappedPixelSize(
+            width: max(1, Int(captureSize.width) * scale),
+            height: max(1, Int(captureSize.height) * scale)
+        )
+        config.width = capped.width
+        config.height = capped.height
         config.showsCursor = false
         config.scalesToFit = true
 
+        let captureStartedAt = Date()
         do {
             let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
             TCCDiagnostics.log(
-                "window_capture_success window_id=\(window.windowID) width=\(image.width) height=\(image.height)"
+                "window_capture_success window_id=\(window.windowID) width=\(image.width) height=\(image.height) elapsed_ms=\(Int(Date().timeIntervalSince(captureStartedAt) * 1000))"
             )
             return image
         } catch {
@@ -635,26 +782,40 @@ enum ScreenCapture {
         }
     }
 
-    private static func captureDisplayPNG(_ display: SCDisplay) async throws -> Data {
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+    private static func captureDisplayPNG(
+        _ display: SCDisplay,
+        excludingWindows: [SCWindow] = []
+    ) async throws -> Data {
+        let filter = SCContentFilter(display: display, excludingWindows: excludingWindows)
         if #available(macOS 14.2, *) {
             filter.includeMenuBar = false
         }
         let scale = await MainActor.run { backingScaleFactor(for: display.frame) }
         let config = SCStreamConfiguration()
-        config.width = max(1, display.width * scale)
-        config.height = max(1, display.height * scale)
+        // Cap the buffer to the upload size and let SCK scale on the GPU. The
+        // capped dims preserve the display's aspect ratio, so scalesToFit fills
+        // the buffer exactly (no letterboxing) while avoiding a full 20MP grab.
+        let capped = cappedPixelSize(
+            width: max(1, display.width * scale),
+            height: max(1, display.height * scale)
+        )
+        config.width = capped.width
+        config.height = capped.height
         config.showsCursor = false
-        config.scalesToFit = false
+        config.scalesToFit = true
 
         let cgImage: CGImage
+        let captureStartedAt = Date()
         do {
             cgImage = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: config
             )
+            // Conductor (and other fullscreen apps) take this display-capture
+            // path, so elapsed_ms here — not window_capture_success — is the
+            // real steady-state capture cost. Big displays mean a 20MP+ grab.
             TCCDiagnostics.log(
-                "display_capture_success display_id=\(display.displayID) width=\(cgImage.width) height=\(cgImage.height)"
+                "display_capture_success display_id=\(display.displayID) width=\(cgImage.width) height=\(cgImage.height) capture_ms=\(Int(Date().timeIntervalSince(captureStartedAt) * 1000))"
             )
         } catch {
             logSCKError("display_capture_failed", error: error)
@@ -663,9 +824,15 @@ enum ScreenCapture {
             }
             throw CaptureError.underlying(error)
         }
-        guard let pngData = cgImageToPNG(cgImage) else {
+        // JPEG-encoding a full-display CGImage is its own cost (NSBitmapImageRep
+        // on a 6016×3384 grab is non-trivial); measure it separately from capture.
+        let encodeStartedAt = Date()
+        guard let pngData = cgImageToJPEG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
+        TCCDiagnostics.log(
+            "display_capture_jpeg_encoded bytes=\(pngData.count) jpeg_encode_ms=\(Int(Date().timeIntervalSince(encodeStartedAt) * 1000))"
+        )
         return pngData
     }
 
@@ -747,9 +914,14 @@ enum ScreenCapture {
         return max(1, Int(round(NSScreen.main?.backingScaleFactor ?? 2)))
     }
 
-    private static func cgImageToPNG(_ image: CGImage) -> Data? {
+    /// Encode a captured CGImage straight to JPEG. Blink uploads this to the
+    /// server (which forwards it to Gemini at MEDIA_RESOLUTION_LOW), so a
+    /// moderately compressed JPEG keeps the upload small without a separate
+    /// re-compression pass. q0.5 measured ~71KB at 1024px (vs ~221KB at
+    /// 1600/q0.75) with no legibility the model loses at LOW media-res.
+    private static func cgImageToJPEG(_ image: CGImage, quality: CGFloat = 0.5) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
-        return rep.representation(using: .png, properties: [:])
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 
     private static func logSCKError(_ event: String, error: Error) {
@@ -761,12 +933,20 @@ enum ScreenCapture {
 }
 
 @MainActor
-private enum CaptureConfirmationOverlay {
+enum CaptureConfirmationOverlay {
     private static let bleed: CGFloat = 28
     private static let pulseDuration: TimeInterval = 0.30
     private static let fadeDuration: TimeInterval = 0.18
+    // For window-anchored placements the outline doesn't just fade — it
+    // collapses toward the corner/edge where the loading puck docks, so the
+    // capture and the "Reading…" pill read as one continuous gesture.
+    private static let contractDuration: TimeInterval = 0.34
 
     static func flash(frame: CGRect) {
+        // In glass-loading mode the clear Liquid Glass lens drawn over the
+        // captured window *is* the capture confirmation. The scanner outline
+        // would double up and clash with it, so skip it entirely.
+        if RuntimeEnvironment.glassLoadingEnabled() { return }
         guard frame.width > 8, frame.height > 8 else { return }
         guard let primaryScreen = NSScreen.screens.first else { return }
         let appKitFrame = NSRect(
@@ -799,18 +979,28 @@ private enum CaptureConfirmationOverlay {
         container.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = container
 
+        // Brand-blue capture outline. This path only runs when Liquid Glass
+        // loading is OFF (glass mode suppresses the flash and uses the lens as
+        // its own confirmation), so here we want a clearly visible blue stroke:
+        // a brand-blue border over a faint blue wash, with a soft blue glow so
+        // it reads on both light and dark windows.
+        let accent = NSColor.systemBlue
         let view = NSView(frame: NSRect(x: bleed, y: bleed, width: appKitFrame.width, height: appKitFrame.height))
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
-        view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        view.layer?.backgroundColor = accent.withAlphaComponent(0.10).cgColor
+        view.layer?.borderColor = accent.withAlphaComponent(0.95).cgColor
         view.layer?.borderWidth = 2
         view.layer?.cornerRadius = 6
         view.layer?.cornerCurve = .continuous
-        view.layer?.shadowColor = NSColor.controlAccentColor.cgColor
-        view.layer?.shadowOpacity = 0.65
+        view.layer?.shadowColor = accent.cgColor
+        view.layer?.shadowOpacity = 0.55
         view.layer?.shadowRadius = 18
         view.layer?.shadowOffset = .zero
         view.layer?.masksToBounds = false
+
+        let placement = RuntimeEnvironment.loadingPlacement()
+        let anchored = placement != .centered
+
         container.addSubview(view)
         panel.orderFrontRegardless()
 
@@ -842,12 +1032,34 @@ private enum CaptureConfirmationOverlay {
         view.layer?.add(scale, forKey: "captureScale")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + pulseDuration) {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = fadeDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                container.animator().alphaValue = 0
-            } completionHandler: {
-                panel.close()
+            if anchored {
+                // Collapse the outline toward the corner/edge where the loading
+                // puck docks (bottom-right for corner, right-center for side) so
+                // the capture visually resolves into the pill. Animating the
+                // frame to an explicit target rect is unambiguous about
+                // direction (anchorPoint math on a layer-backed view is fragile).
+                let finalSize: CGFloat = 10
+                let targetX = bleed + appKitFrame.width - finalSize
+                let targetY: CGFloat = placement == .windowSide
+                    ? bleed + appKitFrame.height / 2 - finalSize / 2
+                    : bleed
+                let targetRect = NSRect(x: targetX, y: targetY, width: finalSize, height: finalSize)
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = contractDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                    view.animator().frame = targetRect
+                    container.animator().alphaValue = 0
+                } completionHandler: {
+                    panel.close()
+                }
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = fadeDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                    container.animator().alphaValue = 0
+                } completionHandler: {
+                    panel.close()
+                }
             }
         }
     }

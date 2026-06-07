@@ -35,6 +35,16 @@ class PromptParityTests(unittest.TestCase):
             (REPO_ROOT / "app" / "Resources" / "prompt.txt").read_bytes(),
         )
 
+    def test_prompts_document_plain_tldr_without_model_separator(self) -> None:
+        prompt_text = (REPO_ROOT / "server" / "prompt.txt").read_text(encoding="utf-8")
+        old_separator = r"\n\n" + "-" * 3 + r"\n\n"
+        self.assertNotIn(old_separator, prompt_text)
+        self.assertNotIn(old_separator, blink_once.DEFAULT_PROMPT)
+        self.assertIn("The app handles collapsed/expanded display", prompt_text)
+        self.assertIn("The app handles collapsed/expanded display", blink_once.DEFAULT_PROMPT)
+        self.assertIn("Latest state wins", prompt_text)
+        self.assertIn("Latest state wins", blink_once.DEFAULT_PROMPT)
+
     def test_shared_model_content_text_matches(self) -> None:
         self.assertEqual(blink_once.MODEL_CONTENT_TEXT, gemini.MODEL_CONTENT_TEXT)
 

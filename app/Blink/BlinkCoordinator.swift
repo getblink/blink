@@ -100,10 +100,27 @@ final class BlinkCoordinator: @unchecked Sendable {
     private let queue = DispatchQueue(label: "blink.coordinator", qos: .userInitiated)
     private let submitQueue = DispatchQueue(label: "blink.coordinator.submit", qos: .userInitiated)
     private let overlay = SuggestionsOverlay()
+    private let glassLoading = GlassCaptureLoadingController()
+    // True while the glass loading lens is on screen. Glass mode suppresses the
+    // SuggestionsPanel during loading, so this is the only signal that an
+    // in-flight request is being shown — used to keep the global Esc tap armed
+    // (via the overlay-active mirror) so Esc still cancels mid-stream. Main
+    // thread only.
+    private var glassLoadingActive = false
+    /// AppKit-screen rect the glass lens is currently presented at. Tracked so
+    /// the submit path can tell whether the precise captured rect differs
+    /// materially from the instant-ack rect the lens was first shown at (at
+    /// hotkey time, before capture) and only re-anchor when it does. Main-thread
+    /// only, like `glassLoadingActive`.
+    private var glassLoadingPresentedRect: NSRect?
     private var currentSuggestions: [String] = []
     private var currentSuggestionDetails: [SuggestionDetail] = []
     private var currentBundleDir: URL?
     private var currentRequestID: String?
+    /// Bundle id of the app the current overlay's capture came from. Drives the
+    /// overlay ⌘T reasoning toggle's per-surface persistence. Set at capture
+    /// time; survives rerolls (same surface).
+    private var currentSurfaceBundleID: String?
     private var followUpHistory: [FollowUpTurn] = []
     private var tldrHistory: [TLDREntry] = []
     private var currentTldrIndex: Int = 0
@@ -198,12 +215,18 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// (the new run replaces it) or on intentional dismiss.
     private var modalChatSnapshot: LastDismissedSession?
 
-    private var onboardingSampleActive = false
     private var captureHotkeyPressIndex = 0
 
     var onStatusChange: ((String) -> Void)?
     var onFailureNotice: ((String, String) -> Void)?
     var onPermissionsNeeded: (() -> Void)?
+    /// Fires when a summary completes its overlay-shown moment (success) or
+    /// hits a user-visible failure. Used by the onboarding demo card to know
+    /// whether the user's first hotkey press actually produced a result.
+    var onSummaryCompleted: ((Bool) -> Void)?
+    /// Fires when the user picks a suggestion (1/2/3 / equivalent). Index is
+    /// zero-based. Used by the onboarding demo card to record first-paste.
+    var onSuggestionPicked: ((Int) -> Void)?
 
     /// Combine subject for surfaces that want to subscribe rather than own
     /// the callback (the menubar already owns `onStatusChange`). Mirrors what
@@ -282,15 +305,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         ]
     }
 
-    /// Per-invocation client metadata. Merges `source = onboarding_sample`
-    /// when the onboarding mock window is the active capture target so the
-    /// server can distinguish first-run sample invocations from real ones.
+    /// Per-invocation client metadata. Currently identical to the static
+    /// snapshot; kept as an instance method so per-invocation context can be
+    /// merged in here if needed.
     func clientMetadata() -> [String: Any] {
-        var meta = Self.clientMetadata()
-        if onboardingSampleActive {
-            meta["source"] = "onboarding_sample"
-        }
-        return meta
+        Self.clientMetadata()
     }
 
     /// The active summary hotkey. Read-only mirror so surfaces (e.g. the
@@ -298,10 +317,132 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// HotkeyManager.
     var currentHotkey: Hotkey { summaryHotkey }
 
+    /// Warm the capture-feedback surfaces — the chime's audio route and the
+    /// glass lens's SwiftUI / Liquid Glass render — at launch, off the hot path,
+    /// so the *first* capture after launch doesn't pay their one-time first-use
+    /// cost as an audible / visible lag. Main thread.
+    @MainActor
+    func prewarmCaptureFeedback() {
+        soundEffects.prewarm()
+        glassLoading.prewarm(speed: runtimeStore.lensAnimationSpeed)
+    }
+
     private func setOverlayActiveMirror(_ active: Bool) {
         overlayActiveLock.lock()
         overlayActiveValue = active
         overlayActiveLock.unlock()
+    }
+
+    /// Present the glass loading lens and arm the global Esc tap. In glass mode
+    /// the SuggestionsPanel never shows during loading, so `onVisibilityChange`
+    /// never fires the overlay-active mirror; set it here so the CGEventTap
+    /// still routes Esc to `dismissOverlay` (which cancels the in-flight run).
+    /// - Parameter armKeyTap: when true, arms the global Esc key-tap mirror so
+    ///   Esc cancels the in-flight run. The instant-ack presentation (at hotkey
+    ///   time, before capture) passes `false`: there is no run to cancel yet,
+    ///   and leaving the mirror disarmed keeps the double-tap-to-multiframe
+    ///   window open during capture. The submit path arms it once the run is
+    ///   about to stream.
+    private func presentGlassLoading(windowRect: NSRect, speed: Double, armKeyTap: Bool = true) {
+        glassLoadingActive = true
+        glassLoadingPresentedRect = windowRect
+        if armKeyTap {
+            setOverlayActiveMirror(true)
+        }
+        // If the request hangs and the 90s backstop tears the panel down on its
+        // own, clear the armed key-tap mirror so it can't keep swallowing keys
+        // with nothing on screen. (Normal dismiss/result/cancel paths go through
+        // dismissGlassLoading and never reach this.)
+        glassLoading.onBackstop = { [weak self] in
+            guard let self else { return }
+            self.glassLoadingActive = false
+            self.glassLoadingPresentedRect = nil
+            if !self.overlay.isVisible {
+                self.setOverlayActiveMirror(false)
+            }
+        }
+        // `speed` is supplied by the caller (from the @MainActor store at hotkey
+        // time, or the captured Sendable runtime at submit) so a Settings change
+        // to Loading animation speed takes effect on the very next capture.
+        glassLoading.show(windowRect: windowRect, speed: speed)
+    }
+
+    /// Tear down the glass loading lens. Clears the overlay-active mirror only
+    /// when no result panel is on screen — on the loading→result hand-off the
+    /// panel's own `show()` re-arms the mirror immediately after.
+    private func dismissGlassLoading() {
+        glassLoading.dismiss()
+        glassLoadingActive = false
+        glassLoadingPresentedRect = nil
+        if !overlay.isVisible {
+            setOverlayActiveMirror(false)
+        }
+    }
+
+    /// Fire the immediate capture acknowledgment, paired with the chime in
+    /// `acknowledgeCaptureHotkey`, so the user gets a *visual* response at
+    /// key-down instead of only after the SCShareableContent capture finishes.
+    /// Anchored to a cheap CGWindowList rect — no capture pipeline — so it can
+    /// run synchronously on the main thread at hotkey time. Returns true iff a
+    /// visual was shown, so the caller can suppress the post-capture flash for
+    /// that frame and avoid a double indicator.
+    ///
+    ///   glass on  → present the loading lens now (the same lens the result
+    ///               hands off from). The capture excludes Blink's own windows,
+    ///               so the lens never lands in the screenshot.
+    ///   glass off → the brand-blue capture outline. (The user explicitly
+    ///               disliked the outline *with* glass, so it stays off there.)
+    @MainActor
+    private func presentInstantCaptureAck(pressedAt: DispatchTime) -> Bool {
+        let ownPID = NSRunningApplication.current.processIdentifier
+        guard let cgRect = ScreenCapture.frontmostCapturableWindowRect(excluding: ownPID) else {
+            latencyLogger.info("instant_ack shown=\(false, privacy: .public) reason=no_window")
+            return false
+        }
+        let glass = RuntimeEnvironment.glassLoadingEnabled()
+        if glass {
+            // CGWindow bounds are CG-global (top-left origin, +Y down); the lens
+            // panel wants AppKit-screen coords (bottom-left, +Y up). Flip against
+            // the primary screen height — same convention as
+            // `captureRectInAppKitScreen`, inlined because we're already on the
+            // main thread (that helper hops via DispatchQueue.main.sync and would
+            // deadlock here).
+            guard let primaryHeight = NSScreen.screens.first?.frame.height, primaryHeight > 0 else {
+                latencyLogger.info("instant_ack shown=\(false, privacy: .public) reason=no_screen")
+                return false
+            }
+            let appKitRect = NSRect(
+                x: cgRect.origin.x,
+                y: primaryHeight - cgRect.maxY,
+                width: cgRect.width,
+                height: cgRect.height
+            )
+            presentGlassLoading(
+                windowRect: appKitRect,
+                speed: runtimeStore.lensAnimationSpeed,
+                armKeyTap: false
+            )
+        } else {
+            CaptureConfirmationOverlay.flash(frame: cgRect)
+        }
+        latencyLogger.info(
+            "instant_ack shown=\(true, privacy: .public) glass=\(glass, privacy: .public) press_to_visual_ms=\(self.durationMS(from: pressedAt, to: self.monotonicNow()), privacy: .public)"
+        )
+        return true
+    }
+
+    /// True when two rects are within `tolerance` points on every edge. Used to
+    /// decide whether the precise captured rect is close enough to the
+    /// instant-ack rect that the already-presented lens needn't be re-anchored.
+    private static func rectsApproximatelyEqual(
+        _ a: CGRect,
+        _ b: CGRect,
+        tolerance: CGFloat = 8
+    ) -> Bool {
+        abs(a.origin.x - b.origin.x) <= tolerance
+            && abs(a.origin.y - b.origin.y) <= tolerance
+            && abs(a.width - b.width) <= tolerance
+            && abs(a.height - b.height) <= tolerance
     }
 
     private func setCustomInputActiveMirror(_ active: Bool) {
@@ -372,14 +513,6 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlayInsertConsumeLock.unlock()
     }
 
-    /// Flips the onboarding-sample flag. Main-thread only; the value is
-    /// read on the capture queue at session start, but the queue dispatches
-    /// to main for the runtime snapshot so a single hop is sufficient.
-    func setOnboardingSampleActive(_ active: Bool) {
-        dispatchPrecondition(condition: .onQueue(.main))
-        onboardingSampleActive = active
-    }
-
     private static func requiredPermissionsGranted(caller: String) -> Bool {
         let accessibility = AXIsProcessTrusted()
         let screenRecording = CGPreflightScreenCaptureAccess()
@@ -418,7 +551,16 @@ final class BlinkCoordinator: @unchecked Sendable {
             summarizeEnteredAt: summarizeEnteredAt,
             statusText: "capturing window..."
         )
-        enqueueSummarize()
+        // Paired with the chime above: show the user a capture indicator now,
+        // before the SCShareableContent pipeline runs. When shown, the frame's
+        // post-capture confirmation flash is suppressed so they don't double up.
+        // Skip it for a second tap inside the double-tap window — the first
+        // tap's indicator is already up, and this tap promotes to multi-frame
+        // collecting (which tears that indicator down).
+        let instantAckShown = pendingDoubleTapRequestID == nil
+            ? presentInstantCaptureAck(pressedAt: pressedAt)
+            : false
+        enqueueSummarize(instantAckShown: instantAckShown)
     }
 
     /// Returns the LDS snapshot iff it's eligible for auto-resume:
@@ -517,6 +659,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onTogglePinKey = { [weak self] in
             guard let self else { return }
             self.overlay.setPinned(!self.overlay.isPinned)
+        }
+        overlay.onCycleThinkingKey = { [weak self] in
+            self?.cycleThinkingForCurrentSurface()
+        }
+        overlay.onSetReasoning = { [weak self] level in
+            self?.setReasoningForCurrentSurface(level)
+        }
+        overlay.reasoningOverrideValue = { [weak self] in
+            guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+            return self.runtimeStore.appThinkingLevels[bundle]
         }
         overlay.onPinnedChanged = { [weak self] pinned in
             self?.setOverlayPinnedMirror(pinned)
@@ -647,49 +799,66 @@ final class BlinkCoordinator: @unchecked Sendable {
         cancelCollectingSession()
     }
 
-    private func enqueueSummarize() {
+    private func enqueueSummarize(instantAckShown: Bool) {
         queue.async { [self] in
             if pendingDoubleTap != nil {
+                // Second tap promotes to multi-frame; the lens (if any) is torn
+                // down inside promoteToMultiFrame as the collecting overlay opens.
                 promoteToMultiFrame()
                 return
             }
             guard !running else {
                 status("already working")
+                if instantAckShown { DispatchQueue.main.async { self.dismissGlassLoading() } }
                 return
             }
             if session == nil {
-                startCaptureSession()
+                startCaptureSession(instantAckShown: instantAckShown)
             } else {
+                // Rare: a fresh-capture hotkey landed here with a session still
+                // open. Drop the instant lens (this becomes an append, not a
+                // submit) and add the frame.
+                if instantAckShown { DispatchQueue.main.async { self.dismissGlassLoading() } }
                 appendFrameToSession()
             }
         }
     }
 
+    @MainActor
     private func acknowledgeCaptureHotkey(
         pressedAt: DispatchTime,
         summarizeEnteredAt: DispatchTime,
         statusText: String?
     ) {
+        // Runs synchronously on the main thread — every caller is @MainActor.
+        // The chime is the very first thing on key-down: nothing (not a runloop
+        // hop, not telemetry) sits between the press and the sound. The previous
+        // `DispatchQueue.main.async` wrapper deferred the sound a full runloop
+        // turn, which on a busy/slow main thread read as audible lag.
+        let acknowledgeStartedAt = monotonicNow()
+        let soundsOn = runtimeStore.soundsEnabled
+        soundEffects.play(.capture)
+        let soundReturnedAt = monotonicNow()
+
+        if let statusText {
+            onStatusChange?(statusText)
+            statusSubject.send(statusText)
+        }
+        captureHotkeyPressIndex += 1
+        let pressIndex = captureHotkeyPressIndex
+
+        // Telemetry is deferred off the hot path so a log write or event enqueue
+        // can never land between the press and the feedback.
+        let details = ChimeLatencyDetails(
+            segmentAMS: durationMS(from: pressedAt, to: summarizeEnteredAt),
+            segmentBMS: durationMS(from: summarizeEnteredAt, to: acknowledgeStartedAt),
+            segmentCMS: durationMS(from: acknowledgeStartedAt, to: soundReturnedAt),
+            totalMS: durationMS(from: pressedAt, to: soundReturnedAt),
+            pressIndex: pressIndex,
+            launchAgeMS: durationMS(from: launchedAt, to: pressedAt),
+            soundsOn: soundsOn
+        )
         DispatchQueue.main.async {
-            let acknowledgeStartedAt = self.monotonicNow()
-            if let statusText {
-                self.onStatusChange?(statusText)
-                self.statusSubject.send(statusText)
-            }
-            let soundsOn = self.runtimeStore.soundsEnabled
-            self.soundEffects.play(.capture)
-            let soundReturnedAt = self.monotonicNow()
-            self.captureHotkeyPressIndex += 1
-            let pressIndex = self.captureHotkeyPressIndex
-            let details = ChimeLatencyDetails(
-                segmentAMS: self.durationMS(from: pressedAt, to: summarizeEnteredAt),
-                segmentBMS: self.durationMS(from: summarizeEnteredAt, to: acknowledgeStartedAt),
-                segmentCMS: self.durationMS(from: acknowledgeStartedAt, to: soundReturnedAt),
-                totalMS: self.durationMS(from: pressedAt, to: soundReturnedAt),
-                pressIndex: pressIndex,
-                launchAgeMS: self.durationMS(from: self.launchedAt, to: pressedAt),
-                soundsOn: soundsOn
-            )
             self.latencyLogger.info(
                 "chime_lag press=\(details.pressIndex, privacy: .public) launch_age_ms=\(details.launchAgeMS, privacy: .public) a=\(details.segmentAMS, privacy: .public) b=\(details.segmentBMS, privacy: .public) c=\(details.segmentCMS, privacy: .public) total=\(details.totalMS, privacy: .public) sounds_on=\(details.soundsOn, privacy: .public)"
             )
@@ -771,7 +940,12 @@ final class BlinkCoordinator: @unchecked Sendable {
         }
     }
 
-    private func startCaptureSession() {
+    /// - Parameter instantAckShown: true when `presentInstantCaptureAck` already
+    ///   put a capture indicator on screen at hotkey time. The frame's
+    ///   post-capture confirmation flash is then suppressed so the user doesn't
+    ///   see two indicators, and any failure before submit tears the instant
+    ///   lens back down.
+    private func startCaptureSession(instantAckShown: Bool) {
         running = true
         defer { running = false }
 
@@ -785,6 +959,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         do {
             staging = try makeStagingDir()
         } catch {
+            if instantAckShown { DispatchQueue.main.async { self.dismissGlassLoading() } }
             reportFailure(
                 title: "Blink Failed",
                 statusText: "failed: \(shortErrorSummary(error))",
@@ -815,7 +990,14 @@ final class BlinkCoordinator: @unchecked Sendable {
             )
             status("capturing window...")
             let frontmostPID = (frontmostApp["pid"] as? Int).map { pid_t($0) }
-            let captureResult = try captureFrame(index: 0, staging: staging, preferredPID: frontmostPID)
+            // Suppress the post-capture flash when the instant ack already put an
+            // indicator on screen at hotkey time (avoids a double indicator).
+            let captureResult = try captureFrame(
+                index: 0,
+                staging: staging,
+                preferredPID: frontmostPID,
+                confirmCapture: !instantAckShown
+            )
             let frame = captureResult.frame
             var sessionFrontmost = frame.frontmostApp
             if sessionFrontmost["bundle_id"] == nil, let bundle = frontmostApp["bundle_id"] {
@@ -824,11 +1006,26 @@ final class BlinkCoordinator: @unchecked Sendable {
             if sessionFrontmost["app_name"] == nil, let name = frontmostApp["app_name"] {
                 sessionFrontmost["app_name"] = name
             }
+            // Per-app-surface reasoning: resolve the level for the captured
+            // bundle (override or global) into this session's runtime, and
+            // remember the bundle so the overlay's ⌘T toggle knows which
+            // surface it's cycling. ⌘T only affects the NEXT capture, so this
+            // session keeps whatever level was resolved at capture time.
+            let sourceBundleID = sessionFrontmost["bundle_id"] as? String
+            var sessionRuntime = runtime
+            DispatchQueue.main.sync {
+                sessionRuntime.thinkingLevel = self.runtimeStore.resolvedThinkingLevel(forBundle: sourceBundleID)
+                self.currentSurfaceBundleID = sourceBundleID
+            }
+            // The per-app map is a client-side resolution table (it names the
+            // apps you use); the resolved level is already baked into
+            // `thinkingLevel`, so keep the map out of the per-request runtime.json.
+            sessionRuntime.appThinkingLevels = [:]
             let active = CaptureSession(
                 requestID: requestID,
                 startedAt: startedAt,
                 startedPerf: monotonicNow(),
-                runtime: runtime,
+                runtime: sessionRuntime,
                 clientMetadata: clientMetadata,
                 frontmostApp: sessionFrontmost,
                 staging: staging,
@@ -850,6 +1047,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             armDoubleTapTimer(requestID: requestID)
             dispatchSubmit(active)
         } catch {
+            if instantAckShown { DispatchQueue.main.async { self.dismissGlassLoading() } }
             try? FileManager.default.removeItem(at: staging)
             PendingRunStore.finish(requestID: requestID)
             emitEvent(
@@ -922,6 +1120,9 @@ final class BlinkCoordinator: @unchecked Sendable {
             self.currentStreamingRun = nil
             self.currentRequestID = nil
             self.pendingDoubleTapRequestID = nil
+            // The instant-ack lens (shown at the first tap, glass mode) is
+            // superseded by the collecting overlay this promotion opens.
+            self.dismissGlassLoading()
         }
 
         emitEvent(
@@ -1122,11 +1323,16 @@ final class BlinkCoordinator: @unchecked Sendable {
         dispatchSubmit(active)
     }
 
+    /// - Parameter confirmCapture: when false, the post-capture confirmation
+    ///   flash is suppressed for this frame (the caller already showed an instant
+    ///   capture indicator at hotkey time). Defaults to true so the append /
+    ///   multi-frame paths keep their per-frame flash.
     private func captureFrame(
         index: Int,
         staging: URL,
         shareableContent: SCShareableContent? = nil,
-        preferredPID: pid_t? = nil
+        preferredPID: pid_t? = nil,
+        confirmCapture: Bool = true
     ) throws -> CapturedFrameResult {
         dispatchPrecondition(condition: .notOnQueue(.main))
         TCCDiagnostics.log(
@@ -1154,7 +1360,8 @@ final class BlinkCoordinator: @unchecked Sendable {
             preferredGlobalRect: axProbe?.globalRect,
             shareableContent: shareableContent,
             preferredPID: effectivePID,
-            axIsFullscreen: axProbe?.isFullscreen ?? false
+            axIsFullscreen: axProbe?.isFullscreen ?? false,
+            confirmCapture: confirmCapture
         )
         let captureMS = durationMS(since: captureStartedPerf)
         TCCDiagnostics.log(
@@ -1163,7 +1370,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
             throw NSError(domain: "BlinkCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
         }
-        let frameURL = staging.appendingPathComponent("screenshot_\(index).png")
+        let frameURL = staging.appendingPathComponent("screenshot_\(index).jpg")
         try capture.pngData.write(to: frameURL, options: .atomic)
         var frontmostApp: [String: Any] = [
             "pid": Int(capture.ownerPID),
@@ -1323,6 +1530,12 @@ final class BlinkCoordinator: @unchecked Sendable {
             // matches the existing pattern at the top of captureFrame
             // (line ~788) for NSWorkspace.shared.frontmostApplication.
             let mouseLocation: CGPoint = DispatchQueue.main.sync { NSEvent.mouseLocation }
+            // Full-window AX tree (off-screen included) so the server can give
+            // the model scrolling context the viewport screenshot lacks. Walk
+            // is clamped (node/value caps); nil when AX is denied or empty.
+            // nodeCount + truncated are surfaced for rollout observability so we
+            // can tell the client node cap apart from the server char clamp.
+            let axTreeResult = WindowAXTreeCapture.capture()
             var focusedContext = focusedSnapshot.uploadPayload
             // Annotate every frame in place before the runner reads them.
             // Each frame carries its own captureRect, so the marker math
@@ -1405,10 +1618,10 @@ final class BlinkCoordinator: @unchecked Sendable {
             let hostProfileURL = active.staging.appendingPathComponent("host_profile.json")
             let requestURL = active.staging.appendingPathComponent("request.json")
             try writeJSON(runtime, to: runtimeURL)
-            try? FileManager.default.removeItem(at: active.staging.appendingPathComponent("screenshot.png"))
+            try? FileManager.default.removeItem(at: active.staging.appendingPathComponent("screenshot.jpg"))
             try FileManager.default.copyItem(
                 at: firstFrame.pngURL,
-                to: active.staging.appendingPathComponent("screenshot.png")
+                to: active.staging.appendingPathComponent("screenshot.jpg")
             )
 
             let attachmentsCatalog: [[String: Any]] = DispatchQueue.main.sync {
@@ -1422,6 +1635,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 screenshotMeta: firstFrame.screenshotMeta,
                 diagnostics: firstFrame.imageDiagnostics,
                 focusedContext: focusedContext,
+                axTree: axTreeResult?.text,
+                axTreeNodes: axTreeResult?.nodeCount,
+                axTreeTruncated: axTreeResult?.truncated ?? false,
                 mouseScreenPoint: mouseLocation,
                 captureMode: captureMode,
                 frames: active.frames,
@@ -1505,9 +1721,48 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onDismissKey = { [weak self] in
                     self?.dismissOverlay()
                 }
-                self.overlay.showLoading(tldr: active.frames.count > 1 ? "Reading \(active.frames.count) frames..." : "Reading this screen...")
-                if active.frames.contains(where: { ($0.imageDiagnostics["blank_likely"] as? Bool) == true }) {
-                    self.overlay.showSoftError("One capture looks blank. Blink will still try to read it.")
+                // Anchor the overlay to the most recent captured window so the
+                // window-anchored placement modes land beside it. Nil-safe:
+                // the centered placement ignores this.
+                self.overlay.anchorRect = active.frames.last?.captureRectPoints
+                if RuntimeEnvironment.glassLoadingEnabled(),
+                   let windowRect = active.frames.last?.captureRectPoints {
+                    // Glass loading replaces the corner puck: a clear lens over the
+                    // captured window drains into the Reading pill. Suppress the
+                    // puck; the result is shown via the normal final show().
+                    if self.glassLoadingActive {
+                        // The lens has been on screen since hotkey time (instant
+                        // ack). Now that the run is about to stream, arm the Esc
+                        // key-tap mirror — deferred until here so the double-tap
+                        // window stayed open during capture. Only re-anchor the
+                        // lens if the real capture landed somewhere materially
+                        // different (fullscreen / display fallback / window moved);
+                        // otherwise keep the single continuous drain.
+                        self.setOverlayActiveMirror(true)
+                        if let presented = self.glassLoadingPresentedRect,
+                           !Self.rectsApproximatelyEqual(presented, windowRect) {
+                            self.presentGlassLoading(windowRect: windowRect, speed: active.runtime.lensAnimationSpeed)
+                        }
+                    } else {
+                        // No live instant lens. Either no cheap rect was available
+                        // at hotkey time (single-shot), or this is a multi-frame
+                        // submit whose collecting overlay is still on screen. Tear
+                        // any such panel down before the lens becomes the sole
+                        // loading surface: the non-glass branch gets this for free
+                        // via showLoading()->show()->close(), but the glass branch
+                        // must do it explicitly, or the stale collecting panel
+                        // lingers behind the lens and then captures the streaming
+                        // partials / the final result (it has isLoadingState=false,
+                        // so the result hand-off mistakes it for a streaming panel).
+                        // close() no-ops when nothing is visible (the single-shot case).
+                        self.overlay.close()
+                        self.presentGlassLoading(windowRect: windowRect, speed: active.runtime.lensAnimationSpeed)
+                    }
+                } else {
+                    self.overlay.showLoading(tldr: active.frames.count > 1 ? "Reading \(active.frames.count) frames..." : "Reading this screen...")
+                    if active.frames.contains(where: { ($0.imageDiagnostics["blank_likely"] as? Bool) == true }) {
+                        self.overlay.showSoftError("One capture looks blank. Blink will still try to read it.")
+                    }
                 }
             }
             let pythonStartedPerf = monotonicNow()
@@ -1564,7 +1819,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                 }
                 return self.currentRequestID != requestID
             }
-            if wasAbandoned { return }
+            if wasAbandoned {
+                DispatchQueue.main.async { self.dismissGlassLoading() }
+                return
+            }
             let pythonMS = durationMS(since: pythonStartedPerf)
             let totalMS = durationMS(since: active.startedPerf)
 
@@ -1645,6 +1903,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                     guard let self else { return }
                     self.overlay.setPinned(!self.overlay.isPinned)
                 }
+                self.overlay.onCycleThinkingKey = { [weak self] in
+                    self?.cycleThinkingForCurrentSurface()
+                }
+                self.overlay.onSetReasoning = { [weak self] level in
+                    self?.setReasoningForCurrentSurface(level)
+                }
+                self.overlay.reasoningOverrideValue = { [weak self] in
+                    guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+                    return self.runtimeStore.appThinkingLevels[bundle]
+                }
                 self.overlay.onPinnedChanged = { [weak self] pinned in
                     self?.setOverlayPinnedMirror(pinned)
                 }
@@ -1654,6 +1922,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onOutsideClickDismiss = { [weak self] in
                     self?.dismissOverlay(implicit: true)
                 }
+                // Hand off from the glass loading (if active) to the result panel.
+                self.dismissGlassLoading()
                 if self.overlay.isStreamingActive {
                     // Streaming already populated the panel via updateSummary
                     // and updateSuggestions. Calling show() here would close
@@ -1675,7 +1945,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.overlay.onTLDRDotTapped = { [weak self] index in
                     guard let self, index >= 0, index < self.tldrHistory.count else { return }
                     self.currentTldrIndex = index
-                    self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                    self.overlay.updateSummaryFromHistory(self.tldrHistory[index].tldr)
                     self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
                 }
                 self.soundEffects.play(.resultReady)
@@ -1690,8 +1960,10 @@ final class BlinkCoordinator: @unchecked Sendable {
                     clientMetadata: clientMetadata,
                     details: ["suggestion_count": self.currentSuggestions.count]
                 )
+                self.onSummaryCompleted?(true)
             }
         } catch {
+            DispatchQueue.main.async { self.dismissGlassLoading() }
             let wasAbandoned = DispatchQueue.main.sync { () -> Bool in
                 if self.cancelledSubmissionTokens.remove(submissionToken) != nil {
                     return true
@@ -1716,6 +1988,9 @@ final class BlinkCoordinator: @unchecked Sendable {
                 ]
             )
             PendingRunStore.finish(requestID: requestID)
+            DispatchQueue.main.async { [weak self] in
+                self?.onSummaryCompleted?(false)
+            }
             reportFailure(
                 title: "Blink Failed",
                 statusText: "failed: \(shortErrorSummary(error))",
@@ -1745,6 +2020,10 @@ final class BlinkCoordinator: @unchecked Sendable {
         let requestID = UUID().uuidString.lowercased()
         let clientMetadata = self.clientMetadata()
         var runtime = runtimeStore.snapshot
+        // Keep the per-app resolution table out of the per-request runtime.json
+        // (the original capture's thinking_level is restored from request.json
+        // below). See the matching note in `startCaptureSession`.
+        runtime.appThinkingLevels = [:]
         let allowEventLogging = runtime.allowEventLogging
         let startedAt = Date()
         let followUpInstruction = rawInstruction?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1772,7 +2051,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         // scrolled-back view snaps to the latest entry.
         if !tldrHistory.isEmpty && currentTldrIndex != tldrHistory.count - 1 {
             currentTldrIndex = tldrHistory.count - 1
-            overlay.updateSummary(tldrHistory[currentTldrIndex].tldr)
+            overlay.updateSummaryFromHistory(tldrHistory[currentTldrIndex].tldr)
             overlay.setPager(count: tldrHistory.count, currentIndex: currentTldrIndex)
         }
         let priorSuggestions = currentSuggestionDetails.isEmpty
@@ -1871,6 +2150,13 @@ final class BlinkCoordinator: @unchecked Sendable {
             self?.dismissOverlay(implicit: true)
         }
         overlay.beginSuggestionRefresh()
+        // The follow-up text has been captured into the request, but we leave it
+        // in the box through the loading state and clear it only once the
+        // response lands (in the success handler below). That keeps the user
+        // looking at what they asked while it generates, and a failed reroll
+        // leaves their text intact to retry. The clear runs in the shared
+        // completion handler, so both the changed and unchanged-suggestions
+        // branches consume it.
         status("rerolling suggestions...")
         emitEvent(
             requestID: requestID,
@@ -1919,8 +2205,15 @@ final class BlinkCoordinator: @unchecked Sendable {
                                 break
                             case .partialSummary:
                                 break
-                            case .partialSuggestions(let list):
-                                self.overlay.updateSuggestions(Array(list.prefix(3)))
+                            case .partialSuggestions:
+                                // Hold the faded cards until completion. The
+                                // reroll TL;DR is applied only at completion
+                                // (Option A — no streaming partials), so
+                                // streaming suggestions live here would churn
+                                // the cards under a frozen TL;DR. Letting both
+                                // land together at completion keeps them moving
+                                // as one (TL;DR first).
+                                break
                             }
                         }
                     }
@@ -2019,6 +2312,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                         guard let self else { return }
                         self.overlay.setPinned(!self.overlay.isPinned)
                     }
+                    self.overlay.onCycleThinkingKey = { [weak self] in
+                        self?.cycleThinkingForCurrentSurface()
+                    }
+                    self.overlay.onSetReasoning = { [weak self] level in
+                        self?.setReasoningForCurrentSurface(level)
+                    }
+                    self.overlay.reasoningOverrideValue = { [weak self] in
+                        guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
+                        return self.runtimeStore.appThinkingLevels[bundle]
+                    }
                     self.overlay.onPinnedChanged = { [weak self] pinned in
                         self?.setOverlayPinnedMirror(pinned)
                     }
@@ -2043,10 +2346,16 @@ final class BlinkCoordinator: @unchecked Sendable {
                     }
                     // Apply TL;DR at completion only (Option A — no streaming partials).
                     if self.overlay.isStreamingActive {
-                        if result.tldr != self.overlay.summaryFullText {
-                            self.overlay.updateSummary(result.tldr)
+                        if suggestionDetailsUnchanged {
+                            self.overlay.updateSummaryForFinalResult(result.tldr)
+                        } else {
+                            if result.tldr != self.overlay.summaryFullText {
+                                self.overlay.updateSummary(result.tldr)
+                            }
                         }
-                        if !suggestionDetailsUnchanged {
+                        if suggestionDetailsUnchanged {
+                            self.overlay.endSuggestionRefresh()
+                        } else {
                             self.overlay.updateSuggestionDetails(self.currentSuggestionDetails)
                         }
                     } else {
@@ -2059,8 +2368,15 @@ final class BlinkCoordinator: @unchecked Sendable {
                     self.overlay.onTLDRDotTapped = { [weak self] index in
                         guard let self, index >= 0, index < self.tldrHistory.count else { return }
                         self.currentTldrIndex = index
-                        self.overlay.updateSummary(self.tldrHistory[index].tldr)
+                        self.overlay.updateSummaryFromHistory(self.tldrHistory[index].tldr)
                         self.overlay.setPager(count: self.tldrHistory.count, currentIndex: index)
+                    }
+                    // The submitted follow-up has now been answered, so clear the
+                    // input box — deferred from submit time so the text stayed
+                    // visible through the whole loading state. Only when a
+                    // follow-up instruction was actually sent.
+                    if followUpInstruction?.isEmpty == false {
+                        self.overlay.clearCustomInputText()
                     }
                     self.soundEffects.play(.resultReady)
                     self.status("ready - press 1/2/3 to expand")
@@ -2119,8 +2435,13 @@ final class BlinkCoordinator: @unchecked Sendable {
                 return sorted
             }
         }
-        let fallback = bundleDir.appendingPathComponent("screenshot.png")
-        return FileManager.default.fileExists(atPath: fallback.path) ? [fallback] : []
+        for name in ["screenshot.jpg", "screenshot.png"] {
+            let fallback = bundleDir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: fallback.path) {
+                return [fallback]
+            }
+        }
+        return []
     }
 
     private func normalizedSuggestionDetails(
@@ -2246,12 +2567,14 @@ final class BlinkCoordinator: @unchecked Sendable {
         switch applyChoiceNumber(index) {
         case .ignored:
             return
-        case .expand(let index):
+        case .expand(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            expandSuggestion(index: index)
-        case .commit(let index):
+            expandSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
+        case .commit(let resolvedIndex):
             overlay.setCustomInputArmedHighlight(false)
-            insertSuggestion(index: index)
+            insertSuggestion(index: resolvedIndex)
+            onSuggestionPicked?(resolvedIndex)
         case .focusInput:
             overlay.focusCustomInput()
             status("type your own reply")
@@ -2323,6 +2646,44 @@ final class BlinkCoordinator: @unchecked Sendable {
     func toggleOverlayPin() {
         guard overlay.isVisible else { return }
         overlay.setPinned(!overlay.isPinned)
+    }
+
+    /// ⌘T from the overlay: cycle the reasoning level for the app this capture
+    /// came from and persist it. The change applies to the NEXT capture from
+    /// that app — the current result keeps the level baked into its request —
+    /// so we just confirm the new level rather than re-rolling.
+    @MainActor
+    func cycleThinkingForCurrentSurface() {
+        guard overlay.isVisible else { return }
+        guard let bundle = currentSurfaceBundleID, !bundle.isEmpty else {
+            status("reasoning toggle: no app surface for this capture")
+            return
+        }
+        let newLevel = runtimeStore.cycleThinkingLevel(forBundle: bundle)
+        let title = ReasoningLevels.title(for: newLevel)
+        overlay.flashReasoningLevel(title)
+        status("reasoning for this app → \(title) (applies next capture)")
+    }
+
+    /// Set (or, with `nil`, clear) the per-app reasoning override for the
+    /// current capture's surface. Like the ⌘T cycle, this applies to the next
+    /// capture, not the current result. Driven by the overlay's right-click
+    /// "Reasoning" submenu.
+    @MainActor
+    func setReasoningForCurrentSurface(_ level: String?) {
+        guard overlay.isVisible else { return }
+        guard let bundle = currentSurfaceBundleID, !bundle.isEmpty else {
+            status("reasoning: no app surface for this capture")
+            return
+        }
+        if let level {
+            runtimeStore.appThinkingLevels[bundle] = level
+        } else {
+            runtimeStore.appThinkingLevels.removeValue(forKey: bundle)
+        }
+        let title = ReasoningLevels.title(for: runtimeStore.resolvedThinkingLevel(forBundle: bundle))
+        overlay.flashReasoningLevel(title)
+        status("reasoning for this app → \(title) (applies next capture)")
     }
 
     @MainActor
@@ -2670,9 +3031,16 @@ final class BlinkCoordinator: @unchecked Sendable {
             cancelCollectingSession()
             return
         }
+        // Tear down the glass loading even if the result panel never appeared
+        // (glass mode suppresses the puck, so the guard below may skip).
+        let glassWasActive = glassLoadingActive
+        dismissGlassLoading()
         let pendingRequestID = pendingDoubleTapRequestID
         let overlayWasVisible = overlay.isVisible
-        guard overlayWasVisible || pendingRequestID != nil else { return }
+        // `glassWasActive` keeps Esc working as a mid-stream cancel in glass
+        // mode, where the result panel hasn't been shown yet so `isVisible`
+        // is still false but an in-flight run needs terminating below.
+        guard overlayWasVisible || pendingRequestID != nil || glassWasActive else { return }
         let resolvedRequestID = currentRequestID ?? pendingRequestID
         let alreadyTerminal = (resolvedRequestID != nil && resolvedRequestID == terminalEmittedRequestID)
 
@@ -2727,7 +3095,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         }
         streamingRun?.terminate()
         currentStreamingRun = nil
-        let dismissedWithoutOverlay = !overlayWasVisible && pendingRequestID != nil
+        let dismissedWithoutOverlay = !overlayWasVisible && (pendingRequestID != nil || glassWasActive)
         currentRequestID = nil
         pendingDoubleTapRequestID = nil
         currentBundleDir = nil
@@ -2769,7 +3137,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     type: "capture_cancelled",
                     allowLogging: runtimeStore.allowEventLogging,
                     clientMetadata: clientMetadata,
-                    details: ["phase": "double_tap_window"]
+                    details: ["phase": pendingRequestID != nil ? "double_tap_window" : "loading"]
                 )
                 emitEvent(
                     requestID: requestID,
@@ -2838,6 +3206,9 @@ final class BlinkCoordinator: @unchecked Sendable {
         screenshotMeta: [String: Any],
         diagnostics: [String: Any],
         focusedContext: [String: Any],
+        axTree: String? = nil,
+        axTreeNodes: Int? = nil,
+        axTreeTruncated: Bool = false,
         mouseScreenPoint: CGPoint? = nil,
         captureMode: String = "frontmost_window",
         frames: [CapturedFrame] = [],
@@ -2864,6 +3235,15 @@ final class BlinkCoordinator: @unchecked Sendable {
                 "allow_content_retention": runtime.allowContentRetention,
             ],
         ]
+        if let axTree, !axTree.isEmpty {
+            envelope["ax_tree"] = axTree
+            if let axTreeNodes {
+                envelope["ax_tree_nodes"] = axTreeNodes
+            }
+            // True when the client node cap stopped the walk — distinguishes
+            // "tree genuinely small" from "tree hit the 4000-node ceiling".
+            envelope["ax_tree_truncated"] = axTreeTruncated
+        }
         if !attachmentsCatalog.isEmpty {
             envelope["attachments_catalog"] = attachmentsCatalog
         }

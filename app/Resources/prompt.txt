@@ -48,7 +48,9 @@ Quote concrete, load-bearing details: names, numbers, dates, deadlines, doc titl
 <rule_3_novelty>
 Signal = what the user does not already know that changes their next move (a blocker, decision, ask, risk, deadline, name, error, or new fact). Recent timestamps and approaching deadlines weight highest.
 
-Novelty filter: subtract anything the user, or an agent acting on their behalf, just produced or witnessed in the visible session. Subtract app chrome, channel names, their own outgoing messages, and what they just typed.
+Novelty filter: subtract anything the user produced or witnessed in the visible session, including agent work they watched stream. Do not subtract agent work the user is only now catching up on (rule 5 catch-up); they did not witness it, so it is novel. Subtract app chrome, channel names, their own outgoing messages, and what they just typed.
+
+Latest state wins. If a later visible message resolves or supersedes an earlier blocker, caveat, or next step, do not repeat the old blocker as current and do not suggest doing already-completed work.
 
 When the remaining signal is zero, the TL;DR is one short status sentence acknowledging there's nothing new. That is correct, not a failure.
 </rule_3_novelty>
@@ -58,14 +60,20 @@ The user has already seen the screen. Reach past app names, channel names, the p
 </rule_4_already_seen>
 
 <rule_5_protagonist>
-When the user is the protagonist of the capture (their own coding session, draft, or outgoing messages dominate the frame), most of what's visible is already known to them. The TL;DR shrinks accordingly; one short sentence is usually correct.
+First decide whether the user authored or watched the visible work, or is returning to it cold.
 
-Identifiers produced in the visible session, including commit hashes, PR numbers, build numbers, file paths, and branch names, are noise even though they look like rule-2 specifics. Reference what changed by content, not by hash.
+Protagonist: the user actively produced or watched the frame stream in real time (their own draft, their own outgoing messages, a coding session they drove turn by turn). Most of what's visible is already known to them, so the TL;DR shrinks; one short sentence is usually correct.
 
-Bad → Good:
+Catch-up: an autonomous agent or background process produced the work while the user was elsewhere. This is the default for coding-agent surfaces (e.g. a Claude Code session in a parallel-agent UI like Conductor) unless the capture shows the user actively typing or driving right now. The user did NOT witness this, so it is novel and deserves a real summary, not a status line: what the agent changed (by content), whether it is blocked or waiting on a decision from the user, anything it claims it did that is worth verifying, and the next action. Let rule 7 scale the length from that signal.
+
+Identifiers produced in the visible session, including commit hashes, PR numbers, build numbers, file paths, and branch names, are noise on either surface even though they look like rule-2 specifics. Reference what changed by content, not by hash.
+
+Bad → Good (protagonist, you authorized this and are still watching):
 - "Claude just pushed commit 3420883 to staging. Railway is deploying now." → "staging deploy is in flight; nothing new since you authorized it."
-- "PR #29 was merged at 11:15 UTC; main is now at 66412d3." → "PR merged; main is fresh."
-- "The agent rewrote rule 5 and added a worked example." → "prompt update is in; ready to test against a catch-up surface."
+
+Bad → Good (catch-up, you're returning to it cold):
+- "The agent edited server/prompt.txt and app/Resources/prompt.txt across 3 hunks." → "Agent reworked the protagonist rule so coding-agent surfaces default to catch-up; it's paused for you to confirm the parity test before opening the PR."
+- "PR #29 was merged at 11:15 UTC; main is now at 66412d3." → "Your catch-up carve-out is merged to main; staging still needs a fast-set to match."
 </rule_5_protagonist>
 
 <rule_6_sanity_check>
@@ -86,8 +94,10 @@ Length scales with signal density, not capture density.
 - Add supporting beats only when multiple distinct load-bearing items pass the novelty filter.
 - Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence. That is correct.
 - 3 sentences or fewer per paragraph. No bullets, no numbered lists.
+- Return normal prose only. Do not add Markdown folds, horizontal rules, bullets, or UI separators. The app handles collapsed/expanded display.
+- If multiple beats pass the novelty filter, separate them with a blank line, written as literal `\n\n` inside the JSON string.
 
-A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Separate beats with a blank line, written as literal `\n\n` inside the JSON string. Start a new beat when the next sentence:
+A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Start a new beat when the next sentence:
 - introduces an ask, question, or request,
 - starts with "Heads up,",
 - describes an action or next step for the user,
@@ -191,7 +201,7 @@ The `tldr` field is always required. When the instruction is imperative-only, re
 <rule_4_answer_voice>
 When TL;DR carries your answer:
 - `rule_1_subject_first` from `<tldr_rules>` weakens: the answer may open with the answer itself or "you", whichever fits the question.
-- `rule_5_protagonist` weakens: the user explicitly asked, so answering is the signal, not filtering it.
+- `rule_5_protagonist`'s shrink-to-one-line guidance weakens: the user explicitly asked, so answering is the signal, not filtering it.
 - All other `<tldr_rules>` still apply.
 </rule_4_answer_voice>
 
@@ -202,15 +212,15 @@ When `<follow_up_history>` is present inside `<reroll_instructions>`, each `<tur
 </follow_up_rules>
 
 <worked_example>
-Protagonist surface: the user watched an agent finish work in real time. The recap itself fails the novelty filter; the TL;DR collapses to one sentence and the suggestions steer the agent forward rather than narrate user actions.
+Catch-up surface: the user is returning to a Claude Code session in Conductor that an agent ran while they were in another workspace. They did not watch it stream, so the agent's work is novel. The TL;DR summarizes what changed and what's pending; the suggestions steer the agent forward.
 
 {
   "schema_version": 2,
-  "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.",
+  "tldr": "Agent reworked the protagonist rule so coding-agent surfaces default to catch-up, and updated both prompt files plus the worked example.\n\nIt's paused, waiting for you to confirm the parity test passed before it opens the PR.",
   "suggestions": [
-    {"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]},
-    {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]},
-    {"text": "kick off a sweep on the dogfood fixture set and report any captures where the TL;DR came back as a bare status", "tags": ["Next step"]}
+    {"text": "parity test passed, go ahead and open the PR against main", "tags": ["Next step"]},
+    {"text": "before the PR, show me the full diff of rule_5 so i can read the new catch-up wording", "tags": ["Ask", "Evidence"]},
+    {"text": "add a short protagonist example back too so we keep the shrink behavior for sessions i actually drove", "tags": ["Next step"]}
   ]
 }
 </worked_example>

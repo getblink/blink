@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from server import gemini
 from server.main import (
+    _build_ax_tree_block,
     _build_selection_block,
     _privacy_safe_envelope,
     _selected_settings,
@@ -271,7 +272,7 @@ class MainTests(unittest.TestCase):
             turns = kwargs["conversation_turns"]
             self.assertEqual([turn["role"] for turn in turns], ["user", "model", "user"])
             self.assertEqual(turns[1]["suggestions"], ["Please send the doc.", "I'll take a look."])
-            self.assertIn("fresh set", turns[2]["text"])
+            self.assertIn("Continue the same capture conversation", turns[2]["text"])
             self.assertIn("make this warmer", turns[2]["text"])
             self.assertEqual(turns[2]["follow_up_instruction"], "make this warmer")
             self.assertNotIn("Stateful Blink context:", prompt_text)
@@ -1052,6 +1053,8 @@ class MainTests(unittest.TestCase):
             [{"text": gemini.reroll_content_text("make these more direct")}],
         )
         self.assertNotIn("stale prompt text", contents[-1].parts[0]["text"])
+        self.assertNotIn("Produce a fresh set of three suggestions", contents[-1].parts[0]["text"])
+        self.assertIn("Continue the same capture conversation", contents[-1].parts[0]["text"])
 
     def test_gemini_conversation_contents_multi_reroll_keeps_reroll_as_final_turn(self) -> None:
         class FakePart:
@@ -2077,6 +2080,28 @@ class MainTests(unittest.TestCase):
         sanitized = _privacy_safe_envelope(envelope)
         self.assertEqual(sanitized["selection"]["text"], "highlighted")
         self.assertNotIn("text_redacted", sanitized["selection"])
+
+    def test_build_ax_tree_block_wraps_text_with_header(self) -> None:
+        block = _build_ax_tree_block('window "Inbox"\n  button "Reply"')
+        self.assertIn("<ax_tree ", block)
+        self.assertIn("</ax_tree>", block)
+        self.assertIn('truncated="false"', block)
+        self.assertIn("above and below the visible viewport", block)
+        self.assertIn('button "Reply"', block)
+
+    def test_build_ax_tree_block_clamps_and_marks_truncated(self) -> None:
+        # "Z" never appears in the descriptive header, so counting it isolates
+        # the clamped tree body from the surrounding markup.
+        big = "Z" * (gemini.AX_TREE_MAX_CHARS + 5000)
+        block = _build_ax_tree_block(big)
+        self.assertIn('truncated="true"', block)
+        self.assertEqual(block.count("Z"), gemini.AX_TREE_MAX_CHARS)
+
+    def test_build_ax_tree_block_returns_empty_for_invalid_inputs(self) -> None:
+        self.assertEqual(_build_ax_tree_block(None), "")
+        self.assertEqual(_build_ax_tree_block(""), "")
+        self.assertEqual(_build_ax_tree_block("   \n  "), "")
+        self.assertEqual(_build_ax_tree_block(123), "")
 
     def test_build_selection_block_returns_empty_for_invalid_inputs(self) -> None:
         self.assertEqual(_build_selection_block(None), "")
