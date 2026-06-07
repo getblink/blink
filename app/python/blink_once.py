@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import http.client
+import io
 import json
 import os
 import re
 import shutil
+import ssl
 import sys
 import time
 import traceback
@@ -16,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from env_loader import load_runtime_env
-from image_prep import prepare_request_image
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -24,40 +26,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "temperature": 1.0,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",
-    "preprocess_request_images": True,
-    "request_image_format": "jpeg",
-    "request_image_max_dimension": 1600,
-    "request_image_jpeg_quality": 70,
     "timeout_seconds": 120,
 }
-
-
-def _is_thinking_model(model: str) -> bool:
-    """Gemini 3 Pro / Flash are reasoning models with non-trivial thinking budgets."""
-    if not model:
-        return False
-    name = model.lower()
-    if not name.startswith(("gemini-3-", "gemini-3.")):
-        return False
-    return "flash-lite" not in name
-
-
-def thinking_level_for_model(model: str) -> str | None:
-    """Return the thinking_level for a model, or None to omit it.
-
-    "high" is the Google-documented default for Gemini 3 Flash/Pro. "minimal"
-    is avoided: Flash hallucinates its own model name at that level.
-    """
-    return "high" if _is_thinking_model(model) else None
-
-
-def max_output_tokens_for_model(model: str) -> int | None:
-    """Per-model override for max_output_tokens, or None to honor settings.
-
-    Thinking tokens count against max_output_tokens, so leave headroom for
-    THINKING_BUDGET_TOKENS plus a comfortable JSON reply.
-    """
-    return 2048 if _is_thinking_model(model) else None
 
 
 def media_resolution_for_model(model: str, base: str) -> str:
@@ -65,23 +35,6 @@ def media_resolution_for_model(model: str, base: str) -> str:
         return "MEDIA_RESOLUTION_MEDIUM"
     return base
 
-
-def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any], is_followup: bool = False):
-    model = settings.get("model", "")
-    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
-    media_resolution = media_resolution_for_model(model, settings["media_resolution"])
-    kwargs = dict(
-        system_instruction=prompt_text,
-        temperature=settings["temperature"],
-        max_output_tokens=max_tokens,
-        media_resolution=media_resolution,
-        response_mime_type="application/json",
-        response_schema=response_schema(is_followup=is_followup),
-    )
-    level = thinking_level_for_model(model)
-    if level is not None:
-        kwargs["thinking_config"] = types_module.ThinkingConfig(thinking_level=level)
-    return types_module.GenerateContentConfig(**kwargs)
 
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
@@ -105,10 +58,8 @@ SURFACE_TEXT_MAX_CHARS = 500
 PREFERENCE_TEXT_MAX_CHARS = 360
 FOLLOW_UP_INSTRUCTION_MAX_CHARS = 500
 FOLLOW_UP_INSTRUCTION_HISTORY_LIMIT = 4
-# Multi-beat TL;DRs separate beats with literal \n\n and can run 2–3 beats
-# × ~200 chars each, so the per-turn TL;DR bound for follow-up history is
-# generous compared to PREFERENCE_TEXT_MAX_CHARS (360), which is tuned for
-# short cross-capture takeaways.
+# TL;DRs can be longer than a single compact headline because the overlay owns
+# collapsed/expanded rendering. Keep enough history to preserve full context.
 FOLLOW_UP_HISTORY_TLDR_MAX_CHARS = 1024
 FOLLOW_UP_HISTORY_SUGGESTION_MAX_CHARS = 500
 # Two windows, scope-aware. A follow-up given on the same post stays valid
@@ -280,6 +231,8 @@ Signal = what the user does not already know that changes their next move (a blo
 
 Novelty filter: subtract anything the user, or an agent acting on their behalf, just produced or witnessed in the visible session. Subtract app chrome, channel names, their own outgoing messages, and what they just typed.
 
+Latest state wins. If a later visible message resolves or supersedes an earlier blocker, caveat, or next step, do not repeat the old blocker as current and do not suggest doing already-completed work.
+
 When the remaining signal is zero, the TL;DR is one short status sentence acknowledging there's nothing new. That is correct, not a failure.
 </rule_3_novelty>
 
@@ -316,8 +269,10 @@ Length scales with signal density, not capture density.
 - Add supporting beats only when multiple distinct load-bearing items pass the novelty filter.
 - Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence. That is correct.
 - 3 sentences or fewer per paragraph. No bullets, no numbered lists.
+- Return normal prose only. Do not add Markdown folds, horizontal rules, bullets, or UI separators. The app handles collapsed/expanded display.
+- If multiple beats pass the novelty filter, separate them with a blank line, written as literal `\\n\\n` inside the JSON string.
 
-A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Separate beats with a blank line, written as literal `\n\n` inside the JSON string. Start a new beat when the next sentence:
+A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Start a new beat when the next sentence:
 - introduces an ask, question, or request,
 - starts with "Heads up,",
 - describes an action or next step for the user,
@@ -327,7 +282,7 @@ Bad (jammed):
 "The agent shipped two UI fixes. PR #27 is live on GitHub. Trigger ctrl+shift+t to see the results."
 
 Good (separated):
-"The agent shipped two UI fixes.\n\nPR #27 is live on GitHub.\n\nTrigger ctrl+shift+t to see the results."
+"The agent shipped two UI fixes.\\n\\nPR #27 is live on GitHub.\\n\\nTrigger ctrl+shift+t to see the results."
 </rule_7_length_and_beats>
 
 </tldr_rules>
@@ -384,7 +339,7 @@ Protagonist surface: the user watched an agent finish work in real time. The rec
   "schema_version": 2,
   "tldr": "Agent shipped the adaptive-length TL;DR plan and is standing by.",
   "suggestions": [
-    {"text": "open the local Blink overlay on a dense Slack thread and check that the tldr expands beat-by-beat as expected", "tags": ["Next step"]},
+    {"text": "open the local Blink overlay on a dense Slack thread and check that long TL;DR text expands when clicked", "tags": ["Next step"]},
     {"text": "can you paste the diff stats for server/prompt.txt and app/Resources/prompt.txt so i can confirm the parity test passed?", "tags": ["Ask", "Evidence"]},
     {"text": "kick off a sweep on the dogfood fixture set and report any captures where the TL;DR came back as a bare status", "tags": ["Next step"]}
   ]
@@ -396,7 +351,7 @@ Return only valid JSON with this exact shape:
 
 {
   "schema_version": 2,
-  "tldr": "Headline here.\n\nSupporting beat or Heads up here.",
+  "tldr": "Headline here.\\n\\nSupporting beat or Heads up here.",
   "suggestions": [
     {"text": "Paste-ready text", "tags": ["Tag"]},
     {"text": "Paste-ready text", "tags": ["Tag"]},
@@ -1162,71 +1117,6 @@ def response_schema_contract(supports_attachments: bool = False, is_followup: bo
     }
 
 
-def response_schema(supports_attachments: bool = False, is_followup: bool = False):
-    from google.genai import types
-
-    contract = response_schema_contract(supports_attachments=supports_attachments, is_followup=is_followup)
-    suggestion_item_contract = contract["properties"]["suggestions"]["items"]
-    suggestion_required = suggestion_item_contract["required"]
-    suggestion_ordering = suggestion_item_contract["property_ordering"]
-
-    suggestion_properties: dict[str, Any] = {
-        "text": types.Schema(
-            type=types.Type.STRING,
-            description="A candidate reply or next action the user might send next.",
-        ),
-        "tags": types.Schema(
-            type=types.Type.ARRAY,
-            minItems=1,
-            maxItems=2,
-            items=types.Schema(
-                type=types.Type.STRING,
-                maxLength=SUGGESTION_TAG_MAX_CHARS,
-                description="A short label describing the suggestion's move.",
-            ),
-        ),
-    }
-    if supports_attachments:
-        suggestion_properties["attachments"] = types.Schema(
-            type=types.Type.ARRAY,
-            items=types.Schema(
-                type=types.Type.OBJECT,
-                required=["id", "reason"],
-                properties={
-                    "id": types.Schema(type=types.Type.STRING),
-                    "reason": types.Schema(type=types.Type.STRING, maxLength=80),
-                },
-            ),
-        )
-
-    return types.Schema(
-        type=types.Type.OBJECT,
-        required=contract["required"],
-        propertyOrdering=contract["property_ordering"],
-        properties={
-            "schema_version": types.Schema(
-                type=types.Type.INTEGER,
-                description="Response schema version. Always 2.",
-            ),
-            "tldr": types.Schema(
-                type=types.Type.STRING,
-                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
-            ),
-            "suggestions": types.Schema(
-                type=types.Type.ARRAY,
-                minItems=0 if is_followup else 3,
-                maxItems=3,
-                items=types.Schema(
-                    type=types.Type.OBJECT,
-                    required=suggestion_required,
-                    propertyOrdering=suggestion_ordering,
-                    properties=suggestion_properties,
-                ),
-            ),
-        },
-    )
-
-
 def parse_json_response(raw_text: str) -> tuple[Any | None, str | None]:
     try:
         parsed = json.loads(raw_text)
@@ -1395,69 +1285,15 @@ def build_response_payload(
     return payload
 
 
-def prepare_screenshot_part(
-    types_module,
-    screenshot_path: Path,
-    settings: dict[str, Any],
-) -> tuple[Any, dict[str, Any]]:
-    request_image = prepare_request_image(screenshot_path, settings)
-    image_part = types_module.Part.from_bytes(
-        data=request_image["bytes_data"],
-        mime_type=request_image["mime_type"],
-    )
-    diagnostics = {
-        "image_bytes_original": request_image["original_bytes"],
-        "image_bytes_compressed": request_image["request_bytes"],
-        "image_prepare_ms": request_image["duration_ms"],
-        "media_resolution_resolved": media_resolution_for_model(
-            str(settings.get("model") or ""),
-            str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
-        ),
-    }
-    return image_part, diagnostics
-
-
-def prepare_screenshot_parts(
-    types_module,
-    screenshot_paths: list[Path],
-    settings: dict[str, Any],
-) -> tuple[list[Any], dict[str, Any]]:
-    parts: list[Any] = []
-    frames: list[dict[str, Any]] = []
-    original_total = 0
-    compressed_total = 0
-    prepare_total = 0
-    media_resolution = media_resolution_for_model(
-        str(settings.get("model") or ""),
-        str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
-    )
-    for index, screenshot_path in enumerate(screenshot_paths):
-        part, diagnostics = prepare_screenshot_part(types_module, screenshot_path, settings)
-        parts.append(part)
-        original_total += int(diagnostics.get("image_bytes_original") or 0)
-        compressed_total += int(diagnostics.get("image_bytes_compressed") or 0)
-        prepare_total += int(diagnostics.get("image_prepare_ms") or 0)
-        frames.append(
-            {
-                "index": index,
-                "path": str(screenshot_path),
-                **diagnostics,
-            }
-        )
-    return parts, {
-        "frames": frames,
-        "frame_count": len(screenshot_paths),
-        "image_bytes_original": original_total,
-        "image_bytes_compressed": compressed_total,
-        "image_prepare_ms": prepare_total,
-        "image_bytes_original_total": original_total,
-        "image_bytes_compressed_total": compressed_total,
-        "media_resolution_resolved": media_resolution,
-    }
+# Set by the persistent worker (`--serve`) so every event it streams carries
+# the seq of the request it belongs to; stays None in one-shot CLI mode.
+_ACTIVE_SEQ: Any = None
 
 
 def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
     event = {"event": kind, **payload}
+    if _ACTIVE_SEQ is not None and "seq" not in event:
+        event["seq"] = _ACTIVE_SEQ
     print(json.dumps(event, ensure_ascii=True), flush=True)
 
 
@@ -1835,8 +1671,10 @@ def _encode_multipart_request(
         request_json,
         b"\r\n",
     ]
+    suffix_content_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
     for index, image_path in enumerate(image_paths):
         field_name = "screenshot" if index == 0 else f"screenshot_{index}"
+        content_type = suffix_content_types.get(image_path.suffix.lower(), "image/png")
         parts.extend(
             [
                 f"--{boundary}\r\n".encode("utf-8"),
@@ -1844,13 +1682,87 @@ def _encode_multipart_request(
                     f'Content-Disposition: form-data; name="{field_name}"; '
                     f'filename="screenshot_{index}{image_path.suffix or ".png"}"\r\n'
                 ).encode("utf-8"),
-                b"Content-Type: image/png\r\n\r\n",
+                f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
                 image_path.read_bytes(),
                 b"\r\n",
             ]
         )
     parts.append(f"--{boundary}--\r\n".encode("utf-8"))
     return b"".join(parts), boundary
+
+
+def _default_opener(req: request.Request, timeout: float) -> Any:
+    """One-shot opener: a fresh connection per call (urllib's default). This is
+    the CLI path and is unchanged from the original `request.urlopen` call."""
+    return request.urlopen(req, timeout=timeout)
+
+
+class _KeepAliveOpener:
+    """Callable drop-in for `_default_opener` that reuses one HTTPS connection
+    across calls so sequential captures skip the TCP+TLS handshake (~90 ms each
+    against Cloud Run, measured). It mimics `urlopen`'s contract exactly —
+    returns a context-manager response and raises `urllib.error.HTTPError` /
+    `URLError` — so `generate_via_proxy`'s error handling needs no changes.
+
+    A pooled keep-alive socket can be idle-closed by the server between
+    captures; the first request on a dead socket fails, so we drop the
+    connection and retry once on a fresh one. A second failure is a real
+    network error and surfaces as `URLError`, identical to the one-shot path.
+    """
+
+    def __init__(self) -> None:
+        self._conn: http.client.HTTPSConnection | None = None
+        self._host: str | None = None
+
+    def _connect(self, host: str, timeout: float) -> http.client.HTTPSConnection:
+        if self._conn is not None and self._host == host:
+            return self._conn
+        self.close()
+        self._conn = http.client.HTTPSConnection(
+            host, timeout=timeout, context=ssl.create_default_context()
+        )
+        self._host = host
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except OSError:
+                pass
+        self._conn = None
+        self._host = None
+
+    def __call__(self, req: request.Request, timeout: float) -> Any:
+        parsed = parse.urlparse(req.full_url)
+        host = parsed.netloc
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        method = req.get_method()
+        headers = dict(req.header_items())
+        body = req.data
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                conn = self._connect(host, timeout)
+                conn.request(method, path, body=body, headers=headers)
+                resp = conn.getresponse()
+            except (http.client.HTTPException, OSError) as exc:
+                # Stale keep-alive socket -> drop it and retry once on a fresh
+                # connection. The second failure (attempt == 1) is real.
+                self.close()
+                last_exc = exc
+                continue
+            if resp.status >= 400:
+                # Don't reuse a connection after an error response body; the
+                # next capture reconnects. Re-raise as HTTPError so the existing
+                # 401-retry / error-payload handling below runs unchanged.
+                err_body = resp.read()
+                self.close()
+                raise error.HTTPError(
+                    req.full_url, resp.status, resp.reason, resp.headers, io.BytesIO(err_body)
+                )
+            return resp
+        raise error.URLError(last_exc or "keep-alive request failed")
 
 
 def generate_via_proxy(
@@ -1860,7 +1772,9 @@ def generate_via_proxy(
     image_paths: list[Path],
     stream_events: bool = False,
     retry_stale_device_token: bool = True,
+    opener: Any = None,
 ) -> dict[str, Any]:
+    opener = opener or _default_opener
     body, boundary = _encode_multipart_request(request_payload, image_paths)
     timeout_seconds = float(settings["timeout_seconds"])
     accept = "text/event-stream" if stream_events else "application/json"
@@ -1882,7 +1796,7 @@ def generate_via_proxy(
 
     started = time.perf_counter()
     try:
-        with request.urlopen(req, timeout=timeout_seconds) as response:
+        with opener(req, timeout_seconds) as response:
             response_status = getattr(response, "status", None) or getattr(response, "code", None)
             content_type = response.headers.get("content-type") if getattr(response, "headers", None) else None
             proxy_diagnostics = _proxy_diagnostics(
@@ -1968,6 +1882,7 @@ def generate_via_proxy(
                 image_paths=image_paths,
                 stream_events=stream_events,
                 retry_stale_device_token=False,
+                opener=opener,
             )
             warnings = retry_payload.setdefault("warnings", [])
             if isinstance(warnings, list):
@@ -2130,116 +2045,91 @@ def stream_phase_message(request_payload: dict[str, Any]) -> str:
     )
 
 
-def generate(
-    screenshot_paths: list[Path],
-    prompt_text: str,
-    settings: dict[str, Any],
-    is_followup: bool = False,
-) -> dict[str, Any]:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
-    )
-    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
-    started = time.perf_counter()
-    response = client.models.generate_content(
-        model=settings["model"],
-        contents=image_parts + [MODEL_CONTENT_TEXT],
-        config=config,
-    )
-    duration_ms = int(round((time.perf_counter() - started) * 1000))
-    raw_text = (response.text or "").strip()
-    return build_response_payload(
-        raw_text=raw_text,
-        usage=getattr(response, "usage_metadata", None),
-        duration_ms=duration_ms,
-        image_diagnostics=image_diagnostics,
-        is_followup=is_followup,
-    )
-
-
-def generate_streaming(
-    screenshot_paths: list[Path],
-    prompt_text: str,
-    settings: dict[str, Any],
-    is_followup: bool = False,
-) -> dict[str, Any]:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
-    )
-    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
-    started = time.perf_counter()
-    raw_text = ""
-    usage = None
-    last_partial = ""
-    last_partial_suggestions: list[str] = []
-    first_token_perf: float | None = None
-    for chunk in client.models.generate_content_stream(
-        model=settings["model"],
-        contents=image_parts + [MODEL_CONTENT_TEXT],
-        config=config,
-    ):
-        text = getattr(chunk, "text", None) or ""
-        if text:
-            if first_token_perf is None:
-                first_token_perf = time.perf_counter()
-            raw_text += text
-            partial = extract_partial_tldr(raw_text)
-            if partial and partial != last_partial:
-                last_partial = partial
-                emit_stream_event("partial_tldr", {"tldr": partial})
-            partial_suggestions = extract_partial_suggestions(raw_text)
-            if partial_suggestions and partial_suggestions != last_partial_suggestions:
-                last_partial_suggestions = list(partial_suggestions)
-                emit_stream_event(
-                    "partial_suggestions",
-                    {"suggestions": partial_suggestions},
-                )
-        chunk_usage = getattr(chunk, "usage_metadata", None)
-        if chunk_usage is not None:
-            usage = chunk_usage
-    finished_perf = time.perf_counter()
-    duration_ms = int(round((finished_perf - started) * 1000))
-    payload = build_response_payload(
-        raw_text=raw_text.strip(),
-        usage=usage,
-        duration_ms=duration_ms,
-        image_diagnostics=image_diagnostics,
-        is_followup=is_followup,
-    )
-    if first_token_perf is not None:
-        ttft_ms = int(round((first_token_perf - started) * 1000))
-        payload["time_to_first_token_ms"] = ttft_ms
-        payload["streaming_ms"] = max(0, duration_ms - ttft_ms)
-    return payload
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one Blink screenshot request.")
-    parser.add_argument("--screenshot", type=Path, required=True, action="append")
-    parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, required=True)
+    # Required for an actual run, but optional at the argparse layer so the
+    # persistent worker can launch with just `--serve` and receive these
+    # per-request over stdin. `_run_request` enforces their presence.
+    parser.add_argument("--screenshot", type=Path, action="append")
+    parser.add_argument("--runtime", type=Path)
+    parser.add_argument("--out-dir", type=Path)
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--prompt", type=Path)
     parser.add_argument("--host-profile", type=Path)
     parser.add_argument("--request-json", type=Path)
     parser.add_argument("--skip-gemini", action="store_true")
     parser.add_argument("--stream-events", action="store_true")
+    # Persistent worker mode: keep one process + one keep-alive connection
+    # alive across captures, reading {"seq", "argv"} request lines from stdin.
+    parser.add_argument("--serve", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     load_runtime_env()
+    if args.serve:
+        return _serve()
+    return _run_request(args)
+
+
+def _serve() -> int:
+    """Persistent worker. Reads one capture request per stdin line and runs it
+    on a reused keep-alive connection, so captures after the first skip both the
+    Python process spawn and the TLS handshake. Each request line is JSON:
+
+        {"seq": <int>, "argv": [<the same flags the one-shot CLI takes>]}
+
+    Every streamed event carries the matching `seq`, and a terminal
+    `worker_done` event marks the request boundary so the host can dispatch the
+    next capture. The worker outlives any single failed request: a bad request
+    line, bad argv, or a run/proxy error all degrade to an `error` +
+    `worker_done` pair, never a process exit. The host supervises liveness
+    (watchdog + respawn) on its side.
+    """
+    global _ACTIVE_SEQ
+    opener = _KeepAliveOpener()
+    emit_stream_event("worker_ready", {})
+    try:
+        for raw in sys.stdin:
+            line = raw.strip()
+            if not line:
+                continue
+            seq: Any = None
+            try:
+                msg = json.loads(line)
+                seq = msg.get("seq") if isinstance(msg, dict) else None
+                argv = msg.get("argv") if isinstance(msg, dict) else None
+            except json.JSONDecodeError:
+                argv = None
+            _ACTIVE_SEQ = seq
+            try:
+                if not isinstance(argv, list):
+                    raise ValueError("worker request missing 'argv' list")
+                req_args = parse_args([str(a) for a in argv])
+                if req_args.serve:
+                    raise ValueError("nested --serve is not allowed")
+                _run_request(req_args, opener=opener)
+            except SystemExit as exc:
+                # argparse aborts with SystemExit on bad flags; keep the worker.
+                emit_stream_event("error", {"message": f"worker: invalid argv ({exc.code})"})
+            except Exception as exc:  # noqa: BLE001 - worker must survive one bad request
+                # _run_request self-emits an 'error' event for run/proxy
+                # failures before re-raising; this also covers failures that
+                # happen before that point. A possible duplicate error event is
+                # harmless — the host reads through to `worker_done`.
+                emit_stream_event("error", {"message": f"worker: {exc}"})
+            finally:
+                emit_stream_event("worker_done", {})
+                _ACTIVE_SEQ = None
+    finally:
+        opener.close()
+    return 0
+
+
+def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
+    if args.runtime is None or args.out_dir is None or not args.screenshot:
+        raise ValueError("--runtime, --out-dir, and at least one --screenshot are required.")
     settings = load_json(args.settings, DEFAULT_SETTINGS)
     runtime = load_json(
         args.runtime,
@@ -2273,18 +2163,13 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(catalog, list) and catalog:
             forwarded_prefs["attachments_catalog"] = catalog
         request_payload["preferences"] = forwarded_prefs
-    generation_path = (
-        "skip_gemini"
-        if args.skip_gemini
-        else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
-    )
+    generation_path = "skip_gemini" if args.skip_gemini else "proxy"
     reroll_context = request_payload.get("reroll_context") if isinstance(request_payload.get("reroll_context"), dict) else None
-    is_followup = reroll_context is not None
     if style:
         request_payload["style"] = style
     model_prompt_text = (
         prompt_with_context(prompt_text, stateful_context, reroll_context, style)
-        if generation_path in {"proxy", "local_gemini"}
+        if generation_path == "proxy"
         else prompt_text
     )
 
@@ -2297,11 +2182,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("At least one --screenshot is required.")
     if len(screenshot_paths) > MAX_SCREENSHOT_FRAMES:
         raise ValueError(f"At most {MAX_SCREENSHOT_FRAMES} screenshots are supported.")
-    screenshot_out = run_dir / "screenshot.png"
     screenshot_outputs: list[Path] = []
     frame_logs: list[dict[str, Any]] = []
     for index, screenshot_path in enumerate(screenshot_paths):
-        frame_out = run_dir / f"screenshot_{index}.png"
+        # Preserve the source extension (Swift hands us a .jpg now) so the
+        # uploaded copy carries the right Content-Type and the run artifact
+        # isn't JPEG bytes mislabeled as .png.
+        suffix = screenshot_path.suffix or ".png"
+        frame_out = run_dir / f"screenshot_{index}{suffix}"
         shutil.copy2(screenshot_path, frame_out)
         screenshot_outputs.append(frame_out)
         frame_logs.append(
@@ -2311,6 +2199,7 @@ def main(argv: list[str] | None = None) -> int:
                 "bytes": frame_out.stat().st_size,
             }
         )
+    screenshot_out = run_dir / f"screenshot{screenshot_outputs[0].suffix}"
     shutil.copy2(screenshot_outputs[0], screenshot_out)
     save_json(run_dir / "frames.json", frame_logs)
     save_json(run_dir / "request.json", request_payload)
@@ -2349,7 +2238,7 @@ def main(argv: list[str] | None = None) -> int:
             "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
         },
         "frame_count": len(screenshot_outputs),
-        "screenshot": {"path": "screenshot.png", "bytes": screenshot_out.stat().st_size},
+        "screenshot": {"path": screenshot_out.name, "bytes": screenshot_out.stat().st_size},
         "screenshots": [
             {"path": item.name, "bytes": item.stat().st_size}
             for item in screenshot_outputs
@@ -2396,24 +2285,21 @@ def main(argv: list[str] | None = None) -> int:
             if args.stream_events:
                 emit_stream_event("partial_tldr", {"tldr": response["tldr"]})
         else:
-            if proxy_settings is not None and request_payload.get("request_id"):
-                response = generate_via_proxy(
-                    request_payload=request_payload_for_proxy(request_payload),
-                    settings=settings,
-                    proxy_settings=proxy_settings,
-                    image_paths=screenshot_outputs,
-                    stream_events=args.stream_events,
+            if proxy_settings is None:
+                raise RuntimeError(
+                    "No proxy configured. Set BLINK_PROXY_URL and a device/proxy token "
+                    "(BLINK_PROXY_TOKEN or ~/.blink/device_token)."
                 )
-            else:
-                if not os.environ.get("GEMINI_API_KEY"):
-                    raise RuntimeError("Set GEMINI_API_KEY in ~/.blink/.env or the launch environment.")
-                if args.stream_events and generation_path == "local_gemini":
-                    response = generate_streaming(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
-                else:
-                    response = generate(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
-                response["request_id"] = request_payload.get("request_id")
-                response["warnings"] = []
-                response["model"] = settings["model"]
+            if not request_payload.get("request_id"):
+                raise RuntimeError("Proxy request requires a request_id in the request payload.")
+            response = generate_via_proxy(
+                request_payload=request_payload_for_proxy(request_payload),
+                settings=settings,
+                proxy_settings=proxy_settings,
+                image_paths=screenshot_outputs,
+                stream_events=args.stream_events,
+                opener=opener,
+            )
         if isinstance(response.get("frames"), list):
             diagnostics_by_index = {
                 item.get("index"): item

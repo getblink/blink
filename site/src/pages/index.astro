@@ -1,300 +1,365 @@
 ---
 import Base from "../layouts/Base.astro";
+import TopBar from "../components/TopBar.astro";
 import MetaFooter from "../components/MetaFooter.astro";
-import BrandMark from "../components/BrandMark.astro";
+import BetaSignup from "../components/BetaSignup.astro";
+import ProductDemo from "../components/ProductDemo.astro";
 
 const title = "Blink — reads your screen, writes the rest";
 const description =
-  "Blink is a local-first Mac assistant that reads your screen and drafts the reply for you: TL;DRs, follow-ups, and one-Cmd-V handoffs.";
-const betaSignupUrl =
-  import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
-  "https://blink-production-7b5a.up.railway.app/v1/beta-signup";
-// Canonical share-link origin — sourced from astro.config.mjs `site` so
-// the dev server doesn't bake localhost into copied/tweeted referral
-// links. Falls back to location.origin client-side if unset.
-const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
-const parseUrls = (raw: string) =>
-  raw
-    .split(",")
-    .map((url: string) => url.trim())
-    .filter((url: string) => url.length > 0);
-const desktopDemoUrls = parseUrls(
-  import.meta.env.PUBLIC_DEMO_VIDEO_URL_DESKTOP || "",
-);
-// PUBLIC_DEMO_VIDEO_URL_MOBILE is reserved for a future tighter mobile cut
-// (still documented in .env.example). Until then both viewports render the
-// desktop URLs — see the .demo-cell--mobile block below.
+  "Blink is a Mac assistant that reads your screen and writes the reply for you: summon it on any thread, it drafts in your voice and inserts the reply straight into the box. Invite-only macOS beta.";
+
+const reasons = [
+  {
+    h: "it sees what you see.",
+    t: "the context is already on your screen, so you stop re-explaining yourself to a chat box.",
+  },
+  {
+    h: "it sounds like you, not like an ai.",
+    t: "drafts in your voice instead of generic filler.",
+  },
+  {
+    h: "it's always there, never in the way.",
+    t: "blink follows you window to window, ready the moment you need it and quiet when you don't.",
+  },
+];
+
+const privacy = [
+  {
+    h: "it only looks when you summon it.",
+    t: "the rest of the time blink is idle. no background watching, no always-on recording.",
+  },
+  {
+    h: "only what you point it at.",
+    t: "when you ask for a draft, blink reads the conversation in front of you, just then. not your whole screen, not the rest of your day.",
+  },
+  {
+    h: "you stay in control, and you can check.",
+    t: "blink writes a draft and stops, you decide what to send. and because it's source-available, you can read exactly what it captures, or run the whole thing yourself.",
+  },
+];
+
+const faqs = [
+  {
+    q: "who is blink for?",
+    a: "founders living in claude code, their inbox, and x at the same time. creators and influencers buried in dms and replies. if you want to stop context switching, blink's for you.",
+  },
+  {
+    q: "does blink send messages for me?",
+    a: "no. it writes the draft into the box. you read it, edit it, and hit send yourself.",
+  },
+  {
+    q: "what apps does it work in?",
+    a: "anywhere you type: imessage, slack, gmail, discord, docs, and most native and web apps.",
+  },
+  {
+    q: "can blink see the whole conversation, or just what's on screen?",
+    a: "the whole conversation. it doesn't just grab the last few messages you can see, it reads the full thread, so the draft actually has the context.",
+  },
+  {
+    q: "what happens to what blink reads?",
+    a: "to write a draft, the text on your screen goes to an ai model. some of it is kept to help us improve blink, and you can turn that off anytime. if you'd rather keep everything on your own machine, blink is source-available to self-host.",
+  },
+  {
+    q: "what will it cost?",
+    a: "blink will be a paid product. the beta is hands-on and free while we get it right, and we'll talk pricing with you directly before it ever costs you anything.",
+  },
+  {
+    q: "what do i need to run it?",
+    a: "a mac, a couple of permissions (accessibility and screen recording), and a hotkey to summon blink. takes about a minute to set up.",
+  },
+  {
+    q: "windows or iphone?",
+    a: "not yet. blink is macOS only for now. join the waitlist and we'll let you know if that changes.",
+  },
+  {
+    q: "why is it invite-only?",
+    a: "because we onboard every person ourselves: set you up, learn how you work, and tune blink to fit. that only works a few people at a time, so we invite in small batches. leave your email and we'll reach out when there's room.",
+  },
+];
 ---
 
-<Base title={title} description={description} animateLandingOnce>
-  <main class="shell shell--fixed shell--animate-in">
-    <header class="row meta">
-      <div class="cell">
-        <BrandMark />
-        <span>blink</span>
-      </div>
-      <div class="cell muted">landing / 01</div>
-      <div class="cell">
-        <span class="chip"
-          ><span class="chip__dot" aria-hidden="true"></span>macOS beta</span
-        >
-      </div>
-    </header>
+<Base title={title} description={description}>
+  <!-- Set before first paint so reveal elements start hidden (no flash).
+       JS-off visitors never get the class, so all content stays visible. -->
+  <script is:inline>document.documentElement.classList.add("has-js");</script>
 
-    <section class="row hero" aria-labelledby="hero-title">
-      <div class="cell wordmark-cell">
-        <h1 class="wordmark" id="hero-title">
+  <TopBar />
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero">
+      <canvas class="hero__build" aria-hidden="true"></canvas>
+      <div class="container hero__inner">
+        <h1 class="wordmark reveal">
           <span class="wordmark__text">blink</span><span
             class="cursor"
             aria-hidden="true"></span>
         </h1>
-        <p class="tagline">
-          reads your screen,<br />
-          writes the rest.
-        </p>
-      </div>
-      <div class="cell cta-cell">
-        <form
-          class="signup"
-          data-state="idle"
-          data-mode="collapsed"
-          data-endpoint={betaSignupUrl}
-          data-share-origin={shareOrigin}
-        >
-          <div class="signup__field" id="signup-field">
-            <input
-              id="email"
-              name="email"
-              type="email"
-              autocomplete="email"
-              placeholder="email"
-              aria-label="email"
-              maxlength="320"
-              required
-            />
-            <input
-              class="hp"
-              name="hp"
-              type="text"
-              tabindex="-1"
-              autocomplete="off"
-              aria-hidden="true"
-            />
-            <button class="signup__submit" type="submit">
-              <span>join the beta</span>
-              <span class="signup__arrow" aria-hidden="true">→</span>
-            </button>
-          </div>
-          <div class="cta-row">
-            <button
-              class="signup__open"
-              type="button"
-              aria-expanded="false"
-              aria-controls="signup-field"
-            >
-              <span>join the beta</span>
-              <span class="signup__arrow" aria-hidden="true">→</span>
-            </button>
-            <a class="signup__secondary" href="/story">
-              <span class="signup__caret" aria-hidden="true">›</span>
-              <span>read the story</span>
-            </a>
-          </div>
-          <p class="status status--submitting">sending…</p>
-          <p class="status status--success">you're on the list.</p>
-          <p class="status status--already">you're already on the list.</p>
-          <p class="status status--invalid">that doesn't look like an email.</p>
-          <p class="status status--network">
-            couldn't reach the server. try again in a moment.
-          </p>
-          <p class="status status--rate">too many tries. give it a minute.</p>
-          <div class="share" data-met="false" hidden>
-            <p class="share__goal">
-              <span class="share__check" aria-hidden="true">
-                <svg
-                  class="share__check-mark"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M3.5 8.5 L6.5 11.5 L12.5 4.5"
-                    stroke="currentColor"
-                    stroke-width="2.4"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"></path>
-                </svg>
-              </span>
-              <span class="share__goal-text"
-                >you're on the list. share to skip the line.</span
-              >
-              <span class="share__goal-text--met"
-                >shared with 1 friend. you're in line for the next batch.</span
-              >
-            </p>
-            <div class="share__row">
-              <input
-                class="share__url"
-                type="text"
-                readonly
-                aria-label="your referral link"
-              />
-              <button class="share__copy" type="button">
-                <span class="signup__caret" aria-hidden="true">›</span>
-                <span class="share__copy-label">copy link</span>
-              </button>
-            </div>
-            <p class="share__email" hidden>
-              signed up as <span class="share__email-value"></span>
-            </p>
-          </div>
-        </form>
-      </div>
-      <div
-        class="cell demo-cell demo-cell--desktop"
-        data-video-urls={desktopDemoUrls.join("|")}
-      >
-        {
-          desktopDemoUrls.length > 0 ? (
-            <>
-              <video
-                class="demo__video is-active"
-                data-slot="0"
-                autoplay
-                muted
-                playsinline
-                preload="auto"
-                disablepictureinpicture
-                disableremoteplayback
-                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
-                tabindex="-1"
-                src={desktopDemoUrls[0]}
-                aria-label="Blink demo"
-              />
-              <video
-                class="demo__video"
-                data-slot="1"
-                muted
-                playsinline
-                preload="auto"
-                disablepictureinpicture
-                disableremoteplayback
-                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
-                tabindex="-1"
-                src={desktopDemoUrls[1 % desktopDemoUrls.length]}
-              />
-            </>
-          ) : (
-            <div class="demo__placeholder" aria-label="Demo video coming soon">
-              <span>demo</span>
-              <span class="muted">coming soon</span>
-            </div>
-          )
-        }
-      </div>
-      <div
-        class="cell demo-cell demo-cell--mobile"
-        data-video-urls={desktopDemoUrls.join("|")}
-      >
-        {
-          desktopDemoUrls.length > 0 ? (
-            <>
-              <video
-                class="demo__video is-active"
-                data-slot="0"
-                autoplay
-                muted
-                playsinline
-                preload="none"
-                disablepictureinpicture
-                disableremoteplayback
-                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
-                tabindex="-1"
-                src={desktopDemoUrls[0]}
-                aria-label="Blink demo"
-              />
-              <video
-                class="demo__video"
-                data-slot="1"
-                muted
-                playsinline
-                preload="none"
-                disablepictureinpicture
-                disableremoteplayback
-                controlslist="nodownload nofullscreen noremoteplayback noplaybackrate"
-                tabindex="-1"
-                src={desktopDemoUrls[1 % desktopDemoUrls.length]}
-              />
-            </>
-          ) : (
-            <div class="demo__placeholder" aria-label="Demo video coming soon">
-              <span>demo</span>
-              <span class="muted">coming soon</span>
-            </div>
-          )
-        }
+        <p class="tagline reveal">reads your screen,<br />writes the rest.</p>
+        <div class="cta-row reveal">
+          <a class="btn btn--primary" href="#join">
+            <span>join the beta</span>
+            <span class="btn__arrow" aria-hidden="true">→</span>
+          </a>
+          <a class="btn btn--ghost hero__story" href="/story">
+            <span>read the story</span>
+          </a>
+        </div>
       </div>
     </section>
 
-    <MetaFooter />
+    <!-- HOW IT WORKS -->
+    <section class="section how" id="how" aria-labelledby="how-lead">
+      <div class="container how__inner">
+        <div class="how__head">
+          <p class="section__label reveal">how it works</p>
+          <h2 class="section__lead reveal" id="how-lead">
+            it reads, it drafts, it's in.
+          </h2>
+        </div>
+        <div class="how__demo reveal">
+          <ProductDemo />
+        </div>
+      </div>
+    </section>
+
+    <!-- WHY -->
+    <section class="section" id="why" aria-labelledby="why-lead">
+      <div class="container section__inner">
+        <p class="section__label reveal">why blink</p>
+        <div class="section__content">
+          <h2 class="sr-only">why blink</h2>
+          <blockquote class="quote reveal" id="why-lead">
+            <span class="quote__mark" aria-hidden="true">“</span>it feels like
+            blink is reading my mind.
+          </blockquote>
+          <div class="reasons">
+            {
+              reasons.map((r) => (
+                <div class="reason reveal">
+                  <h3 class="reason__h">{r.h}</h3>
+                  <p class="reason__t">{r.t}</p>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRIVACY -->
+    <section class="section" id="privacy" aria-labelledby="privacy-lead">
+      <div class="container section__inner">
+        <p class="section__label reveal">privacy</p>
+        <div class="section__content">
+          <h2 class="section__lead reveal" id="privacy-lead">
+            reading your screen, without the creep.
+          </h2>
+          <p class="section__sub reveal">
+            blink reads your screen so you never have to re-explain the
+            conversation. here's what that does and doesn't mean.
+          </p>
+          <ul class="points">
+            {
+              privacy.map((p) => (
+                <li class="point reveal">
+                  <span class="point__tick" aria-hidden="true" />
+                  <div>
+                    <h3 class="point__h">{p.h}</h3>
+                    <p class="point__t">{p.t}</p>
+                  </div>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq" aria-labelledby="faq-lead">
+      <div class="container section__inner">
+        <p class="section__label reveal">faq</p>
+        <div class="section__content">
+          <h2 class="section__lead reveal" id="faq-lead">
+            questions people actually ask.
+          </h2>
+          <div class="faq">
+            {
+              faqs.map((f, i) => (
+                <details class="qa reveal" name="faq">
+                  <summary class="qa__q">
+                    <span class="qa__n">{String(i + 1).padStart(2, "0")}</span>
+                    <span class="qa__text">{f.q}</span>
+                    <span class="qa__mark" aria-hidden="true" />
+                  </summary>
+                  <p class="qa__a">{f.a}</p>
+                </details>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- JOIN -->
+    <section class="section join" id="join" aria-labelledby="join-lead">
+      <div class="join__card">
+        <div class="container">
+        <div class="join__inner">
+        <h2 class="join__title reveal" id="join-lead">
+          blink keeps the threads.<br />you keep your focus.
+        </h2>
+
+        <BetaSignup />
+
+        <p class="join__note reveal">
+          a macOS beta. on an iphone or a windows pc? blink is mac-only for now.
+          drop your email and we'll ping you when you can use it.
+        </p>
+        </div>
+        </div>
+      </div>
+    </section>
   </main>
 
+  <MetaFooter />
+
   <style>
-    /* Hero row — landing-only. CSS Grid so the demo can sit in different
-       positions per breakpoint without duplicating DOM nodes. */
+    /* ============================================================= *
+     * HERO — text only, big and confident
+     * ============================================================= */
     .hero {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      grid-template-rows: 1fr auto;
-      min-height: 0;
+      position: relative;
+      /* An inset rounded card: the painting is framed, floating on the cream
+         page. The nav floats over its top (the card rises up under the
+         transparent topbar via the negative top margin) so the whole top of
+         the page reads as one surface — no full-width strip above a card. */
+      --hero-inset: clamp(8px, 1.3vw, 16px);
+      margin: var(--hero-inset);
+      margin-top: calc(var(--hero-inset) - var(--topbar-h));
+      border-radius: clamp(20px, 2.4vw, 34px);
+      min-height: calc(100svh - var(--hero-inset) * 2);
+      display: flex;
+      align-items: center;
+      padding-block: clamp(48px, 8vh, 104px);
       overflow: hidden;
+      /* shadow as a var so the has-js gating below can hide/restore it without
+         duplicating the value. no-JS gets it straight away. */
+      --hero-shadow:
+        0 1px 0 0 color-mix(in oklch, var(--fg) 4%, transparent),
+        0 30px 60px -34px color-mix(in oklch, var(--ink) 45%, transparent);
+      box-shadow: var(--hero-shadow);
+      transition: box-shadow 700ms ease;
     }
-
-    .wordmark-cell {
-      grid-column: 1;
-      grid-row: 1;
-      min-width: 0;
+    /* The painting lives only here. A left-heavy cream wash keeps the
+       (left-aligned) text legible while the art stays vivid toward the
+       right; the card's rounded corners clip it (no bottom fade — the frame
+       is the edge now). */
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background-image: /* soft top scrim — lifts nav legibility over the art */
+        linear-gradient(
+          to bottom,
+          color-mix(in oklch, var(--paper) 52%, transparent) 0,
+          transparent var(--topbar-h)
+        ),
+        /* left-heavy wash — keeps the (left-aligned) hero text legible. lighter
+           than before so the painting reads more vivid toward the right. */
+          linear-gradient(
+            100deg,
+            color-mix(in oklch, var(--paper) 64%, transparent) 0%,
+            color-mix(in oklch, var(--paper) 38%, transparent) 48%,
+            color-mix(in oklch, var(--paper) 16%, transparent) 100%
+          ),
+        url("/pointilism-3-hd.webp");
+      background-size: cover, cover, cover;
+      background-position: center top, center top, center top;
+      /* push the pointillism's colour — more saturated and a touch punchier */
+      filter: saturate(1.32) contrast(1.05);
+    }
+    /* With JS, the crisp painting starts hidden; the canvas covers it in cream
+       and dissolves that cover cell by cell to reveal it. The painting is
+       brought to full opacity instantly (.is-painted, set at animation start)
+       beneath the cover — the canvas, not a CSS fade, drives the reveal.
+       No-JS / reduced-motion keep the painting visible from the start. */
+    :global(html.has-js) .hero::before {
+      opacity: 0;
+    }
+    /* With JS, hold the card flat (no shadow) while it paints in; the shadow
+       fades in when the reveal completes (.is-revealed). No-JS keeps it. */
+    :global(html.has-js) .hero {
+      box-shadow: 0 1px 0 0 transparent, 0 30px 60px -34px transparent;
+    }
+    :global(html.has-js) .hero.is-painted.is-revealed {
+      box-shadow: var(--hero-shadow);
+    }
+    :global(html.has-js) .hero.is-painted::before {
+      opacity: 1;
+    }
+    /* canvas that paints the dots in, on top of the (hidden) painting,
+       below the text */
+    .hero__build {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      :global(html.has-js) .hero::before {
+        opacity: 1;
+        transition: none;
+      }
+    }
+    .hero__inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
       flex-direction: column;
       align-items: flex-start;
-      justify-content: flex-start;
-      padding: clamp(28px, 5vh, 56px) clamp(28px, 4vw, 56px) 0;
-      gap: clamp(20px, 3vh, 32px);
+      gap: clamp(20px, 2.6vh, 30px);
     }
-
-    .cta-cell {
-      grid-column: 1;
-      grid-row: 2;
-      min-width: 0;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 8px;
-      padding: clamp(20px, 3vh, 32px) clamp(28px, 4vw, 56px)
-        clamp(20px, 3vh, 32px);
-    }
-
     .wordmark {
-      font-size: clamp(4.5rem, 12vw, 11rem);
-      font-weight: 700;
+      font-size: clamp(5rem, 16vw, 15rem);
+      font-weight: 760;
       line-height: 0.82;
-      letter-spacing: -0.04em;
+      letter-spacing: -0.045em;
+      color: var(--fg);
       display: inline-flex;
       align-items: baseline;
     }
-
-    .wordmark__text {
-      color: var(--fg);
-    }
-
     .cursor {
       display: inline-block;
-      width: 0.085em;
-      height: 0.7em;
-      background: var(--accent);
-      margin-left: 0.05em;
-      animation: blink 1.1s steps(2, jump-none) infinite;
+      width: 0.07em;
+      height: 0.66em;
+      background: var(--sky);
+      margin-left: 0.06em;
+      border-radius: 1px;
+      /* hidden until the painting has finished fading in (.is-revealed) — then
+         it fades up and starts blinking, so it reads as the cursor "arriving"
+         once the wordmark has fully landed. */
+      opacity: 0;
     }
-
-    @keyframes blink {
+    .hero.is-revealed .cursor {
+      animation:
+        caret-arrive 360ms ease forwards,
+        caret-blink 1.1s steps(2, jump-none) 360ms infinite;
+    }
+    @keyframes caret-arrive {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+    @keyframes caret-blink {
       0%,
       50% {
         opacity: 1;
@@ -304,501 +369,400 @@ const desktopDemoUrls = parseUrls(
         opacity: 0;
       }
     }
-
     .tagline {
-      font-size: clamp(1rem, 1.2vw, 1.25rem);
-      font-weight: 500;
-      line-height: 1.4;
+      font-size: clamp(1.5rem, 2.4vw, 2.2rem);
+      font-weight: 560;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
       color: var(--fg);
-      max-width: 38ch;
     }
-
-    .demo-cell {
-      position: relative;
-      padding: 0;
-      gap: 0;
-      background: var(--surface);
-      overflow: hidden;
-      border-right: 0;
-    }
-
-    .demo-cell--desktop {
-      grid-column: 2;
-      grid-row: 1 / 3;
-      aspect-ratio: 3 / 4;
-      height: 100%;
-      max-width: 50vw;
-      display: block;
-    }
-
-    .demo-cell--mobile {
-      display: none;
-    }
-
-    .demo__video {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      opacity: 0;
-      transition: opacity 240ms ease;
-      pointer-events: none;
-    }
-
-    .demo-cell--mobile .demo__video {
-      object-fit: cover;
-    }
-
-    .demo__video.is-active {
-      opacity: 1;
-    }
-
-    .demo__placeholder {
-      width: 100%;
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 0.78rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-
-    /* Signup form — lives inside cta-cell. */
-    .signup {
-      width: 100%;
-      display: grid;
-      gap: 10px;
-    }
-
-    /* In success / already-signed-up states: float share to the top and
-       hide the (now-meaningless) join button so only "read the story"
-       remains in the cta-row. Driven off data-state for browser-wide
-       reliability — :has() variants have been flaky in practice. */
-    .signup[data-state="success"] .share,
-    .signup[data-state="already"] .share {
-      order: -1;
-    }
-
-    .signup[data-state="success"] .signup__open,
-    .signup[data-state="already"] .signup__open,
-    .signup[data-state="success"] .signup__field,
-    .signup[data-state="already"] .signup__field {
-      display: none;
-    }
-
-    .signup[data-state="success"] .cta-row,
-    .signup[data-state="already"] .cta-row {
-      gap: 0;
-    }
-
-    .signup__open,
-    .signup__submit {
-      height: 48px;
-      padding: 0 22px;
-      font: inherit;
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0;
-      color: var(--bg);
-      background: var(--fg);
-      border: 0;
-      border-radius: var(--radius-md);
-      cursor: pointer;
-      white-space: nowrap;
-      display: inline-flex;
-      align-items: center;
-      gap: 14px;
-      transition: opacity 120ms ease, transform 120ms ease;
-      box-shadow: 0 8px 20px -10px rgba(29, 28, 33, 0.45);
-    }
-
     .cta-row {
       display: flex;
       align-items: center;
-      gap: 16px;
+      flex-wrap: wrap;
+      gap: 22px;
+      margin-top: 8px;
+    }
+    /* darker than the global ghost button so it stays legible on the
+       painting */
+    .hero__story.btn--ghost {
+      gap: 8px;
+      color: var(--fg-2);
+      font-weight: 600;
+    }
+    .hero__story.btn--ghost:hover {
+      color: var(--fg);
     }
 
-    .signup__open {
-      flex-shrink: 0;
+    /* ============================================================= *
+     * SECTION — minimal left label rail + content that leads
+     * ============================================================= */
+    .section {
+      padding-block: clamp(72px, 13vh, 168px);
     }
-
-    .signup__open:hover,
-    .signup__submit:hover {
-      opacity: 0.85;
-    }
-
-    .signup__open:focus-visible,
-    .signup__submit:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-
-    .signup__submit:disabled {
-      cursor: not-allowed;
-      opacity: 0.5;
-    }
-
-    .signup__arrow {
-      color: var(--accent);
-      font-weight: 500;
-      font-size: 1.05em;
-      line-height: 1;
-    }
-
-    /* Leading "›" used on text-action items (read the story, copy link).
-       Mirrors the wordmark cursor's accent color — same visual prompt. */
-    .signup__caret {
-      color: var(--accent);
-      font-weight: 700;
-      font-size: 1.2em;
-      line-height: 1;
-      display: inline-block;
-      transform: translateY(-0.04em);
-    }
-
-    .signup__field {
+    .section__inner {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 14px;
+      grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+      gap: clamp(32px, 7vw, 112px);
+      align-items: start;
+    }
+    /* A sticky section anchor — the section name as a real, present header
+       that tracks beside the content as you read it. */
+    .section__label {
+      position: sticky;
+      top: calc(var(--topbar-h) + 38px);
+      font-size: clamp(1.2rem, 1.5vw, 1.5rem);
+      font-weight: 680;
+      letter-spacing: -0.02em;
+      line-height: 1.12;
+      color: var(--fg);
+      max-width: 8ch;
+    }
+    .section__content {
+      max-width: 760px;
+    }
+    .section__content > * + * {
+      margin-top: clamp(30px, 4.5vh, 52px);
+    }
+    /* a leading visually-hidden heading shouldn't push the first visible
+       element down */
+    .section__content > .sr-only:first-child + * {
+      margin-top: 0;
+    }
+    /* the value-prop heading, now on the right above its content */
+    .section__lead {
+      font-size: clamp(1.7rem, 3vw, 2.6rem);
+      font-weight: 640;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      color: var(--fg);
+      max-width: 20ch;
+    }
+    .section__sub {
+      font-size: 1rem;
+      line-height: 1.55;
+      color: var(--fg-muted);
+      max-width: 46ch;
+    }
+    .section__lead + .section__sub {
+      margin-top: clamp(14px, 2vh, 20px);
+    }
+
+    /* how it works — a big full-width product demo, steps in a row below.
+       The header is left-aligned to the demo edge (label as an eyebrow above
+       the lead) so everything in the section shares one left margin. */
+    .how__head {
+      margin-bottom: clamp(40px, 6vh, 76px);
+    }
+    .how__head .section__label {
+      position: static;
+      max-width: none;
+      margin-bottom: clamp(12px, 2vh, 18px);
+    }
+    /* the live product-demo animation spans the section; it owns its own frame
+       and step track (ProductDemo.astro). */
+    .how__demo {
+      width: 100%;
+    }
+
+    @media (max-width: 860px) {
+      .how__head {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+    }
+
+    /* why — quote is the lead, then reasons */
+    .quote {
+      position: relative;
+      font-size: clamp(1.7rem, 3.2vw, 2.7rem);
+      font-weight: 500;
+      font-style: italic;
+      line-height: 1.16;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+      max-width: 18ch;
+    }
+    /* hang the mark into the margin so the quote text aligns flush-left with
+       the reasons below it */
+    .quote__mark {
+      position: absolute;
+      right: 100%;
+      top: 0.02em;
+      margin-right: 0.1em;
+      color: var(--clay);
+      font-style: normal;
+    }
+    .reasons {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: clamp(20px, 2.4vw, 40px);
+    }
+    @media (max-width: 720px) {
+      .reasons {
+        grid-template-columns: 1fr;
+        gap: clamp(24px, 4vh, 34px);
+      }
+    }
+    .reason__h {
+      font-size: 1.1rem;
+      font-weight: 620;
+      letter-spacing: -0.015em;
+      line-height: 1.25;
+      color: var(--fg);
+      margin-bottom: 9px;
+    }
+    .reason__t {
+      font-size: 1rem;
+      line-height: 1.55;
+      color: var(--fg-2);
+    }
+
+    /* privacy — checkmark points */
+    .points {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: clamp(24px, 3.4vh, 38px);
+    }
+    .point {
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .point__tick {
+      width: 20px;
+      height: 20px;
+      margin-top: 0.12em;
+      position: relative;
+      flex: 0 0 auto;
+    }
+    .point__tick::after {
+      content: "";
+      position: absolute;
+      left: 5px;
+      top: 1px;
+      width: 7px;
+      height: 13px;
+      border: solid var(--sky-deep);
+      border-width: 0 2.5px 2.5px 0;
+      transform: rotate(43deg);
+    }
+    .point__h {
+      font-size: 1.1rem;
+      font-weight: 620;
+      letter-spacing: -0.015em;
+      color: var(--fg);
+      margin-bottom: 7px;
+    }
+    .point__t {
+      font-size: 1rem;
+      line-height: 1.55;
+      color: var(--fg-2);
+      max-width: 58ch;
+    }
+
+    /* faq accordion */
+    .faq {
+      display: flex;
+      flex-direction: column;
+    }
+    .qa {
+      border-top: 1px solid var(--line-faint);
+    }
+    .qa:last-child {
+      border-bottom: 1px solid var(--line-faint);
+    }
+    .qa__q {
+      list-style: none;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: 38px 1fr 20px;
       align-items: center;
-      animation: signup-field-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      gap: 14px;
+      padding: clamp(18px, 2.6vh, 24px) 0;
+      font-size: clamp(1.02rem, 1.4vw, 1.2rem);
+      font-weight: 560;
+      letter-spacing: -0.015em;
+      color: var(--fg);
+      transition: color 140ms ease;
     }
-
-    .signup[data-mode="collapsed"] .signup__field {
+    .qa__q::-webkit-details-marker {
       display: none;
     }
-
-    .signup[data-mode="expanded"] .signup__open {
-      display: none;
+    .qa__q:hover {
+      color: var(--sky-deep);
     }
-
-    /* When expanded and the button is hidden, collapse the cta-row gap */
-    .signup[data-mode="expanded"] .cta-row {
-      gap: 0;
+    .qa__n {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: var(--sky-deep);
+      font-variant-numeric: tabular-nums;
     }
-
-    @keyframes signup-field-in {
+    .qa__mark {
+      position: relative;
+      width: 13px;
+      height: 13px;
+      justify-self: end;
+    }
+    .qa__mark::before,
+    .qa__mark::after {
+      content: "";
+      position: absolute;
+      background: var(--fg-muted);
+      transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 160ms ease;
+    }
+    .qa__mark::before {
+      left: 0;
+      top: 6px;
+      width: 13px;
+      height: 1.5px;
+    }
+    .qa__mark::after {
+      left: 6px;
+      top: 0;
+      width: 1.5px;
+      height: 13px;
+    }
+    .qa[open] .qa__mark::after {
+      transform: scaleY(0);
+      opacity: 0;
+    }
+    .qa__a {
+      grid-column: 1 / -1;
+      padding: 0 0 clamp(18px, 2.6vh, 24px) 52px;
+      font-size: 1rem;
+      line-height: 1.6;
+      color: var(--fg-2);
+      max-width: 66ch;
+    }
+    .qa[open] .qa__a {
+      animation: qa-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    @keyframes qa-in {
       from {
         opacity: 0;
-        transform: translateY(3px);
-      }
-      to {
-        opacity: 1;
-        transform: none;
+        transform: translateY(-4px);
       }
     }
 
-    input {
-      height: 48px;
-      font: inherit;
-      font-size: 16px;
-    }
-
-    input[type="email"] {
-      width: 100%;
-      min-width: 0;
-      border: 0;
-      border-bottom: 1px solid var(--line);
-      border-radius: 0;
+    /* ============================================================= *
+     * JOIN — the closer, an inset card
+     * ============================================================= */
+    /* Same rounded-card language as the hero and the demo, just inverted to a
+       deep-ink ground for a focused conversion moment — an inset card, not a
+       full-bleed banner, so it sits consistently with everything above it. */
+    .section.join {
       background: transparent;
-      color: var(--fg);
-      padding: 0 4px;
-      outline: none;
-      transition: border-color 160ms ease;
+      padding-block: clamp(36px, 6vh, 84px);
     }
-
-    input[type="email"]:focus {
-      border-bottom-color: var(--accent);
+    .join__card {
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      margin-inline: clamp(8px, 1.3vw, 18px);
+      border-radius: clamp(20px, 2.4vw, 34px);
+      background: var(--ink);
+      color: color-mix(in oklch, var(--paper) 72%, transparent);
+      padding-block: clamp(84px, 16vh, 184px);
+      box-shadow:
+        0 1px 0 0 color-mix(in oklch, var(--fg) 4%, transparent),
+        0 34px 64px -36px color-mix(in oklch, var(--ink) 60%, transparent);
     }
-
-    input[type="email"]::placeholder {
-      color: var(--fg-muted);
-    }
-
-    .hp {
+    /* the pointillism, integrated as a saturated dark ground: a deep-ink veil
+       (heaviest at the top-left, behind the title) lets the painting's blues
+       glow through toward the open lower-right, instead of a flat ink fill. */
+    .join__card::before {
+      content: "";
       position: absolute;
-      left: -10000px;
-      width: 1px;
-      height: 1px;
+      inset: 0;
+      z-index: 0;
+      background-image: linear-gradient(
+          120deg,
+          color-mix(in oklch, var(--ink) 95%, transparent) 0%,
+          color-mix(in oklch, var(--ink) 83%, transparent) 46%,
+          color-mix(in oklch, var(--ink) 58%, transparent) 100%
+        ),
+        url("/pointilism-3-hd.webp");
+      background-size: cover, cover;
+      /* drop the painting's crop down so the child in the lower-left hills sits
+         in view, rather than the centred tree/hills band */
+      background-position: center, center 97%;
+      filter: saturate(1.3);
+    }
+    .join__card > .container {
+      position: relative;
+      z-index: 1;
+    }
+    .join__inner {
+      max-width: 820px;
+    }
+    .join__title {
+      font-size: clamp(2.2rem, 5vw, 3.8rem);
+      font-weight: 680;
+      line-height: 1;
+      letter-spacing: -0.035em;
+      color: var(--paper);
+      margin-bottom: clamp(38px, 5.5vh, 56px);
+    }
+    .join__note {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: color-mix(in oklch, var(--paper) 60%, transparent);
+      max-width: 54ch;
+      margin-top: 18px;
+    }
+    /* a clear break between the signup pill and the supporting notes (the
+       first note is the first <p> in .join__inner). second note stays at 18px. */
+    .join__note:first-of-type {
+      margin-top: clamp(34px, 5vh, 56px);
+    }
+    /* signup form markup, behavior, and styling live in BetaSignup.astro */
+
+    /* ============================================================= *
+     * Reveal-on-scroll (progressive enhancement; no-JS shows all)
+     * ============================================================= */
+    :global(html.has-js) .reveal {
       opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 720ms cubic-bezier(0.16, 1, 0.3, 1),
+        transform 720ms cubic-bezier(0.16, 1, 0.3, 1);
+      transition-delay: var(--reveal-delay, 0ms);
+      will-change: opacity, transform;
     }
-
-    .status {
-      font-size: 12px;
-      line-height: 1.4;
-      color: var(--fg-muted);
-      min-height: 16px;
-    }
-
-    .status--submitting,
-    .status--success,
-    .status--already,
-    .status--invalid,
-    .status--network,
-    .status--rate {
-      display: none;
-    }
-
-    .signup[data-state="submitting"] .status--submitting,
-    .signup[data-state="success"] .status--success,
-    .signup[data-state="already"] .status--already,
-    .signup[data-state="error-invalid"] .status--invalid,
-    .signup[data-state="error-network"] .status--network,
-    .signup[data-state="error-rate-limit"] .status--rate {
-      display: block;
-    }
-
-    .status--success,
-    .status--already {
-      color: var(--fg);
-      font-weight: 600;
-    }
-
-    .share {
-      display: grid;
-      gap: 10px;
-      margin-top: 4px;
-    }
-
-    .share[hidden] {
-      display: none;
-    }
-
-    /* When the share block carries the success message, the standalone
-       status lines are redundant. */
-    .signup[data-state="success"] .status--success,
-    .signup[data-state="already"] .status--already {
-      display: none;
-    }
-
-    .share__goal {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--fg);
-      line-height: 1.4;
-      max-width: 38ch;
-      margin: 0;
-    }
-
-    .share__check {
-      width: 14px;
-      height: 14px;
-      border: 1px solid var(--fg);
-      box-sizing: border-box;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: 0 0 auto;
-      align-self: center;
-      transition: background 160ms ease, border-color 160ms ease;
-    }
-
-    .share__check-mark {
-      width: 100%;
-      height: 100%;
-      color: var(--bg);
-      opacity: 0;
-      transition: opacity 160ms ease;
-    }
-
-    .share[data-met="true"] .share__check {
-      background: var(--accent);
-      border-color: var(--accent);
-    }
-
-    .share[data-met="true"] .share__check-mark {
+    :global(html.has-js) .reveal.in {
       opacity: 1;
+      transform: none;
+    }
+    /* the hero wordmark settles in slower and from further — a deliberate
+       arrival rather than a quick fade. */
+    :global(html.has-js) .wordmark.reveal {
+      transform: translateY(34px) scale(0.985);
+      transition-duration: 940ms;
+    }
+    :global(html.has-js) .wordmark.reveal.in {
+      transform: none;
     }
 
-    .share__email {
-      display: none;
-    }
-
-    .share__email-value {
-      color: var(--fg);
-      font-weight: 600;
-    }
-
-    .share__goal-text--met {
-      display: none;
-      color: var(--fg);
-      font-weight: 500;
-    }
-
-    .share[data-met="true"] .share__goal-text {
-      display: none;
-    }
-
-    .share[data-met="true"] .share__goal-text--met {
-      display: inline;
-    }
-
-    .share__row {
-      display: flex;
-      gap: 8px;
-      align-items: stretch;
-    }
-
-    .share__url {
-      width: 100%;
-      min-width: 0;
-      height: 40px;
-      padding: 0 12px;
-      border: 1px solid var(--line-soft);
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.7);
-      color: var(--fg);
-      font: inherit;
-      font-size: 13px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: 0;
-    }
-
-    .share__url:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-
-    .share__copy {
-      appearance: none;
-      padding: 0;
-      font: inherit;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--fg-muted);
-      background: transparent;
-      border: 0;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      white-space: nowrap;
-      transition: color 120ms ease;
-    }
-
-    .share__copy:hover {
-      color: var(--fg);
-    }
-
-    .share__copy:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 3px;
-    }
-
-    .share[data-copied="true"] .share__copy-label::after {
-      content: " ✓";
-      color: var(--accent);
-    }
-
-    .signup__secondary {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--fg-muted);
-      white-space: nowrap;
-    }
-
-    .signup__secondary:hover {
-      color: var(--fg);
-      border-bottom-color: transparent;
-    }
-
-    .share__check {
-      display: none;
-    }
-
-    .share__url {
-      display: none;
-    }
-
-    @media (max-width: 880px) {
-      /* Single-column flow. wordmark+tagline pinned to top, form+secondary
-         pinned to bottom, demo absorbs all remaining vertical space.
-         The shell's meta strips are hidden at this breakpoint, so the
-         wordmark sits flush with the viewport top and the CTA with the
-         bottom — both pad against the iPhone safe areas. */
-      .hero {
+    /* ============================================================= *
+     * RESPONSIVE
+     * ============================================================= */
+    @media (max-width: 820px) {
+      .section__inner {
         grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr auto;
-        min-height: 0;
+        gap: clamp(14px, 3vh, 22px);
       }
-
-      .wordmark-cell {
-        grid-column: 1;
-        grid-row: 1;
-        border-right: 0;
-        border-bottom: 1px solid var(--line-soft);
-        padding:
-          max(clamp(20px, 3vh, 32px), env(safe-area-inset-top))
-          clamp(24px, 6vw, 40px)
-          clamp(16px, 2vh, 24px);
-        gap: clamp(12px, 2vh, 18px);
+      .section__label {
+        position: static;
+        top: auto;
       }
+    }
 
-      .wordmark {
-        font-size: clamp(5rem, 26vw, 8.5rem);
-      }
-
-      .demo-cell--desktop {
-        display: none;
-      }
-
-      .demo-cell--mobile {
-        display: block;
-        grid-column: 1;
-        grid-row: 2;
-        width: 100%;
-        max-width: 100%;
-        min-height: 0;
-        border-bottom: 1px solid var(--line-soft);
-      }
-
-      .cta-cell {
-        grid-column: 1;
-        grid-row: 3;
-        border-right: 0;
-        border-bottom: 0;
-        align-items: stretch;
-        padding:
-          clamp(16px, 2.4vh, 24px)
-          clamp(24px, 6vw, 40px)
-          max(clamp(16px, 2.4vh, 24px), env(safe-area-inset-bottom));
-      }
-
-      /* On touch widths, skip the staging step — show the field by default
-         and hide the open button. The desktop click-to-expand still applies
-         above 880px. */
-      .signup[data-mode="collapsed"] .signup__open {
-        display: none;
-      }
-
-      .signup[data-mode="collapsed"] .signup__field {
-        display: grid;
-        animation: none;
-      }
-
-      /* Keep the field + submit inline (matches the desktop expanded
-         pattern). The submit button shrinks its padding so the email
-         field keeps comfortable room on a 390px viewport. */
-      .signup {
-        gap: 14px;
-      }
-
-      .signup__submit {
-        padding: 0 16px;
-      }
-
-      .signup__secondary {
-        color: var(--fg-muted);
-        font-size: 13px;
+    @media (max-width: 560px) {
+      .qa__a {
+        padding-left: 0;
       }
     }
 
@@ -807,294 +771,321 @@ const desktopDemoUrls = parseUrls(
         animation: none;
         opacity: 1;
       }
-
-      .signup__field {
+      .qa[open] .qa__a {
         animation: none;
       }
-
-      input[type="email"] {
+      :global(html.has-js) .reveal,
+      :global(html.has-js) .wordmark.reveal {
+        opacity: 1;
+        transform: none;
         transition: none;
       }
     }
   </style>
 
+  <!-- Hero: reconstruct the painting from its own pixels as one wave fanning
+       out from the tree. The crisp art sits under a cream cover; the wave
+       dissolves that cover cell by cell, each cell doing cream → pointillist
+       dot → crisp painting in one coupled motion (no global "image appears"). -->
   <script type="module">
-    const form = document.querySelector(".signup");
-    const endpoint = form?.dataset.endpoint;
-    // Canonical share-link origin baked in at build time from Astro.site.
-    // Falls back to location.origin so dev/preview keeps working.
-    const shareOrigin =
-      (form?.dataset.shareOrigin || "").replace(/\/$/, "") ||
-      location.origin;
-    const openButton = form?.querySelector(".signup__open");
-    const emailInput = form?.querySelector('input[type="email"]');
-    const share = form?.querySelector(".share");
-    const shareUrlInput = share?.querySelector(".share__url");
-    const shareCopyButton = share?.querySelector(".share__copy");
-    const shareCopyLabel = share?.querySelector(".share__copy-label");
-    const shareEmailRow = share?.querySelector(".share__email");
-    const shareEmailValue = share?.querySelector(".share__email-value");
-    const statsBase = endpoint
-      ? endpoint.replace(/\/+$/, "")
-      : "";
-    const SIGNUP_ID_RE = /^[0-9a-f]{32}$/;
-    const STORAGE_KEY = "blink:signup_id";
-    const STORAGE_EMAIL_KEY = "blink:signup_email";
-    const readStoredSignupId = () => {
-      try {
-        const value = localStorage.getItem(STORAGE_KEY) || "";
-        return SIGNUP_ID_RE.test(value) ? value : "";
-      } catch {
-        return "";
-      }
-    };
-    const writeStoredSignupId = (signupId) => {
-      try {
-        localStorage.setItem(STORAGE_KEY, signupId);
-      } catch {}
-    };
-    const readStoredEmail = () => {
-      try {
-        return localStorage.getItem(STORAGE_EMAIL_KEY) || "";
-      } catch {
-        return "";
-      }
-    };
-    const writeStoredEmail = (email) => {
-      try {
-        localStorage.setItem(STORAGE_EMAIL_KEY, email);
-      } catch {}
-    };
-    const incomingRef = (() => {
-      try {
-        const value = new URLSearchParams(location.search).get("ref") || "";
-        return SIGNUP_ID_RE.test(value) ? value : "";
-      } catch {
-        return "";
-      }
-    })();
-    if (incomingRef) {
-      window.posthog?.capture("beta_signup_referred_visit", {
-        ref: incomingRef,
-        source: "useblink.dev",
-      });
-    }
+    const hero = document.querySelector(".hero");
+    const canvas = hero?.querySelector(".hero__build");
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const paint = () => hero?.classList.add("is-painted");
+    // marks the reveal as fully settled — gates the caret so it only starts
+    // blinking once the painting has finished fading in.
+    const revealed = () => hero?.classList.add("is-revealed");
 
-    let currentSignupId = "";
-    let goalMetCaptured = false;
+    if (!hero || !canvas || !canvas.getContext || reduce) {
+      paint();
+      revealed();
+      canvas?.remove();
+    } else {
+      const ctx = canvas.getContext("2d");
+      // One wave, fully coupled. The crisp painting sits beneath a solid cream
+      // cover (this canvas) from the start. As the wave passes a cell it does
+      // ONE motion: a pointillist dot pops in on the cream, then melts away as
+      // that cell's cover dissolves to reveal the crisp art beneath. Cream →
+      // dot → painting happens locally, per cell, on a single clock — so there
+      // is no second "image appears all at once" event. Order is radial from
+      // the tree, so it fans evenly rather than bursting from the middle.
+      // END ≈ the slowest cell's finish in wave-units (max aS+aD ≈ 0.97+0.44).
+      // Matching it (not overshooting to 1.7) means the eased clock's slow-OUT
+      // lands while the last cells are still melting in — so the reveal reads
+      // slow → fast → slow, instead of slow → fast then a dead tail.
+      const END = 1.43;
+      let raf = 0,
+        done = false,
+        dots = [],
+        w = 0,
+        h = 0,
+        t0 = 0,
+        cream = [242, 240, 233],
+        creamCss = "rgb(242,240,233)";
 
-    const showShareRow = (signupId, email) => {
-      if (!share || !shareUrlInput) return;
-      currentSignupId = signupId;
-      const shareUrl = `${shareOrigin}/?ref=${signupId}`;
-      shareUrlInput.value = shareUrl;
-      const resolvedEmail = (email || readStoredEmail()).trim();
-      if (resolvedEmail && shareEmailRow && shareEmailValue) {
-        shareEmailValue.textContent = resolvedEmail;
-        shareEmailRow.hidden = false;
-      } else if (shareEmailRow) {
-        shareEmailRow.hidden = true;
-      }
-      share.hidden = false;
-      share.dataset.met = "false";
-      share.dataset.copied = "false";
-      goalMetCaptured = false;
-      void refreshStats();
-    };
+      const cleanup = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(failsafe);
+        if (raf) cancelAnimationFrame(raf);
+        paint();
+        revealed();
+        canvas.remove();
+      };
+      const failsafe = setTimeout(cleanup, 6000);
+      const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+      // ease the master clock so the reveal eases in gently (a slow initial
+      // fade-out) and settles out, rather than starting at full pace.
+      const easeInOut = (p) =>
+        p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+      const DURATION = 2.2; // real seconds; mapped onto the END wave timeline
+      const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-    const refreshStats = async () => {
-      if (!currentSignupId || !statsBase) return;
-      try {
-        const response = await fetch(
-          `${statsBase}/${currentSignupId}/stats`,
-          { method: "GET" },
-        );
-        if (!response.ok) return;
-        const body = await response.json();
-        const referrals = Number(body?.referrals || 0);
-        if (referrals >= 1) {
-          share.dataset.met = "true";
-          if (!goalMetCaptured) {
-            goalMetCaptured = true;
-            window.posthog?.capture("referral_goal_met", {
-              referrals,
+      const render = (t) => {
+        // Lay down the cream cover: it hides the crisp painting beneath until
+        // the wave dissolves it, cell by cell.
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = creamCss;
+        ctx.fillRect(0, 0, w, h);
+
+        // Dissolve the cover where the wave has passed — a growing hole per
+        // cell punches through to the crisp art. Holes overlap at full open so
+        // no cream lattice is left behind (erasing overlap is invisible).
+        ctx.globalCompositeOperation = "destination-out";
+        for (const d of dots) {
+          if (t < d.aS) continue;
+          const e = easeOut(clamp01((t - d.aS) / d.aD));
+          ctx.globalAlpha = e;
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.hr * e, 0, 6.2832);
+          ctx.fill();
+        }
+
+        // The pointillist dot itself: pops in on the cream, then melts to 0 as
+        // its hole opens and the crisp art takes over. Same clock as the hole,
+        // so cream → dot → painting is one coupled motion for each cell.
+        ctx.globalCompositeOperation = "source-over";
+        for (const d of dots) {
+          if (t < d.aS) continue;
+          const p = clamp01((t - d.aS) / d.aD);
+          // pop to FULL strength fast, hold, then melt to 0 over the last ~45%
+          // as the crisp art (revealed through the hole) takes the cell over
+          const a = p < 0.55 ? clamp01(p * 4) : clamp01((1 - p) / 0.45);
+          ctx.globalAlpha = a;
+          const r = d.r0 + (d.fr - d.r0) * easeOut(p);
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, r, 0, 6.2832);
+          ctx.fillStyle = d.c;
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+      };
+
+      const frame = (now) => {
+        const p = clamp01((now - t0) / 1000 / DURATION);
+        render(easeInOut(p) * END); // eased clock → slow, gentle onset
+        if (p >= 1) cleanup();
+        else raf = requestAnimationFrame(frame);
+      };
+
+      const start = () => {
+        const rect = hero.getBoundingClientRect();
+        w = rect.width;
+        h = rect.height;
+        if (w <= 0 || h <= 0) {
+          cleanup();
+          return;
+        }
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // cream tint = the page background, resolved to rgb. (Chrome reports
+        // background-color back as oklch, so parse it through a canvas.)
+        try {
+          const pc = document.createElement("canvas").getContext("2d");
+          pc.fillStyle = getComputedStyle(document.body).backgroundColor;
+          pc.fillRect(0, 0, 1, 1);
+          const px = pc.getImageData(0, 0, 1, 1).data;
+          if (px[0] + px[1] + px[2] > 360) cream = [px[0], px[1], px[2]];
+        } catch (e) {}
+        creamCss = `rgb(${cream[0]},${cream[1]},${cream[2]})`;
+
+        // sample the painting (cover-fit, top-anchored) at quarter res
+        const sw = Math.max(1, Math.round(w * 0.25));
+        const sh = Math.max(1, Math.round(h * 0.25));
+        const off = document.createElement("canvas");
+        off.width = sw;
+        off.height = sh;
+        const octx = off.getContext("2d");
+        const ir = img.naturalWidth / img.naturalHeight;
+        const fr = sw / sh;
+        let dw, dh;
+        if (ir > fr) {
+          dh = sh;
+          dw = sh * ir;
+        } else {
+          dw = sw;
+          dh = sw / ir;
+        }
+        octx.drawImage(img, (sw - dw) / 2, 0, dw, dh);
+        const data = octx.getImageData(0, 0, sw, sh).data;
+
+        const gap = Math.max(11, Math.round(Math.sqrt((w * h) / 6000)));
+        // Overscan the grid by one cell on every side so the dots + erase-holes
+        // cover the canvas all the way to its edges; the canvas clips the
+        // overhang to a clean rectangle instead of leaving the scalloped edges
+        // of the border circles showing along the bottom and sides.
+        const xs = [];
+        for (let x = gap / 2 - gap; x < w + gap; x += gap) xs.push(x);
+        const ys = [];
+        for (let y = gap / 2 - gap; y < h + gap; y += gap) ys.push(y);
+        const cols = xs.length,
+          rows = ys.length;
+        const raw = [];
+        // cool-weighted centroid of the upper canvas → the dense blue tree mass,
+        // which is where the wave starts (no hand-traced geometry).
+        let cwx = 0,
+          cwy = 0,
+          cwt = 0;
+        for (let ry = 0; ry < rows; ry++) {
+          const y = ys[ry];
+          for (let cx = 0; cx < cols; cx++) {
+            const x = xs[cx];
+            const sx = Math.max(0, Math.min(sw - 1, ((x / w) * sw) | 0));
+            const sy = Math.max(0, Math.min(sh - 1, ((y / h) * sh) | 0));
+            const i = (sy * sw + sx) * 4;
+            const cr = data[i],
+              cg = data[i + 1],
+              cb = data[i + 2];
+            const lum = 0.299 * cr + 0.587 * cg + 0.114 * cb;
+            // read the painting at this cell:
+            const cool = Math.max(0, Math.min(1, (cb - cr) / 85)); // blue/teal
+            const warm = Math.max(0, Math.min(1, (cr - cb) / 80)); // orange/peach
+            const bright = Math.max(0, Math.min(1, (lum - 150) / 105)); // cream
+            if (x >= 0 && x < w && y >= 0 && y < h * 0.62) {
+              const cw = cool * cool;
+              cwx += cw * x;
+              cwy += cw * y;
+              cwt += cw;
+            }
+            // bake the left-heavy cream wash (matches .hero::before) into the
+            // colour, so the left reads light and the cross-fade is seamless
+            const wf = 0.72 - 0.4 * (x / w);
+            raw.push({
+              x,
+              y,
+              r0: gap * 0.16, // a small dot when it lands
+              fr: gap * 0.46, // the visible dot grows to here — transient and
+              // fades out, so no fish-scale from overlapping opaque dots
+              hr: gap * 0.78, // the cover-erase hole grows past the cell corner
+              // (≈ half-diagonal) so the reveal leaves no cream lattice
+              c: `rgb(${Math.round(cr + (cream[0] - cr) * wf)},${Math.round(
+                cg + (cream[1] - cg) * wf,
+              )},${Math.round(cb + (cream[2] - cb) * wf)})`,
+              cool,
+              warm,
+              bright,
             });
           }
         }
-      } catch {}
-    };
-
-    shareCopyButton?.addEventListener("click", async () => {
-      if (!shareUrlInput) return;
-      const url = shareUrlInput.value;
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        shareUrlInput.select();
-        try {
-          document.execCommand("copy");
-        } catch {}
-      }
-      share.dataset.copied = "true";
-      if (shareCopyLabel) shareCopyLabel.textContent = "copied";
-      window.posthog?.capture("referral_link_copied", {
-        signup_id: currentSignupId,
-      });
-      setTimeout(() => {
-        if (shareCopyLabel) shareCopyLabel.textContent = "copy link";
-        share.dataset.copied = "false";
-      }, 1800);
-    });
-
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        void refreshStats();
-      }
-    });
-
-    openButton?.addEventListener("click", () => {
-      if (!form || form.dataset.mode === "expanded") return;
-      form.dataset.mode = "expanded";
-      openButton.setAttribute("aria-expanded", "true");
-      window.posthog?.capture("beta_signup_expanded", {
-        source: "useblink.dev",
-      });
-      requestAnimationFrame(() => emailInput?.focus());
-    });
-    form?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (!endpoint) return;
-      const button = form.querySelector(".signup__submit");
-      const data = new FormData(form);
-      form.dataset.state = "submitting";
-      button?.setAttribute("disabled", "true");
-      if (share) {
-        share.hidden = true;
-        share.dataset.met = "false";
-        share.dataset.copied = "false";
-      }
-      currentSignupId = "";
-      goalMetCaptured = false;
-      window.posthog?.capture("beta_signup_submitted", {
-        source: "useblink.dev",
-      });
-      const submittedEmail = String(data.get("email") || "").trim();
-      try {
-        const body = {
-          email: submittedEmail,
-          hp: String(data.get("hp") || ""),
-          source: "useblink.dev",
-        };
-        if (incomingRef) body.ref = incomingRef;
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (response.status === 429) {
-          form.dataset.state = "error-rate-limit";
-          window.posthog?.capture("beta_signup_failed", {
-            kind: "rate-limit",
-            status: 429,
-          });
-          return;
+        // wave origin = the cool-weighted centroid (the blue tree), floored to
+        // the right half so it always starts from the tree side.
+        const seedX = Math.max(w * 0.58, cwt > 0 ? cwx / cwt : w * 0.72);
+        const seedY = cwt > 0 ? cwy / cwt : h * 0.42;
+        // Colour-led sweep: starts at the tree and elongates toward the warm
+        // sunset corner (which trails last). radial spreads it evenly (so no
+        // corner is starved), proj gives the diagonal sweep, and the colour term
+        // makes the cool blues lead while the warm corner resolves last.
+        const diag = Math.hypot(w, h) || 1;
+        const cornerX = w * 0.06,
+          cornerY = h * 0.08;
+        let vx = cornerX - seedX,
+          vy = cornerY - seedY;
+        const vlen = Math.hypot(vx, vy) || 1;
+        vx /= vlen;
+        vy /= vlen;
+        let minO = Infinity,
+          maxO = -Infinity;
+        for (const d of raw) {
+          const radial = Math.hypot(d.x - seedX, d.y - seedY) / diag;
+          const proj = Math.max(
+            0,
+            ((d.x - seedX) * vx + (d.y - seedY) * vy) / diag,
+          );
+          const colour = d.warm * 0.5 + d.bright * 0.3 - d.cool * 0.2;
+          d.o = radial * 0.42 + proj * 0.5 + colour * 0.3;
+          if (d.o < minO) minO = d.o;
+          if (d.o > maxO) maxO = d.o;
         }
-        if (response.status === 422) {
-          form.dataset.state = "error-invalid";
-          window.posthog?.capture("beta_signup_failed", {
-            kind: "invalid",
-            status: 422,
-          });
-          return;
+        const spanO = maxO - minO || 1;
+        const WAVE_SPAN = 0.95;
+        for (const d of raw) {
+          const t = (d.o - minO) / spanO; // 0 = tree/first, 1 = warm corner
+          d.aS = Math.max(0, WAVE_SPAN * t + (Math.random() - 0.5) * 0.04);
+          d.aD = 0.22 + Math.random() * 0.22;
         }
-        if (response.ok) {
-          let signupId;
-          let alreadySignedUp = false;
-          try {
-            const responseBody = await response.json();
-            signupId =
-              typeof responseBody?.signup_id === "string"
-                ? responseBody.signup_id
-                : undefined;
-            alreadySignedUp = responseBody?.already_signed_up === true;
-          } catch {}
-          if (alreadySignedUp) {
-            form.dataset.state = "already";
-            window.posthog?.capture("beta_signup_already_on_list");
-          } else {
-            form.dataset.state = "success";
-            // Only alias the first time we learn this signup_id. Re-aliasing
-            // on `already_signed_up` would clobber the identity graph.
-            if (signupId) window.posthog?.alias(signupId);
-            window.posthog?.capture("beta_signup_succeeded");
-          }
-          if (signupId && SIGNUP_ID_RE.test(signupId)) {
-            writeStoredSignupId(signupId);
-            if (submittedEmail) writeStoredEmail(submittedEmail);
-            showShareRow(signupId, submittedEmail);
-          }
-        } else {
-          form.dataset.state = "error-network";
-          window.posthog?.capture("beta_signup_failed", {
-            kind: "network",
-            status: response.status,
-          });
-        }
-      } catch {
-        form.dataset.state = "error-network";
-        window.posthog?.capture("beta_signup_failed", {
-          kind: "network",
-          status: 0,
-        });
-      } finally {
-        button?.removeAttribute("disabled");
-      }
-    });
-
-    // Returning visitor: restore the share row from localStorage so a
-    // refresh doesn't wipe the "you're on the list" + share UI. We don't
-    // know whether the original submit was a new signup or a duplicate,
-    // so we surface the "already on the list" copy — accurate either way.
-    const storedSignupId = readStoredSignupId();
-    if (storedSignupId && form) {
-      form.dataset.state = "already";
-      showShareRow(storedSignupId);
-    }
-
-    document.querySelectorAll(".demo-cell").forEach((demoCell) => {
-      const demoUrls = (demoCell.dataset.videoUrls || "")
-        .split("|")
-        .filter(Boolean);
-      const slots = demoCell.querySelectorAll("video");
-      if (slots.length !== 2 || demoUrls.length === 0) return;
-      let videoIndex = 0;
-      let activeSlot = 0;
-      const total = demoUrls.length;
-      const advance = () => {
-        videoIndex = (videoIndex + 1) % total;
-        const nextSlot = 1 - activeSlot;
-        const incoming = slots[nextSlot];
-        const outgoing = slots[activeSlot];
-        try {
-          incoming.currentTime = 0;
-        } catch {}
-        incoming.classList.add("is-active");
-        outgoing.classList.remove("is-active");
-        incoming.play().catch(() => {});
-        outgoing.pause();
-        const followingIndex = (videoIndex + 1) % total;
-        if (outgoing.src !== demoUrls[followingIndex]) {
-          outgoing.src = demoUrls[followingIndex];
-          outgoing.load();
-        }
-        activeSlot = nextSlot;
+        dots = raw;
+        // Cover the hero with cream BEFORE revealing the crisp art beneath, so
+        // there's no flash: the canvas hides the painting until the wave
+        // dissolves it. .is-painted brings .hero::before to full opacity now,
+        // not at the end.
+        ctx.fillStyle = creamCss;
+        ctx.fillRect(0, 0, w, h);
+        paint();
+        t0 = performance.now();
+        raf = requestAnimationFrame(frame);
       };
-      slots.forEach((video, i) => {
-        video.addEventListener("ended", () => {
-          if (i !== activeSlot) return;
-          advance();
-        });
-      });
-    });
+
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = () => {
+        try {
+          start();
+        } catch (e) {
+          cleanup();
+        }
+      };
+      img.onerror = cleanup;
+      // Sample the SMALL original for the reveal (it only samples at ~quarter
+      // res, so the HD's weight would just stall the animation's onload). The
+      // crisp HD is the .hero::before the reveal lands on — same crop/aspect,
+      // so the dots still line up.
+      img.src = "/pointilism-3.webp";
+    }
   </script>
+
+  <!-- Reveal-on-scroll (has-js is already set pre-paint in the head) -->
+  <script type="module">
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const items = Array.from(document.querySelectorAll(".reveal"));
+    if (reduce || !("IntersectionObserver" in window)) {
+      items.forEach((el) => el.classList.add("in"));
+    } else {
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const el = entry.target;
+            // stagger siblings within a block for a bit of choreography
+            const sibs = Array.from(
+              el.parentElement?.querySelectorAll(":scope > .reveal") || [el],
+            );
+            const i = Math.max(0, sibs.indexOf(el));
+            el.style.setProperty("--reveal-delay", `${Math.min(i, 6) * 90}ms`);
+            el.classList.add("in");
+            io.unobserve(el);
+          }
+        },
+        { rootMargin: "0px 0px -8% 0px", threshold: 0.08 },
+      );
+      items.forEach((el) => io.observe(el));
+      // Failsafe: never leave content hidden if the observer misbehaves.
+      setTimeout(() => items.forEach((el) => el.classList.add("in")), 2200);
+    }
+  </script>
+
 </Base>

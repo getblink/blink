@@ -1,0 +1,488 @@
+---
+// Beta signup + referral share. Self-contained: markup, submit/referral logic,
+// and styling (the unified email pill + nested accent button) for the deep-ink
+// closer. Config is read from env here and handed to the script via data-*.
+const betaSignupUrl =
+  import.meta.env.PUBLIC_BETA_SIGNUP_URL ||
+  "https://api.useblink.dev/v1/beta-signup";
+// Canonical share-link origin — sourced from astro.config.mjs `site` so the
+// dev server doesn't bake localhost into copied/tweeted referral links.
+const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
+---
+
+<form
+  class="signup reveal"
+  data-state="idle"
+  data-endpoint={betaSignupUrl}
+  data-share-origin={shareOrigin}
+>
+  <div class="signup__field" id="signup-field">
+    <input
+      id="email"
+      name="email"
+      type="email"
+      autocomplete="email"
+      placeholder="you@email.com"
+      aria-label="email"
+      maxlength="320"
+      required
+    />
+    <input
+      class="hp"
+      name="hp"
+      type="text"
+      tabindex="-1"
+      autocomplete="off"
+      aria-hidden="true"
+    />
+    <button class="btn btn--primary signup__submit" type="submit">
+      <span>join the beta</span>
+      <span class="btn__arrow" aria-hidden="true">→</span>
+    </button>
+  </div>
+  <p class="status status--submitting">sending…</p>
+  <p class="status status--success">you're on the list.</p>
+  <p class="status status--already">you're already on the list.</p>
+  <p class="status status--invalid">that doesn't look like an email.</p>
+  <p class="status status--network">
+    couldn't reach the server. try again in a moment.
+  </p>
+  <p class="status status--rate">too many tries. give it a minute.</p>
+  <div class="share" data-met="false" hidden>
+    <p class="share__goal">
+      <span class="share__goal-text"
+        >you're on the list. share to skip the line.</span
+      >
+      <span class="share__goal-text--met"
+        >shared with 1 friend. you're in line for the next batch.</span
+      >
+    </p>
+    <div class="share__row">
+      <input
+        class="share__url"
+        type="text"
+        readonly
+        aria-label="your referral link"
+      />
+      <button class="share__copy" type="button">
+        <span class="share__copy-label">copy link</span>
+      </button>
+    </div>
+    <p class="share__email" hidden>
+      signed up as <span class="share__email-value"></span>
+    </p>
+  </div>
+</form>
+
+<style>
+  .signup {
+    width: 100%;
+    max-width: 560px;
+    display: grid;
+    gap: 12px;
+  }
+  /* the signup as ONE unified pill: a borderless email and a nested accent
+     button share a single rounded field — matching the pill/stadium language
+     in the nav and CTAs, instead of a separate boxed input + button. */
+  .signup__field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px;
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--paper) 96%, transparent);
+    box-shadow: 0 1px 2px color-mix(in oklch, var(--ink) 35%, transparent);
+    transition: box-shadow 160ms ease;
+  }
+  .signup__field:focus-within {
+    box-shadow:
+      0 1px 2px color-mix(in oklch, var(--ink) 35%, transparent),
+      0 0 0 3px var(--sky-soft);
+  }
+  .signup[data-state="success"] .signup__field,
+  .signup[data-state="already"] .signup__field {
+    display: none;
+  }
+  .signup[data-state="success"] .share,
+  .signup[data-state="already"] .share {
+    order: -1;
+  }
+
+  input[type="email"] {
+    flex: 1;
+    min-width: 0;
+    height: 46px;
+    font: inherit;
+    font-size: 16px;
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    padding-inline: 18px 6px;
+    outline: none;
+  }
+  input[type="email"]::placeholder {
+    color: var(--fg-muted);
+  }
+
+  /* the canonical sky-stadium CTA (.btn--primary, global) — only the height is
+     trimmed here so it nests cleanly inside the pill. */
+  .signup__field .signup__submit {
+    height: 46px;
+    padding-inline: 22px;
+  }
+
+  /* honeypot */
+  .hp {
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+
+  /* status messages, tuned for the deep-ink ground */
+  .status {
+    font-size: 13px;
+    line-height: 1.4;
+    color: color-mix(in oklch, var(--paper) 58%, transparent);
+    min-height: 16px;
+    display: none;
+  }
+  .signup[data-state="submitting"] .status--submitting,
+  .signup[data-state="error-invalid"] .status--invalid,
+  .signup[data-state="error-network"] .status--network,
+  .signup[data-state="error-rate-limit"] .status--rate {
+    display: block;
+  }
+  /* Fallback confirmation: the .share block normally carries the "you're on
+     the list" copy, but if the server returns 200 without a signup_id the
+     share stays hidden — show the plain status so the form is never blank. */
+  .signup[data-state="success"]:has(.share[hidden]) .status--success,
+  .signup[data-state="already"]:has(.share[hidden]) .status--already {
+    display: block;
+  }
+  .status--success,
+  .status--already {
+    color: var(--paper);
+    font-weight: 600;
+  }
+
+  /* referral share */
+  .share {
+    display: grid;
+    gap: 12px;
+    margin-top: 2px;
+  }
+  .share[hidden] {
+    display: none;
+  }
+  .share__goal {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--paper);
+    line-height: 1.4;
+    max-width: 42ch;
+    margin: 0;
+  }
+  .share__goal-text--met {
+    display: none;
+    color: var(--paper);
+    font-weight: 500;
+  }
+  .share[data-met="true"] .share__goal-text {
+    display: none;
+  }
+  .share[data-met="true"] .share__goal-text--met {
+    display: inline;
+  }
+  .share__row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  /* URL kept in the DOM for its value (copy target) but hidden — the visible
+     affordance is "copy link". */
+  .share__url {
+    display: none;
+  }
+  .share__copy {
+    appearance: none;
+    padding: 0;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: color-mix(in oklch, var(--paper) 60%, transparent);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    transition: color 120ms ease;
+  }
+  .share__copy:hover {
+    color: var(--paper);
+  }
+  .share__copy:focus-visible {
+    outline: 2px solid var(--sky);
+    outline-offset: 3px;
+  }
+  .share[data-copied="true"] .share__copy-label::after {
+    content: " ✓";
+    color: var(--sky);
+  }
+  .share__email {
+    display: none;
+  }
+  .share__email-value {
+    color: var(--paper);
+    font-weight: 600;
+  }
+
+  /* stack into a pill input + full-width accent button on narrow screens */
+  @media (max-width: 560px) {
+    .signup__field {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .signup__field:focus-within {
+      box-shadow: none;
+    }
+    input[type="email"] {
+      height: 52px;
+      border-radius: 999px;
+      padding-inline: 20px;
+      background: color-mix(in oklch, var(--paper) 96%, transparent);
+    }
+    .signup__field .signup__submit {
+      height: 50px;
+      justify-content: center;
+    }
+  }
+</style>
+
+<script>
+  const form = document.querySelector(".signup");
+  const endpoint = form?.dataset.endpoint;
+  const shareOrigin =
+    (form?.dataset.shareOrigin || "").replace(/\/$/, "") || location.origin;
+  const share = form?.querySelector(".share");
+  const shareUrlInput = share?.querySelector(".share__url");
+  const shareCopyButton = share?.querySelector(".share__copy");
+  const shareCopyLabel = share?.querySelector(".share__copy-label");
+  const shareEmailRow = share?.querySelector(".share__email");
+  const shareEmailValue = share?.querySelector(".share__email-value");
+  const statsBase = endpoint ? endpoint.replace(/\/+$/, "") : "";
+  const SIGNUP_ID_RE = /^[0-9a-f]{32}$/;
+  const STORAGE_KEY = "blink:signup_id";
+  const STORAGE_EMAIL_KEY = "blink:signup_email";
+  const readStoredSignupId = () => {
+    try {
+      const value = localStorage.getItem(STORAGE_KEY) || "";
+      return SIGNUP_ID_RE.test(value) ? value : "";
+    } catch {
+      return "";
+    }
+  };
+  const writeStoredSignupId = (signupId) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, signupId);
+    } catch {}
+  };
+  const readStoredEmail = () => {
+    try {
+      return localStorage.getItem(STORAGE_EMAIL_KEY) || "";
+    } catch {
+      return "";
+    }
+  };
+  const writeStoredEmail = (email) => {
+    try {
+      localStorage.setItem(STORAGE_EMAIL_KEY, email);
+    } catch {}
+  };
+  const incomingRef = (() => {
+    try {
+      const value = new URLSearchParams(location.search).get("ref") || "";
+      return SIGNUP_ID_RE.test(value) ? value : "";
+    } catch {
+      return "";
+    }
+  })();
+  if (incomingRef) {
+    window.posthog?.capture("beta_signup_referred_visit", {
+      ref: incomingRef,
+      source: "useblink.dev",
+    });
+  }
+
+  let currentSignupId = "";
+  let goalMetCaptured = false;
+
+  const showShareRow = (signupId, email) => {
+    if (!share || !shareUrlInput) return;
+    currentSignupId = signupId;
+    const shareUrl = `${shareOrigin}/?ref=${signupId}`;
+    shareUrlInput.value = shareUrl;
+    const resolvedEmail = (email || readStoredEmail()).trim();
+    if (resolvedEmail && shareEmailRow && shareEmailValue) {
+      shareEmailValue.textContent = resolvedEmail;
+      shareEmailRow.hidden = false;
+    } else if (shareEmailRow) {
+      shareEmailRow.hidden = true;
+    }
+    share.hidden = false;
+    share.dataset.met = "false";
+    share.dataset.copied = "false";
+    goalMetCaptured = false;
+    void refreshStats();
+  };
+
+  const refreshStats = async () => {
+    if (!currentSignupId || !statsBase) return;
+    try {
+      const response = await fetch(`${statsBase}/${currentSignupId}/stats`, {
+        method: "GET",
+      });
+      if (!response.ok) return;
+      const body = await response.json();
+      const referrals = Number(body?.referrals || 0);
+      if (referrals >= 1) {
+        share.dataset.met = "true";
+        if (!goalMetCaptured) {
+          goalMetCaptured = true;
+          window.posthog?.capture("referral_goal_met", { referrals });
+        }
+      }
+    } catch {}
+  };
+
+  shareCopyButton?.addEventListener("click", async () => {
+    if (!shareUrlInput) return;
+    const url = shareUrlInput.value;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      shareUrlInput.select();
+      try {
+        document.execCommand("copy");
+      } catch {}
+    }
+    share.dataset.copied = "true";
+    if (shareCopyLabel) shareCopyLabel.textContent = "copied";
+    window.posthog?.capture("referral_link_copied", {
+      signup_id: currentSignupId,
+    });
+    setTimeout(() => {
+      if (shareCopyLabel) shareCopyLabel.textContent = "copy link";
+      share.dataset.copied = "false";
+    }, 1800);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void refreshStats();
+    }
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!endpoint) return;
+    const button = form.querySelector(".signup__submit");
+    const data = new FormData(form);
+    form.dataset.state = "submitting";
+    button?.setAttribute("disabled", "true");
+    if (share) {
+      share.hidden = true;
+      share.dataset.met = "false";
+      share.dataset.copied = "false";
+    }
+    currentSignupId = "";
+    goalMetCaptured = false;
+    window.posthog?.capture("beta_signup_submitted", {
+      source: "useblink.dev",
+    });
+    const submittedEmail = String(data.get("email") || "").trim();
+    try {
+      const body = {
+        email: submittedEmail,
+        hp: String(data.get("hp") || ""),
+        source: "useblink.dev",
+      };
+      if (incomingRef) body.ref = incomingRef;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (response.status === 429) {
+        form.dataset.state = "error-rate-limit";
+        window.posthog?.capture("beta_signup_failed", {
+          kind: "rate-limit",
+          status: 429,
+        });
+        return;
+      }
+      if (response.status === 422) {
+        form.dataset.state = "error-invalid";
+        window.posthog?.capture("beta_signup_failed", {
+          kind: "invalid",
+          status: 422,
+        });
+        return;
+      }
+      if (response.ok) {
+        let signupId;
+        let alreadySignedUp = false;
+        try {
+          const responseBody = await response.json();
+          signupId =
+            typeof responseBody?.signup_id === "string"
+              ? responseBody.signup_id
+              : undefined;
+          alreadySignedUp = responseBody?.already_signed_up === true;
+        } catch {}
+        if (alreadySignedUp) {
+          form.dataset.state = "already";
+          window.posthog?.capture("beta_signup_already_on_list");
+        } else {
+          form.dataset.state = "success";
+          if (signupId) window.posthog?.alias(signupId);
+          window.posthog?.capture("beta_signup_succeeded");
+        }
+        if (signupId && SIGNUP_ID_RE.test(signupId)) {
+          writeStoredSignupId(signupId);
+          if (submittedEmail) writeStoredEmail(submittedEmail);
+          showShareRow(signupId, submittedEmail);
+        }
+      } else {
+        form.dataset.state = "error-network";
+        window.posthog?.capture("beta_signup_failed", {
+          kind: "network",
+          status: response.status,
+        });
+      }
+    } catch {
+      form.dataset.state = "error-network";
+      window.posthog?.capture("beta_signup_failed", {
+        kind: "network",
+        status: 0,
+      });
+    } finally {
+      button?.removeAttribute("disabled");
+    }
+  });
+
+  // Returning visitor: restore the share row so a refresh doesn't wipe the
+  // "you're on the list" + share UI.
+  const storedSignupId = readStoredSignupId();
+  if (storedSignupId && form) {
+    form.dataset.state = "already";
+    showShareRow(storedSignupId);
+  }
+</script>

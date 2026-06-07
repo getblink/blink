@@ -31,6 +31,38 @@ struct AdvancedSettingsView: View {
                 }
             }
 
+            // The Liquid Glass capture-loading lens is env-gated (BLINK_GLASS_LOADING),
+            // so only surface its speed control when that path is actually active —
+            // otherwise the slider would tune an animation the user never sees.
+            if RuntimeEnvironment.glassLoadingEnabled() {
+                Section("Loading animation") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Speed")
+                            Spacer()
+                            Text(String(format: "%g×", runtimeStore.lensAnimationSpeed))
+                                .font(.callout.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(
+                            value: $runtimeStore.lensAnimationSpeed,
+                            in: RuntimeConfigStore.lensAnimationSpeedRange,
+                            step: 0.25
+                        ) {
+                            Text("Loading animation speed")
+                        } minimumValueLabel: {
+                            Text("Slower").font(.caption2).foregroundStyle(.tertiary)
+                        } maximumValueLabel: {
+                            Text("Faster").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        Text("Pace of the Liquid Glass capture-loading animation (drain → pill → smile). Applies on the next capture.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
             if let onCheckForUpdates {
                 Section("Updates") {
                     HStack {

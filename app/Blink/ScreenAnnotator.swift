@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// Draws subtle markers onto a captured PNG so the vision model can see
+/// Draws subtle markers onto a captured image so the vision model can see
 /// where the focused element, caret, and mouse cursor are. macOS screen
 /// capture omits the mouse cursor and the blinking caret by default, and
 /// even the focused-element boundary is invisible in most apps — so the
@@ -37,7 +37,7 @@ enum ScreenAnnotator {
         let sourceConfidence: String
     }
 
-    /// Annotate the given PNG and return new PNG bytes. Returns nil
+    /// Annotate the given image and return new JPEG bytes. Returns nil
     /// when decoding/encoding fails or `captureRect` is degenerate;
     /// callers should fall back to the un-annotated bytes on nil.
     static func annotate(
@@ -128,7 +128,7 @@ enum ScreenAnnotator {
         )
 
         guard let annotated = context.makeImage() else { return nil }
-        return encodePNG(annotated)
+        return encodeJPEG(annotated, quality: 0.5)
     }
 
     /// Skip the caret marker on surfaces where AX caret data is known to
@@ -309,16 +309,13 @@ enum ScreenAnnotator {
         context.restoreGState()
     }
 
-    private static func encodePNG(_ cgImage: CGImage) -> Data? {
-        let mutableData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            mutableData,
-            "public.png" as CFString,
-            1,
-            nil
-        ) else { return nil }
-        CGImageDestinationAddImage(destination, cgImage, nil)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return mutableData as Data
+    /// Encode the annotated image as JPEG. The markers are drawn fresh onto the
+    /// decoded capture immediately before this single encode, so the overlay
+    /// only ever passes through one JPEG compression (no double-compression of
+    /// the markers; the underlying screenshot is the only thing that sees the
+    /// capture-time encode plus this one).
+    private static func encodeJPEG(_ cgImage: CGImage, quality: CGFloat) -> Data? {
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 }

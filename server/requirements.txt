@@ -1,5 +1,5 @@
 fastapi
-google-genai>=1.11.0
+google-genai==2.7.0
 httpx
 posthog>=6,<7
 psycopg[binary]

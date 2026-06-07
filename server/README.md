@@ -4,7 +4,7 @@ Small FastAPI backend for the standalone Blink app experiment. It owns the
 Gemini call so the shipped client never carries `GEMINI_API_KEY`, and it
 reuses Blink's capability-token convention for closed dogfood.
 
-Railway should deploy this service with the service root set to `server/`.
+A GitHub Action ([`.github/workflows/deploy-server.yml`](../.github/workflows/deploy-server.yml)) deploys this service to Google Cloud Run from `server/`. See [Deploy (Google Cloud Run)](#deploy-google-cloud-run) below.
 
 ## Protocol naming carve-out
 
@@ -140,9 +140,13 @@ for sending the beta DMG, not marketing.
 There is no HTTP read endpoint. Inspect signups directly in Postgres:
 
 ```bash
-railway run psql $DATABASE_URL \
+psql "$DATABASE_URL" \
   -c "SELECT email_original, source, created_at FROM beta_signups ORDER BY created_at DESC LIMIT 100"
 ```
+
+`DATABASE_URL` lives in GCP Secret Manager (`database-url` for production,
+`database-url-staging` for staging); pull it with
+`gcloud secrets versions access latest --secret=database-url --project=blink-497308`.
 
 ### `POST /tldr`
 
@@ -183,7 +187,7 @@ anonymous identifier.
 Copy [`server/.env.example`](.env.example) into the repo-root `.env` or
 `.env.local` for local dev. Required variables:
 
-- `GEMINI_API_KEY` — Railway secret or local dev key
+- `GEMINI_API_KEY` — GCP Secret Manager secret (`gemini-api-key`) or local dev key
 - `BLINK_BOOTSTRAP_TOKEN` — accepted only by `/v1/auth/mint`
 - `BLINK_API_TOKENS` — comma-separated legacy bearer tokens for the deprecation window
 - `BLINK_LEGACY_TOKEN_ALLOWED` — defaults to `true`; set `false` after legacy builds age out
@@ -227,35 +231,49 @@ curl -X POST \
   http://127.0.0.1:8000/v1/tldr
 ```
 
-## Railway deploy
+## Deploy (Google Cloud Run)
 
-Railway's staging environment deploys from the `staging` branch. `staging`
-should track `main` exactly except during deliberate server-only previews —
-see [`docs/CONTRIBUTING_INTERNAL.md`](../docs/CONTRIBUTING_INTERNAL.md#branch-strategy)
-for the branch workflow. To trigger a server redeploy from the current `main`:
+Deploys run through the [`deploy-server.yml`](../.github/workflows/deploy-server.yml)
+GitHub Action, which builds `server/` from source and ships it to Google Cloud
+Run (project `blink-497308`, region `us-west1`). Branch → environment:
+
+- `main` → service `blink-server` (production), `https://api.useblink.dev`
+- `staging` → service `blink-server-staging` (staging), `https://api-staging.useblink.dev`
+
+The action triggers on a push to `main` or `staging` **only when files under
+`server/**` (or the workflow itself) change**, and can also be run manually via
+`workflow_dispatch`. Each deploy stamps `GIT_COMMIT` into the container, so
+`GET /v1/healthz` returns the deployed short SHA — the quickest way to confirm a
+deploy landed (`curl -s https://api-staging.useblink.dev/v1/healthz`).
+
+`staging` should track `main` exactly except during deliberate server-only
+previews — see [`docs/CONTRIBUTING_INTERNAL.md`](../docs/CONTRIBUTING_INTERNAL.md#branch-strategy)
+for the branch workflow. To deploy the current `main`:
 
 ```bash
 git fetch origin main
-git push origin +origin/main:staging
+git push origin +origin/main:staging   # staging preview; merging the PR to main deploys production
 ```
 
 If you need a server-only preview ahead of merging to `main` (rare), push the
-preview branch's tip to `staging` instead, dogfood, then either merge to `main`
-and re-mirror or revert `staging` to `main`'s tip.
+preview branch's tip to `staging` instead, dogfood at
+`https://api-staging.useblink.dev`, then either merge to `main` and re-mirror or
+revert `staging` to `main`'s tip.
 
-Most build/deploy settings live in [`railway.json`](railway.json). For a new
-or existing Railway service, the remaining one-time dashboard wiring is:
+Secrets and runtime config are set on the Cloud Run services by the workflow's
+`--set-secrets`, sourced from GCP Secret Manager — not from this repo. Staging
+reads the `*-staging` secret variants (`database-url-staging`,
+`blink-api-tokens-staging`, `blink-bootstrap-token-staging`,
+`blink-ip-hash-salt-staging`); production reads the unsuffixed names. The
+workflow authenticates with Workload Identity Federation (the
+`GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT` repo secrets).
+To change a secret value, update it in Secret Manager and redeploy (Cloud Run
+pins `:latest` at deploy time).
 
-1. Connect the service to this GitHub repo and branch.
-2. Set the Railway service root directory to `/server`.
-3. Set the Railway config file path to `/server/railway.json`.
-4. Set `GEMINI_API_KEY` and `BLINK_API_TOKENS` as service variables.
-5. Optional but recommended for telemetry: attach Postgres and set
-   `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
-6. Optional for response caching and reroll thread continuity: attach Redis and set
-   `REDIS_URL=${{Redis.REDIS_URL}}`.
-7. Deploy and confirm `GET /v1/healthz` returns `200`.
-8. Point `BLINK_PROXY_URL` at the deployed URL for dogfood clients.
+> **Legacy:** the previous Railway deployment has been **decommissioned** — the
+> old `*.up.railway.app` URLs no longer respond. The Cloud Run pipeline builds
+> from [`Dockerfile`](Dockerfile), so the old `Procfile` (and the now-removed
+> `railway.json`) play no part in deploys.
 
 Postgres does not need a manual migration step for v1. When `DATABASE_URL` is
 present, the server lazily creates `tldr_requests` and `tldr_events` with
@@ -267,13 +285,9 @@ retention. Reroll thread keys store compact model/user transcript text and
 screenshot hashes, never screenshot bytes, and expire after
 `BLINK_THREAD_CACHE_TTL_SECONDS`.
 
-Railway config-as-code does not currently replace the service source/root
-directory/config-file-path selection. Those pointers identify which slice of
-this repo the service should deploy; the repeatable build and deploy behavior is
-then sourced from `server/railway.json`.
-
-The backend config includes a `/server/**` watch pattern so changes to the
-separate landing-page service under `site/` do not redeploy the Blink API.
+The `server/**` path filter on the deploy workflow means changes to the separate
+landing-page service under `site/` do not redeploy the Blink API, and vice
+versa.
 
 ## Fork note
 

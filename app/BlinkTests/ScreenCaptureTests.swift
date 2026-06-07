@@ -15,6 +15,36 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertFalse(ScreenCapture.shouldUseDisplayFallback(windowFrame: frame, scale: 2))
     }
 
+    func testCappedPixelSizeDownscalesFullDisplayPreservingAspect() {
+        // 6016×3384 (6K @2x) fullscreen Conductor grab → longest side clamped
+        // to 1600, aspect preserved.
+        let capped = ScreenCapture.cappedPixelSize(width: 6016, height: 3384, max: 1600)
+
+        XCTAssertEqual(capped.width, 1600)
+        XCTAssertEqual(capped.height, 900) // 3384 * (1600/6016) = 900.0
+    }
+
+    func testCappedPixelSizeLeavesSmallSizesUnchanged() {
+        let capped = ScreenCapture.cappedPixelSize(width: 1200, height: 800, max: 1600)
+
+        XCTAssertEqual(capped.width, 1200)
+        XCTAssertEqual(capped.height, 800)
+    }
+
+    func testCappedPixelSizeCapsTallSideToo() {
+        let capped = ScreenCapture.cappedPixelSize(width: 1000, height: 3200, max: 1600)
+
+        XCTAssertEqual(capped.height, 1600)
+        XCTAssertEqual(capped.width, 500) // 1000 * (1600/3200)
+    }
+
+    func testCappedPixelSizeClampsDegenerateInputToAtLeastOne() {
+        let capped = ScreenCapture.cappedPixelSize(width: 0, height: 0, max: 1600)
+
+        XCTAssertEqual(capped.width, 1)
+        XCTAssertEqual(capped.height, 1)
+    }
+
     func testPreferredCaptureSizePrefersAxWhenAvailable() {
         // The Chrome-on-X bug case: SCK reports a wide-short strip frame
         // while AX reports the actual window dims. Trust AX.
@@ -133,6 +163,63 @@ final class ScreenCaptureTests: XCTestCase {
         let windows: [[String: Any]] = [blinkWindow(ownerPID: ownPID)]
 
         XCTAssertNil(ScreenCapture.topmostNonSelfOwnerPID(in: windows, excluding: ownPID))
+    }
+
+    func testFrontmostCapturableWindowRectSkipsBlinkAndReturnsNextBounds() {
+        // The instant capture acknowledgment anchors to this rect. It must skip
+        // Blink's own window and return the *exact* bounds of the next standard
+        // window (non-zero origin included), since the lens is laid over it.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            blinkWindow(ownerPID: ownPID),
+            windowWithBounds(ownerPID: 9001, x: 120, y: 80, width: 1200, height: 800),
+        ]
+
+        let rect = ScreenCapture.frontmostCapturableWindowRect(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(rect, CGRect(x: 120, y: 80, width: 1200, height: 800))
+    }
+
+    func testFrontmostCapturableWindowRectSkipsNonStandardLayerAndTinyWindows() {
+        // Same filters as topmostNonSelfOwnerPID: above-layer-0 overlays and
+        // sub-80pt accessory windows are never the capture target.
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [
+            standardWindow(ownerPID: 7777, width: 200, height: 24, layer: 25),
+            standardWindow(ownerPID: 5555, width: 40, height: 20),
+            windowWithBounds(ownerPID: 8888, x: 0, y: 0, width: 900, height: 700),
+        ]
+
+        let rect = ScreenCapture.frontmostCapturableWindowRect(in: windows, excluding: ownPID)
+
+        XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 900, height: 700))
+    }
+
+    func testFrontmostCapturableWindowRectReturnsNilWhenOnlySelfPresent() {
+        let ownPID: pid_t = 4242
+        let windows: [[String: Any]] = [blinkWindow(ownerPID: ownPID)]
+
+        XCTAssertNil(ScreenCapture.frontmostCapturableWindowRect(in: windows, excluding: ownPID))
+    }
+
+    private func windowWithBounds(
+        ownerPID: pid_t,
+        x: CGFloat,
+        y: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        layer: Int = 0
+    ) -> [String: Any] {
+        [
+            kCGWindowOwnerPID as String: ownerPID,
+            kCGWindowLayer as String: layer,
+            kCGWindowBounds as String: [
+                "X": Double(x),
+                "Y": Double(y),
+                "Width": Double(width),
+                "Height": Double(height),
+            ] as [String: Any],
+        ]
     }
 
     private func blinkWindow(ownerPID: pid_t) -> [String: Any] {

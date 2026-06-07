@@ -71,6 +71,8 @@ struct StylePrefs: Codable, Equatable {
 }
 
 struct RuntimeConfigFile: Codable {
+    static let defaultLensAnimationSpeed = 1.25
+
     let version: Int
     var autoPaste: Bool
     var model: String
@@ -78,6 +80,10 @@ struct RuntimeConfigFile: Codable {
     var allowContentRetention: Bool
     var soundsEnabled: Bool
     var thinkingLevel: String?
+    /// Per-app-surface reasoning overrides, keyed by source bundle id. When a
+    /// capture comes from a bundle present here, this level wins over the
+    /// global `thinkingLevel`. Toggled via the overlay's ⌘T cycle.
+    var appThinkingLevels: [String: String]
     var outputFormat: String?
     var nudgesEnabled: Bool
     var lastNudgeAt: Date?
@@ -85,6 +91,10 @@ struct RuntimeConfigFile: Codable {
     var nudgeCooldownMinutes: Int
     var style: StylePrefs
     var annotateScreenshots: Bool
+    /// Pace multiplier for the Liquid Glass capture-loading intro (drain → pill
+    /// → smile). 1.0 = original timing; higher = snappier. Read fresh by the
+    /// lens on each capture, so a Settings change applies on the next press.
+    var lensAnimationSpeed: Double
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -94,6 +104,7 @@ struct RuntimeConfigFile: Codable {
         case allowContentRetention = "allow_content_retention"
         case soundsEnabled = "sounds_enabled"
         case thinkingLevel = "thinking_level"
+        case appThinkingLevels = "app_thinking_levels"
         case outputFormat = "output_format"
         case nudgesEnabled = "nudges_enabled"
         case lastNudgeAt = "last_nudge_at"
@@ -101,6 +112,7 @@ struct RuntimeConfigFile: Codable {
         case nudgeCooldownMinutes = "nudge_cooldown_minutes"
         case style
         case annotateScreenshots = "annotate_screenshots"
+        case lensAnimationSpeed = "lens_animation_speed"
     }
 
     init(
@@ -111,13 +123,15 @@ struct RuntimeConfigFile: Codable {
         allowContentRetention: Bool,
         soundsEnabled: Bool,
         thinkingLevel: String?,
+        appThinkingLevels: [String: String] = [:],
         outputFormat: String? = nil,
         nudgesEnabled: Bool,
         lastNudgeAt: Date?,
         recentNudgeDismissals: [Date],
         nudgeCooldownMinutes: Int,
         style: StylePrefs = .default,
-        annotateScreenshots: Bool = true
+        annotateScreenshots: Bool = true,
+        lensAnimationSpeed: Double = RuntimeConfigFile.defaultLensAnimationSpeed
     ) {
         self.version = version
         self.autoPaste = autoPaste
@@ -126,6 +140,7 @@ struct RuntimeConfigFile: Codable {
         self.allowContentRetention = allowContentRetention
         self.soundsEnabled = soundsEnabled
         self.thinkingLevel = thinkingLevel
+        self.appThinkingLevels = appThinkingLevels
         self.outputFormat = outputFormat
         self.nudgesEnabled = nudgesEnabled
         self.lastNudgeAt = lastNudgeAt
@@ -133,6 +148,7 @@ struct RuntimeConfigFile: Codable {
         self.nudgeCooldownMinutes = nudgeCooldownMinutes
         self.style = style
         self.annotateScreenshots = annotateScreenshots
+        self.lensAnimationSpeed = lensAnimationSpeed
     }
 
     init(from decoder: Decoder) throws {
@@ -146,6 +162,7 @@ struct RuntimeConfigFile: Codable {
             ?? false
         soundsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundsEnabled) ?? true
         thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        appThinkingLevels = try container.decodeIfPresent([String: String].self, forKey: .appThinkingLevels) ?? [:]
         outputFormat = try container.decodeIfPresent(String.self, forKey: .outputFormat)
         nudgesEnabled = try container.decodeIfPresent(Bool.self, forKey: .nudgesEnabled) ?? true
         lastNudgeAt = try container.decodeIfPresent(Date.self, forKey: .lastNudgeAt)
@@ -153,6 +170,8 @@ struct RuntimeConfigFile: Codable {
         nudgeCooldownMinutes = try container.decodeIfPresent(Int.self, forKey: .nudgeCooldownMinutes) ?? 30
         style = try container.decodeIfPresent(StylePrefs.self, forKey: .style) ?? .default
         annotateScreenshots = try container.decodeIfPresent(Bool.self, forKey: .annotateScreenshots) ?? true
+        lensAnimationSpeed = try container.decodeIfPresent(Double.self, forKey: .lensAnimationSpeed)
+            ?? Self.defaultLensAnimationSpeed
     }
 }
 
@@ -176,6 +195,9 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var thinkingLevel: String? {
         didSet { save() }
     }
+    @Published var appThinkingLevels: [String: String] {
+        didSet { save() }
+    }
     @Published var outputFormat: String? {
         didSet { save() }
     }
@@ -197,6 +219,13 @@ final class RuntimeConfigStore: ObservableObject {
     @Published var annotateScreenshots: Bool {
         didSet { save() }
     }
+    @Published var lensAnimationSpeed: Double {
+        didSet { save() }
+    }
+
+    /// Bounds for `lensAnimationSpeed`, shared by the Settings slider and the
+    /// lens (which clamps defensively in case the config file is hand-edited).
+    static let lensAnimationSpeedRange: ClosedRange<Double> = 1.0...3.0
 
     private var isSaving = false
 
@@ -208,6 +237,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.allowContentRetention = config.allowContentRetention
         self.soundsEnabled = config.soundsEnabled
         self.thinkingLevel = config.thinkingLevel
+        self.appThinkingLevels = config.appThinkingLevels
         self.outputFormat = config.outputFormat
         self.nudgesEnabled = config.nudgesEnabled
         self.lastNudgeAt = config.lastNudgeAt
@@ -215,6 +245,7 @@ final class RuntimeConfigStore: ObservableObject {
         self.nudgeCooldownMinutes = config.nudgeCooldownMinutes
         self.style = config.style
         self.annotateScreenshots = config.annotateScreenshots
+        self.lensAnimationSpeed = config.lensAnimationSpeed
     }
 
     var snapshot: RuntimeConfigFile {
@@ -226,14 +257,36 @@ final class RuntimeConfigStore: ObservableObject {
             allowContentRetention: allowContentRetention,
             soundsEnabled: soundsEnabled,
             thinkingLevel: thinkingLevel,
+            appThinkingLevels: appThinkingLevels,
             outputFormat: outputFormat,
             nudgesEnabled: nudgesEnabled,
             lastNudgeAt: lastNudgeAt,
             recentNudgeDismissals: recentNudgeDismissals,
             nudgeCooldownMinutes: nudgeCooldownMinutes,
             style: style,
-            annotateScreenshots: annotateScreenshots
+            annotateScreenshots: annotateScreenshots,
+            lensAnimationSpeed: lensAnimationSpeed
         )
+    }
+
+    /// The reasoning level a capture from `bundleID` should use: the per-app
+    /// override when one exists, otherwise the global default. A nil bundle id
+    /// (unknown source) falls back to the global level.
+    func resolvedThinkingLevel(forBundle bundleID: String?) -> String? {
+        if let bundleID, let level = appThinkingLevels[bundleID] {
+            return level
+        }
+        return thinkingLevel
+    }
+
+    /// Advance the per-app reasoning override for `bundleID` one step along the
+    /// `Off → Low → Medium → High → Off` cycle and persist it. Returns the new
+    /// level. The starting point is the app's current resolved level.
+    @discardableResult
+    func cycleThinkingLevel(forBundle bundleID: String) -> String {
+        let next = ReasoningLevels.next(after: appThinkingLevels[bundleID] ?? thinkingLevel)
+        appThinkingLevels[bundleID] = next
+        return next
     }
 
     private static func loadOrCreateConfig() -> RuntimeConfigFile {
@@ -256,7 +309,8 @@ final class RuntimeConfigStore: ObservableObject {
             recentNudgeDismissals: [],
             nudgeCooldownMinutes: 30,
             style: .default,
-            annotateScreenshots: true
+            annotateScreenshots: true,
+            lensAnimationSpeed: RuntimeConfigFile.defaultLensAnimationSpeed
         )
         write(config)
         return config

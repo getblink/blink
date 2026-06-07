@@ -70,7 +70,12 @@ echo "[blink] validating app bundle before packaging"
 assert_executable "$APP_PATH/Contents/MacOS/Blink"
 assert_executable "$APP_PATH/Contents/Resources/python/bin/python3"
 "$APP_PATH/Contents/Resources/python/bin/python3" --version >/dev/null
-"$APP_PATH/Contents/Resources/python/bin/python3" -c "import google.genai"
+# The client is proxy-only — the server makes the Gemini call, so the app no
+# longer bundles google-genai (requirements.txt is empty). Validate the real
+# entrypoint instead: the bundled interpreter must import blink_once.py (and
+# its local deps) with only what ships. Catches a broken bundle / missing
+# python-packages wiring without asserting a dependency the client dropped.
+( cd "$APP_PATH/Contents/Resources" && "$APP_PATH/Contents/Resources/python/bin/python3" -c "import blink_once" )
 assert_file "$APP_PATH/Contents/Resources/blink_once.py"
 assert_file "$APP_PATH/Contents/Resources/prompt.txt"
 if [[ -n "${BLINK_PROXY_URL:-}" ]]; then

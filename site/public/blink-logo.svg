@@ -1,0 +1,31 @@
+<svg width="520" height="520" viewBox="64 72 520 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="57" y="78" width="544" height="506" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0f1724" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#ffffff" flood-opacity="0.55"/>
+    </filter>
+    <filter id="innerShadow" x="122" y="139" width="428" height="393" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0f1724" flood-opacity="0.32"/>
+    </filter>
+    <linearGradient id="outer" x1="324" y1="102" x2="324" y2="553" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#343B4A"/>
+      <stop offset="1" stop-color="#2B3240"/>
+    </linearGradient>
+    <linearGradient id="face" x1="324" y1="156" x2="324" y2="509" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF9F0"/>
+      <stop offset="1" stop-color="#F9F1E7"/>
+    </linearGradient>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <path d="M87 238C87 161.8 148.8 100 225 100H423C499.2 100 561 161.8 561 238V416C561 492.2 499.2 554 423 554H225C148.8 554 87 492.2 87 416V238Z" fill="url(#outer)"/>
+  </g>
+
+  <g filter="url(#innerShadow)">
+    <path d="M139 255C139 199.8 183.8 155 239 155H409C464.2 155 509 199.8 509 255V409C509 464.2 464.2 509 409 509H239C183.8 509 139 464.2 139 409V255Z" fill="url(#face)"/>
+  </g>
+
+  <circle cx="231" cy="321" r="30" fill="#172033"/>
+  <circle cx="439" cy="321" r="30" fill="#172033"/>
+  <path d="M278 389C292 431 377 432 392 389" stroke="#172033" stroke-width="31" stroke-linecap="round"/>
+</svg>

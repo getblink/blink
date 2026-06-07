@@ -1,0 +1,763 @@
+---
+// Live product-demo animation (ported from the design prototype). A Claude Code
+// terminal session that Blink reads: a capture "lens" blooms on summon, a glass
+// tl;dr panel rises with three ranked reply cards, card 2 is picked, and the
+// steer lands in the composer — the see/draft/insert track lights in sync.
+// Pure CSS state machine driven by data-phase / data-act; the script just cycles
+// the phases (IO-gated; reduced-motion rests on the picked frame).
+---
+
+<div class="demo" data-phase="idle" data-act="">
+  <div class="stage" aria-hidden="true">
+    <div class="win">
+      <div class="win__bar">
+        <span class="tl"></span><span class="tl"></span><span class="tl"></span>
+      </div>
+      <div class="win__body">
+        <div class="cli">
+          <div class="cli-header">
+            <span class="ch-logo">▐▛███▜▌
+▜█████▛
+ ▘▘ ▝▝</span>
+            <div class="ch-meta">
+              <div class="ch-title">claude code</div>
+              <div class="ch-dim">opus 4.8</div>
+              <div class="ch-dim">~/blink</div>
+            </div>
+          </div>
+          <div class="u">migrate the users table to the new schema</div>
+          <div class="t">Read <code>schema.sql</code>, <code>models/user.py</code> +3</div>
+          <div class="t">Update <code>migrations/0042_user_schema.py</code></div>
+          <div class="t">Bash <code>pytest tests/test_users.py</code></div>
+          <div class="r">24 passed in 1.8s</div>
+          <div class="q">
+            heads up: dropping <code>email_verified</code> orphans 3,200 rows. drop
+            it, or keep it and backfill?
+          </div>
+          <div class="u in"><span class="typed"></span><span class="tcaret"></span></div>
+        </div>
+        <div class="cli-hint">auto mode on (shift+tab to cycle) &middot; + for agents</div>
+      </div>
+    </div>
+
+    <div class="lens"></div>
+    <div class="keycap"><kbd>&#8963;</kbd><kbd>&#8997;</kbd><kbd>space</kbd></div>
+
+    <div class="panel">
+      <div class="panel__head"><b>tl;dr</b></div>
+      <p class="panel__sum">
+        claude&rsquo;s mid-migration and needs a call: the new schema drops
+        email_verified, but 3,200 rows still use it.
+      </p>
+      <div class="cards-wrap">
+        <div class="cards">
+          <div class="card">
+            <span class="cnum">1</span>
+            <div class="card__main">
+              <span class="tag tag--ask"
+                ><svg viewBox="0 0 16 16" fill="currentColor"
+                  ><path
+                    d="M2 1a1 1 0 0 0-1 1v4.586a1 1 0 0 0 .293.707l7 7a1 1 0 0 0 1.414 0l4.586-4.586a1 1 0 0 0 0-1.414l-7-7A1 1 0 0 0 6.586 1H2zm4 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"
+                  ></path></svg
+                >ask</span
+              >
+              <div class="card__text">which rows still reference email_verified?</div>
+            </div>
+          </div>
+          <div class="card">
+            <span class="cnum">2</span>
+            <div class="card__main">
+              <span class="tag tag--reply"
+                ><svg viewBox="0 0 16 16" fill="currentColor"
+                  ><path
+                    d="M2 1a1 1 0 0 0-1 1v4.586a1 1 0 0 0 .293.707l7 7a1 1 0 0 0 1.414 0l4.586-4.586a1 1 0 0 0 0-1.414l-7-7A1 1 0 0 0 6.586 1H2zm4 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"
+                  ></path></svg
+                >reply</span
+              >
+              <div class="card__text">keep it, re-add nullable and backfill.</div>
+            </div>
+            <span class="card__pick">&crarr; enter to insert</span>
+          </div>
+          <div class="card">
+            <span class="cnum">3</span>
+            <div class="card__main">
+              <span class="tag tag--next"
+                ><svg viewBox="0 0 16 16" fill="currentColor"
+                  ><path
+                    d="M2 1a1 1 0 0 0-1 1v4.586a1 1 0 0 0 .293.707l7 7a1 1 0 0 0 1.414 0l4.586-4.586a1 1 0 0 0 0-1.414l-7-7A1 1 0 0 0 6.586 1H2zm4 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"
+                  ></path></svg
+                >next step</span
+              >
+              <div class="card__text">drop it, but snapshot the table first.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="track">
+    <li data-step="see">
+      <span class="tnum">01</span><span class="tverb">see</span><span class="tdesc"
+        >reads the whole session</span
+      >
+    </li>
+    <li data-step="draft">
+      <span class="tnum">02</span><span class="tverb">draft</span><span class="tdesc"
+        >three ways to steer it</span
+      >
+    </li>
+    <li data-step="insert">
+      <span class="tnum">03</span><span class="tverb">insert</span><span class="tdesc"
+        >lands in the prompt</span
+      >
+    </li>
+  </ol>
+</div>
+
+<style>
+  /* tokens the ported demo needs, mapped onto the site's palette. The terminal
+     theme (dark) is re-declared locally on .stage; the track below stays light. */
+  .demo {
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --terra: var(--clay);
+    --ink-soft: var(--fg-muted);
+    --line: var(--line-soft);
+  }
+
+  .stage {
+    --pad: clamp(18px, 2.6vw, 36px);
+    /* a deeper vertical inset so the window floats with more room top + bottom.
+       kept modest + capped so it can't outgrow the window's fixed content. */
+    --pad-y: clamp(26px, 2.6vw, 42px);
+    /* dark theme applies to the terminal + overlay only */
+    --win: oklch(0.215 0.008 262);
+    --ink: oklch(0.93 0.008 255);
+    --ink-soft: oklch(0.66 0.012 258);
+    --line: oklch(0.92 0.012 255 / 0.13);
+    --line-soft: oklch(0.92 0.012 255 / 0.07);
+    --paper: oklch(0.26 0.009 262);
+    --mbh: 0px;
+    position: relative;
+    overflow: hidden;
+    /* the desktop behind the terminal — a soft sky blue tied to the site's
+       accent + the hero painting, so the demo reads as part of the theme */
+    border: 1px solid color-mix(in oklch, var(--sky) 30%, transparent);
+    border-radius: 18px;
+    /* size the stage to the terminal's fixed content (~438px window) PLUS the
+       insets, so the window hugs its content (hint sits just under the prompt,
+       no dead space) and grows only with --pad-y — never clipping, never gapping. */
+    height: calc(438px + 2 * var(--pad-y));
+    background: linear-gradient(
+      165deg,
+      oklch(0.88 0.05 232) 0%,
+      oklch(0.82 0.07 238) 100%
+    );
+    box-shadow: 0 30px 60px -44px color-mix(in oklch, var(--ink) 38%, transparent);
+  }
+
+  /* the focused app — a claude code session blink is reading */
+  .win {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(100% - 2 * var(--pad), 700px);
+    top: calc(var(--mbh) + var(--pad-y));
+    bottom: var(--pad-y);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--win);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 20px 44px -26px oklch(0.3 0.03 68 / 0.4);
+  }
+  .win__bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--line-soft);
+    flex: 0 0 auto;
+  }
+  .win__bar .tl {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+  }
+  .win__bar .tl:nth-child(1) {
+    background: #ff5f57;
+  }
+  .win__bar .tl:nth-child(2) {
+    background: #febc2e;
+  }
+  .win__bar .tl:nth-child(3) {
+    background: #28c840;
+  }
+
+  .win__body {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    padding: clamp(14px, 2vw, 22px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cli {
+    font-family: var(--mono);
+    font-size: clamp(0.78rem, 1.02vw, 0.9rem);
+    line-height: 1.5;
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cli .u::before {
+    content: "> ";
+    color: var(--sky);
+  }
+  .cli .t {
+    color: var(--ink-soft);
+  }
+  .cli .t::before {
+    content: "\25CF  ";
+    color: var(--terra);
+  }
+  .cli .r {
+    color: var(--ink-soft);
+    opacity: 0.8;
+    padding-left: 16px;
+  }
+  .cli .r::before {
+    content: "\2514 ";
+    color: var(--ink-soft);
+    opacity: 0.55;
+  }
+  .cli .q {
+    color: var(--ink);
+    margin-top: 6px;
+    padding-left: 11px;
+    border-left: 2px solid var(--terra);
+  }
+  .cli code {
+    font-family: inherit;
+    background: oklch(0.72 0.12 50 / 0.14);
+    color: oklch(0.78 0.11 55);
+    border-radius: 4px;
+    padding: 0 4px;
+  }
+  .cli-header {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    width: fit-content;
+    max-width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+  }
+  .cli-header .ch-logo {
+    color: var(--terra);
+    white-space: pre;
+    flex: 0 0 auto;
+    font-size: 1.15em;
+    line-height: 0.9;
+    letter-spacing: 0;
+    margin-top: 1px;
+  }
+  .cli-header .ch-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .cli-header .ch-title {
+    color: var(--ink);
+  }
+  .cli-header .ch-dim {
+    color: var(--ink-soft);
+  }
+  .cli-hint {
+    margin-top: auto;
+    padding-top: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+    opacity: 0.85;
+  }
+  .cli-hint::before {
+    content: "\25B8  ";
+    color: var(--terra);
+  }
+
+  /* capture "lens" — a blue frame blooms around the window, then fades */
+  .lens {
+    position: absolute;
+    z-index: 3;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(100% - 2 * var(--pad), 700px);
+    top: calc(var(--mbh) + var(--pad-y));
+    bottom: var(--pad-y);
+    border-radius: 14px;
+    pointer-events: none;
+    opacity: 0;
+    border: 2px solid var(--sky);
+    background: oklch(0.68 0.12 235 / 0.1);
+    box-shadow: 0 0 6px oklch(0.68 0.12 235 / 0.65);
+  }
+  .demo[data-phase="summon"] .lens {
+    animation: lens 0.85s cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+  }
+  @keyframes lens {
+    0% {
+      opacity: 0;
+      border-width: 2px;
+      box-shadow: 0 0 6px oklch(0.68 0.12 235 / 0.65);
+      transform: translateX(-50%) scale(1);
+    }
+    20% {
+      opacity: 1;
+    }
+    55% {
+      border-width: 6px;
+      box-shadow: 0 0 22px oklch(0.68 0.12 235 / 0.65);
+      transform: translateX(-50%) scale(0.99);
+    }
+    100% {
+      opacity: 0;
+      border-width: 6px;
+      box-shadow: 0 0 22px oklch(0.68 0.12 235 / 0.65);
+      transform: translateX(-50%) scale(1);
+    }
+  }
+
+  /* hotkey keycap that flashes when blink is summoned */
+  .keycap {
+    position: absolute;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    left: calc((100% - min(100% - 2 * var(--pad), 700px)) / 2 + 22px);
+    bottom: calc(var(--pad-y) + 20px);
+    transform: translateY(6px) scale(0.97);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 0.25s ease,
+      transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .demo[data-phase="summon"] .keycap {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .keycap kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2em;
+    height: 1.75em;
+    padding: 0 0.6em;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: clamp(13px, 1.5vw, 15.5px);
+    font-weight: 600;
+    line-height: 1;
+    color: oklch(0.3 0.015 264);
+    background: oklch(0.91 0.006 250);
+    border-radius: 6px;
+  }
+
+  /* the floating Blink glass panel — tl;dr + three ranked reply cards */
+  .panel {
+    position: absolute;
+    z-index: 6;
+    left: 50%;
+    top: 50%;
+    width: min(86%, 440px);
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 14px)) scale(0.96);
+    background: oklch(0.235 0.014 264 / 0.94);
+    backdrop-filter: blur(24px) saturate(135%);
+    border: 1px solid oklch(0.95 0.02 255 / 0.13);
+    border-radius: 18px;
+    padding: 14px 16px;
+    /* drop shadow only — no inset top highlight, which otherwise stacks on the
+       border and makes the top edge read thicker than the other sides. */
+    box-shadow: 0 36px 74px -28px oklch(0.02 0.01 264 / 0.78);
+    transition:
+      opacity 0.42s ease,
+      transform 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.06);
+  }
+  .demo[data-phase="tldr"] .panel,
+  .demo[data-phase="suggest"] .panel,
+  .demo[data-phase="pick"] .panel {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .panel__head {
+    display: flex;
+    align-items: center;
+  }
+  .panel__head b {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .panel__sum {
+    margin: 6px 0 9px;
+    font-size: clamp(0.84rem, 1.02vw, 0.93rem);
+    color: var(--ink);
+    line-height: 1.45;
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity 0.4s ease 0.12s,
+      transform 0.4s ease 0.12s;
+  }
+  .demo[data-phase="tldr"] .panel__sum,
+  .demo[data-phase="suggest"] .panel__sum,
+  .demo[data-phase="pick"] .panel__sum,
+  .demo[data-phase="insert"] .panel__sum,
+  .demo[data-phase="settle"] .panel__sum {
+    opacity: 1;
+    transform: none;
+  }
+  .cards-wrap {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.06);
+  }
+  .demo[data-phase="suggest"] .cards-wrap,
+  .demo[data-phase="pick"] .cards-wrap,
+  .demo[data-phase="insert"] .cards-wrap,
+  .demo[data-phase="settle"] .cards-wrap {
+    grid-template-rows: 1fr;
+  }
+  .cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .card {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 11px 13px;
+    border: 1px solid oklch(0.95 0.02 255 / 0.08);
+    border-radius: 12px;
+    background: oklch(0.305 0.013 264 / 0.86);
+    opacity: 0;
+    transform: scale(0.97);
+    transition:
+      opacity 0.4s ease,
+      transform 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.06),
+      background 0.3s ease,
+      border-color 0.3s ease;
+  }
+  .demo[data-phase="suggest"] .card,
+  .demo[data-phase="pick"] .card,
+  .demo[data-phase="insert"] .card,
+  .demo[data-phase="settle"] .card {
+    opacity: 1;
+    transform: none;
+  }
+  .card:nth-child(2) {
+    transition-delay: 0.06s;
+  }
+  .card:nth-child(3) {
+    transition-delay: 0.12s;
+  }
+  .card .cnum {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--line);
+    transition:
+      color 0.3s ease,
+      background 0.3s ease,
+      border-color 0.3s ease;
+  }
+  .card__main {
+    flex: 1;
+    min-width: 0;
+  }
+  .card__text {
+    font-size: clamp(0.84rem, 1.02vw, 0.94rem);
+    color: var(--ink);
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+  }
+  .tag svg {
+    width: 9px;
+    height: 9px;
+  }
+  .tag--reply {
+    color: oklch(0.74 0.13 250);
+    background: oklch(0.74 0.13 250 / 0.16);
+  }
+  .tag--ask {
+    color: oklch(0.74 0.15 300);
+    background: oklch(0.74 0.15 300 / 0.16);
+  }
+  .tag--next {
+    color: oklch(0.74 0.16 150);
+    background: oklch(0.74 0.16 150 / 0.16);
+  }
+
+  /* picked card (2) takes blink's blue selection tint */
+  .demo[data-phase="pick"] .card:nth-child(2),
+  .demo[data-phase="insert"] .card:nth-child(2),
+  .demo[data-phase="settle"] .card:nth-child(2) {
+    background: oklch(0.68 0.12 235 / 0.14);
+    border-color: oklch(0.68 0.12 235 / 0.45);
+  }
+  .demo[data-phase="pick"] .card:nth-child(2) .cnum,
+  .demo[data-phase="insert"] .card:nth-child(2) .cnum,
+  .demo[data-phase="settle"] .card:nth-child(2) .cnum {
+    color: var(--paper);
+    background: var(--sky);
+    border-color: var(--sky);
+  }
+  .card__pick {
+    position: absolute;
+    right: 13px;
+    top: 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--sky);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .demo[data-phase="pick"] .card:nth-child(2) .card__pick,
+  .demo[data-phase="insert"] .card:nth-child(2) .card__pick,
+  .demo[data-phase="settle"] .card:nth-child(2) .card__pick {
+    opacity: 1;
+  }
+
+  /* the steer types in at the next prompt — a terminal has no reply box */
+  .cli .in {
+    margin-top: 3px;
+  }
+  .cli .in .typed {
+    white-space: pre-wrap;
+    color: var(--ink);
+  }
+  .tcaret {
+    display: inline-block;
+    width: 0.5em;
+    height: 1.05em;
+    vertical-align: -0.16em;
+    background: var(--sky);
+    margin-left: 2px;
+    opacity: 0.85;
+    animation: demo-blink 1.05s steps(1) infinite;
+  }
+  @keyframes demo-blink {
+    0%,
+    50% {
+      opacity: 1;
+    }
+    50.01%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .track {
+    list-style: none;
+    margin: 16px 0 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .track li {
+    position: relative;
+    padding: 16px clamp(14px, 1.8vw, 22px);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: background 0.4s ease;
+  }
+  .track li:last-child {
+    border-right: 0;
+  }
+  .track .tnum {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    transition: color 0.3s ease;
+  }
+  .track .tverb {
+    font-weight: 700;
+    font-size: clamp(1.1rem, 1.6vw, 1.35rem);
+    letter-spacing: -0.02em;
+    color: var(--fg);
+  }
+  .track .tdesc {
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+  }
+  .track li::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: 100%;
+    background: var(--sky);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .demo[data-act="see"] [data-step="see"]::after,
+  .demo[data-act="draft"] [data-step="draft"]::after,
+  .demo[data-act="insert"] [data-step="insert"]::after {
+    transform: scaleX(1);
+  }
+  .demo[data-act="see"] [data-step="see"],
+  .demo[data-act="draft"] [data-step="draft"],
+  .demo[data-act="insert"] [data-step="insert"] {
+    background: oklch(0.68 0.12 235 / 0.06);
+  }
+  .demo[data-act="see"] [data-step="see"] .tnum,
+  .demo[data-act="draft"] [data-step="draft"] .tnum,
+  .demo[data-act="insert"] [data-step="insert"] .tnum {
+    color: var(--sky);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lens,
+    .tcaret {
+      animation: none;
+    }
+    .panel,
+    .panel__sum,
+    .card,
+    .cards-wrap,
+    .keycap {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  // Live product demo: cycles summon -> read -> tl;dr -> suggest -> pick ->
+  // dismiss -> insert -> settle. Only runs while in view; reduced motion rests
+  // on the picked frame.
+  (function () {
+    var reduce =
+      window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var hasIO = "IntersectionObserver" in window;
+    var demo = document.querySelector(".demo");
+    if (!demo) return;
+    var typed = demo.querySelector(".cli .typed");
+    var reply = "keep it, re-add nullable and backfill.";
+    // which step-track segment (see/draft/insert) is lit for each phase
+    var ACT = {
+      summon: "see",
+      read: "see",
+      tldr: "draft",
+      suggest: "draft",
+      pick: "insert",
+      dismiss: "insert",
+      insert: "insert",
+      settle: "insert",
+    };
+    // dismiss = panel fades out, a beat passes, THEN the steer lands (not at once)
+    var phases = [
+      ["idle", 800],
+      ["summon", 1300],
+      ["read", 950],
+      ["tldr", 1000],
+      ["suggest", 1900],
+      ["pick", 1200],
+      ["dismiss", 450],
+      ["insert", 1300],
+      ["settle", 1600],
+    ];
+    var i = 0,
+      timer = null,
+      running = false;
+
+    function setPhase(p) {
+      demo.dataset.phase = p;
+      demo.dataset.act = ACT[p] || "";
+      if (p === "insert" || p === "settle") typed.textContent = reply;
+      else if (p === "idle" || p === "summon") typed.textContent = "";
+    }
+    function step() {
+      var ph = phases[i];
+      setPhase(ph[0]);
+      i = (i + 1) % phases.length;
+      timer = setTimeout(step, ph[1]);
+    }
+    function start() {
+      if (running) return;
+      running = true;
+      i = 0;
+      step();
+    }
+    function stop() {
+      running = false;
+      if (timer) clearTimeout(timer);
+      typed.textContent = "";
+      setPhase("idle");
+    }
+
+    // reduced motion: rest on the signature frame — panel up, three cards, #2 picked
+    if (reduce) {
+      setPhase("pick");
+      return;
+    }
+
+    if (hasIO) {
+      var io = new IntersectionObserver(
+        function (entries) {
+          entries.forEach(function (e) {
+            if (e.isIntersecting) start();
+            else stop();
+          });
+        },
+        { threshold: 0.35 },
+      );
+      io.observe(demo);
+    } else {
+      start();
+    }
+  })();
+</script>
