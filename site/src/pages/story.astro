@@ -13,7 +13,6 @@ const description =
 
   <main class="story">
     <article class="container article">
-      <p class="article__eyebrow">the story</p>
       <h1>what is blink?</h1>
 
       <p>the slowest thing on my computer is me typing.</p>
@@ -85,22 +84,6 @@ const description =
     }
     .article {
       max-width: 680px;
-    }
-    .article__eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--fg-muted);
-      margin-bottom: 20px;
-    }
-    .article__eyebrow::before {
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: var(--sky);
     }
     .article h1 {
       font-size: clamp(2.4rem, 5vw, 3.6rem);

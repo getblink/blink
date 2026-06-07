@@ -29,21 +29,114 @@ const links = [
   </div>
 </header>
 
+<script is:inline>
+  // Landing: keep the bar hidden over the hero, then drop the floating pill in
+  // once the hero scrolls past. Other pages (no hero) just pill on scroll.
+  // This script runs before <main> is parsed, so the hero isn't queryable yet —
+  // hide synchronously on the landing path (no first-paint flash of the bar
+  // over the hero), then wire up the scroll logic once the DOM is ready.
+  (() => {
+    const bar = document.querySelector(".topbar");
+    if (!bar) return;
+    if (location.pathname === "/") bar.classList.add("is-floating", "is-hidden");
+
+    const start = () => {
+      const hero = document.querySelector(".hero");
+      let ticking = false;
+      const update = () => {
+        ticking = false;
+        if (hero) {
+          const past = hero.getBoundingClientRect().bottom < 80;
+          bar.classList.add("is-floating"); // landing bar is always pill-shaped
+          bar.classList.toggle("is-hidden", !past);
+        } else {
+          bar.classList.toggle("is-floating", window.scrollY > 120);
+        }
+      };
+      const onScroll = () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(update);
+      };
+      update();
+      addEventListener("scroll", onScroll, { passive: true });
+      addEventListener("resize", onScroll, { passive: true });
+    };
+
+    if (document.readyState === "loading")
+      addEventListener("DOMContentLoaded", start);
+    else start();
+  })();
+</script>
+
 <style>
   .topbar {
     position: sticky;
     top: 0;
     z-index: 50;
-    background: oklch(97.6% 0.006 96 / 0.8);
-    backdrop-filter: blur(16px) saturate(140%);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
-    border-bottom: 1px solid var(--line-faint);
+    /* At rest the bar is transparent and floats over the top of the hero
+       card — no full-width strip. When you scroll past the hero it condenses
+       onto the inner pill (see .is-floating). */
+    background: transparent;
+    border-bottom: 1px solid transparent;
+    transition:
+      transform 460ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 320ms ease,
+      background 280ms ease,
+      border-color 280ms ease,
+      padding-top 360ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* On the landing the hero already carries the wordmark, so the bar stays
+     hidden (tucked up off the top) until you scroll past the hero — then it
+     drops in as the floating pill. */
+  .topbar.is-hidden {
+    transform: translateY(-130%);
+    opacity: 0;
+    pointer-events: none;
   }
   .topbar__inner {
     display: flex;
     align-items: center;
     gap: 24px;
     height: var(--topbar-h);
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+    transition:
+      max-width 420ms cubic-bezier(0.16, 1, 0.3, 1),
+      height 360ms cubic-bezier(0.16, 1, 0.3, 1),
+      padding 360ms cubic-bezier(0.16, 1, 0.3, 1),
+      background 280ms ease,
+      box-shadow 360ms ease;
+  }
+
+  /* --- Floating pill: triggered (via JS) once you scroll past the hero. The
+     bar detaches from the top edge and condenses into a centered pill. --- */
+  .topbar.is-floating {
+    background: transparent;
+    border-color: transparent;
+    /* drop the bar-wide blur so only the pill frosts the content behind it */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding-top: clamp(8px, 1.1vw, 14px);
+  }
+  .topbar.is-floating .topbar__inner {
+    max-width: 900px;
+    height: 54px;
+    /* equal inset all round so the CTA sits concentric inside the pill */
+    padding-inline: 22px 7px;
+    background: oklch(98.5% 0.004 96 / 0.6);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    box-shadow:
+      0 0 0 1px color-mix(in oklch, var(--fg) 7%, transparent),
+      0 8px 24px -14px color-mix(in oklch, var(--ink) 32%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .topbar,
+    .topbar__inner {
+      transition: none;
+    }
   }
   .topbar__brand {
     display: inline-flex;

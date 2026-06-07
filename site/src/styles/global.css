@@ -128,9 +128,14 @@ button:focus-visible {
   transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 200ms ease, color 140ms ease, background 140ms ease;
 }
+/* The canonical "join the beta" CTA — a dark-ink stadium with a sky arrow,
+   for light grounds (the hero wash, the frosted nav pill). Its synced inverse
+   (.btn--on-dark) is the light half of the pair, for the deep-ink join card —
+   same shape and scale, fill flipped. */
 .btn--primary {
   color: var(--paper);
   background: var(--fg);
+  border-radius: 999px;
   box-shadow: var(--e-2);
 }
 .btn--primary:hover {
@@ -144,6 +149,14 @@ button:focus-visible {
 }
 .btn--primary:hover .btn__arrow {
   transform: translateX(3px);
+}
+/* light inverse — flips the fill for dark grounds, keeps the sky arrow accent */
+.btn--on-dark {
+  background: var(--paper);
+  color: var(--ink);
+}
+.btn--on-dark .btn__arrow {
+  color: var(--sky-deep);
 }
 .btn--ghost {
   height: auto;
