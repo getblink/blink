@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from env_loader import load_runtime_env
-from image_prep import prepare_request_image
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -24,40 +23,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "temperature": 1.0,
     "max_output_tokens": 512,
     "media_resolution": "MEDIA_RESOLUTION_LOW",
-    "preprocess_request_images": True,
-    "request_image_format": "jpeg",
-    "request_image_max_dimension": 1600,
-    "request_image_jpeg_quality": 70,
     "timeout_seconds": 120,
 }
-
-
-def _is_thinking_model(model: str) -> bool:
-    """Gemini 3 Pro / Flash are reasoning models with non-trivial thinking budgets."""
-    if not model:
-        return False
-    name = model.lower()
-    if not name.startswith(("gemini-3-", "gemini-3.")):
-        return False
-    return "flash-lite" not in name
-
-
-def thinking_level_for_model(model: str) -> str | None:
-    """Return the thinking_level for a model, or None to omit it.
-
-    "high" is the Google-documented default for Gemini 3 Flash/Pro. "minimal"
-    is avoided: Flash hallucinates its own model name at that level.
-    """
-    return "high" if _is_thinking_model(model) else None
-
-
-def max_output_tokens_for_model(model: str) -> int | None:
-    """Per-model override for max_output_tokens, or None to honor settings.
-
-    Thinking tokens count against max_output_tokens, so leave headroom for
-    THINKING_BUDGET_TOKENS plus a comfortable JSON reply.
-    """
-    return 2048 if _is_thinking_model(model) else None
 
 
 def media_resolution_for_model(model: str, base: str) -> str:
@@ -65,23 +32,6 @@ def media_resolution_for_model(model: str, base: str) -> str:
         return "MEDIA_RESOLUTION_MEDIUM"
     return base
 
-
-def build_generate_config(types_module, prompt_text: str, settings: dict[str, Any], is_followup: bool = False):
-    model = settings.get("model", "")
-    max_tokens = max_output_tokens_for_model(model) or settings["max_output_tokens"]
-    media_resolution = media_resolution_for_model(model, settings["media_resolution"])
-    kwargs = dict(
-        system_instruction=prompt_text,
-        temperature=settings["temperature"],
-        max_output_tokens=max_tokens,
-        media_resolution=media_resolution,
-        response_mime_type="application/json",
-        response_schema=response_schema(is_followup=is_followup),
-    )
-    level = thinking_level_for_model(model)
-    if level is not None:
-        kwargs["thinking_config"] = types_module.ThinkingConfig(thinking_level=level)
-    return types_module.GenerateContentConfig(**kwargs)
 
 PROXY_URL_ENV = "BLINK_PROXY_URL"
 PROXY_TOKEN_ENV = "BLINK_PROXY_TOKEN"
@@ -1164,71 +1114,6 @@ def response_schema_contract(supports_attachments: bool = False, is_followup: bo
     }
 
 
-def response_schema(supports_attachments: bool = False, is_followup: bool = False):
-    from google.genai import types
-
-    contract = response_schema_contract(supports_attachments=supports_attachments, is_followup=is_followup)
-    suggestion_item_contract = contract["properties"]["suggestions"]["items"]
-    suggestion_required = suggestion_item_contract["required"]
-    suggestion_ordering = suggestion_item_contract["property_ordering"]
-
-    suggestion_properties: dict[str, Any] = {
-        "text": types.Schema(
-            type=types.Type.STRING,
-            description="A candidate reply or next action the user might send next.",
-        ),
-        "tags": types.Schema(
-            type=types.Type.ARRAY,
-            minItems=1,
-            maxItems=2,
-            items=types.Schema(
-                type=types.Type.STRING,
-                maxLength=SUGGESTION_TAG_MAX_CHARS,
-                description="A short label describing the suggestion's move.",
-            ),
-        ),
-    }
-    if supports_attachments:
-        suggestion_properties["attachments"] = types.Schema(
-            type=types.Type.ARRAY,
-            items=types.Schema(
-                type=types.Type.OBJECT,
-                required=["id", "reason"],
-                properties={
-                    "id": types.Schema(type=types.Type.STRING),
-                    "reason": types.Schema(type=types.Type.STRING, maxLength=80),
-                },
-            ),
-        )
-
-    return types.Schema(
-        type=types.Type.OBJECT,
-        required=contract["required"],
-        propertyOrdering=contract["property_ordering"],
-        properties={
-            "schema_version": types.Schema(
-                type=types.Type.INTEGER,
-                description="Response schema version. Always 2.",
-            ),
-            "tldr": types.Schema(
-                type=types.Type.STRING,
-                description="Takeaway summary of the capture. Length scales with capture density (see prompt rule 10).",
-            ),
-            "suggestions": types.Schema(
-                type=types.Type.ARRAY,
-                minItems=0 if is_followup else 3,
-                maxItems=3,
-                items=types.Schema(
-                    type=types.Type.OBJECT,
-                    required=suggestion_required,
-                    propertyOrdering=suggestion_ordering,
-                    properties=suggestion_properties,
-                ),
-            ),
-        },
-    )
-
-
 def parse_json_response(raw_text: str) -> tuple[Any | None, str | None]:
     try:
         parsed = json.loads(raw_text)
@@ -1395,67 +1280,6 @@ def build_response_payload(
         }
     )
     return payload
-
-
-def prepare_screenshot_part(
-    types_module,
-    screenshot_path: Path,
-    settings: dict[str, Any],
-) -> tuple[Any, dict[str, Any]]:
-    request_image = prepare_request_image(screenshot_path, settings)
-    image_part = types_module.Part.from_bytes(
-        data=request_image["bytes_data"],
-        mime_type=request_image["mime_type"],
-    )
-    diagnostics = {
-        "image_bytes_original": request_image["original_bytes"],
-        "image_bytes_compressed": request_image["request_bytes"],
-        "image_prepare_ms": request_image["duration_ms"],
-        "media_resolution_resolved": media_resolution_for_model(
-            str(settings.get("model") or ""),
-            str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
-        ),
-    }
-    return image_part, diagnostics
-
-
-def prepare_screenshot_parts(
-    types_module,
-    screenshot_paths: list[Path],
-    settings: dict[str, Any],
-) -> tuple[list[Any], dict[str, Any]]:
-    parts: list[Any] = []
-    frames: list[dict[str, Any]] = []
-    original_total = 0
-    compressed_total = 0
-    prepare_total = 0
-    media_resolution = media_resolution_for_model(
-        str(settings.get("model") or ""),
-        str(settings.get("media_resolution") or "MEDIA_RESOLUTION_LOW"),
-    )
-    for index, screenshot_path in enumerate(screenshot_paths):
-        part, diagnostics = prepare_screenshot_part(types_module, screenshot_path, settings)
-        parts.append(part)
-        original_total += int(diagnostics.get("image_bytes_original") or 0)
-        compressed_total += int(diagnostics.get("image_bytes_compressed") or 0)
-        prepare_total += int(diagnostics.get("image_prepare_ms") or 0)
-        frames.append(
-            {
-                "index": index,
-                "path": str(screenshot_path),
-                **diagnostics,
-            }
-        )
-    return parts, {
-        "frames": frames,
-        "frame_count": len(screenshot_paths),
-        "image_bytes_original": original_total,
-        "image_bytes_compressed": compressed_total,
-        "image_prepare_ms": prepare_total,
-        "image_bytes_original_total": original_total,
-        "image_bytes_compressed_total": compressed_total,
-        "media_resolution_resolved": media_resolution,
-    }
 
 
 def emit_stream_event(kind: str, payload: dict[str, Any]) -> None:
@@ -1837,8 +1661,10 @@ def _encode_multipart_request(
         request_json,
         b"\r\n",
     ]
+    suffix_content_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
     for index, image_path in enumerate(image_paths):
         field_name = "screenshot" if index == 0 else f"screenshot_{index}"
+        content_type = suffix_content_types.get(image_path.suffix.lower(), "image/png")
         parts.extend(
             [
                 f"--{boundary}\r\n".encode("utf-8"),
@@ -1846,7 +1672,7 @@ def _encode_multipart_request(
                     f'Content-Disposition: form-data; name="{field_name}"; '
                     f'filename="screenshot_{index}{image_path.suffix or ".png"}"\r\n'
                 ).encode("utf-8"),
-                b"Content-Type: image/png\r\n\r\n",
+                f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"),
                 image_path.read_bytes(),
                 b"\r\n",
             ]
@@ -2132,99 +1958,6 @@ def stream_phase_message(request_payload: dict[str, Any]) -> str:
     )
 
 
-def generate(
-    screenshot_paths: list[Path],
-    prompt_text: str,
-    settings: dict[str, Any],
-    is_followup: bool = False,
-) -> dict[str, Any]:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
-    )
-    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
-    started = time.perf_counter()
-    response = client.models.generate_content(
-        model=settings["model"],
-        contents=image_parts + [MODEL_CONTENT_TEXT],
-        config=config,
-    )
-    duration_ms = int(round((time.perf_counter() - started) * 1000))
-    raw_text = (response.text or "").strip()
-    return build_response_payload(
-        raw_text=raw_text,
-        usage=getattr(response, "usage_metadata", None),
-        duration_ms=duration_ms,
-        image_diagnostics=image_diagnostics,
-        is_followup=is_followup,
-    )
-
-
-def generate_streaming(
-    screenshot_paths: list[Path],
-    prompt_text: str,
-    settings: dict[str, Any],
-    is_followup: bool = False,
-) -> dict[str, Any]:
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        http_options=types.HttpOptions(timeout=int(settings["timeout_seconds"] * 1000)),
-    )
-    image_parts, image_diagnostics = prepare_screenshot_parts(types, screenshot_paths, settings)
-    config = build_generate_config(types, prompt_text, settings, is_followup=is_followup)
-    started = time.perf_counter()
-    raw_text = ""
-    usage = None
-    last_partial = ""
-    last_partial_suggestions: list[str] = []
-    first_token_perf: float | None = None
-    for chunk in client.models.generate_content_stream(
-        model=settings["model"],
-        contents=image_parts + [MODEL_CONTENT_TEXT],
-        config=config,
-    ):
-        text = getattr(chunk, "text", None) or ""
-        if text:
-            if first_token_perf is None:
-                first_token_perf = time.perf_counter()
-            raw_text += text
-            partial = extract_partial_tldr(raw_text)
-            if partial and partial != last_partial:
-                last_partial = partial
-                emit_stream_event("partial_tldr", {"tldr": partial})
-            partial_suggestions = extract_partial_suggestions(raw_text)
-            if partial_suggestions and partial_suggestions != last_partial_suggestions:
-                last_partial_suggestions = list(partial_suggestions)
-                emit_stream_event(
-                    "partial_suggestions",
-                    {"suggestions": partial_suggestions},
-                )
-        chunk_usage = getattr(chunk, "usage_metadata", None)
-        if chunk_usage is not None:
-            usage = chunk_usage
-    finished_perf = time.perf_counter()
-    duration_ms = int(round((finished_perf - started) * 1000))
-    payload = build_response_payload(
-        raw_text=raw_text.strip(),
-        usage=usage,
-        duration_ms=duration_ms,
-        image_diagnostics=image_diagnostics,
-        is_followup=is_followup,
-    )
-    if first_token_perf is not None:
-        ttft_ms = int(round((first_token_perf - started) * 1000))
-        payload["time_to_first_token_ms"] = ttft_ms
-        payload["streaming_ms"] = max(0, duration_ms - ttft_ms)
-    return payload
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one Blink screenshot request.")
     parser.add_argument("--screenshot", type=Path, required=True, action="append")
@@ -2275,18 +2008,13 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(catalog, list) and catalog:
             forwarded_prefs["attachments_catalog"] = catalog
         request_payload["preferences"] = forwarded_prefs
-    generation_path = (
-        "skip_gemini"
-        if args.skip_gemini
-        else ("proxy" if proxy_settings is not None and request_payload.get("request_id") else "local_gemini")
-    )
+    generation_path = "skip_gemini" if args.skip_gemini else "proxy"
     reroll_context = request_payload.get("reroll_context") if isinstance(request_payload.get("reroll_context"), dict) else None
-    is_followup = reroll_context is not None
     if style:
         request_payload["style"] = style
     model_prompt_text = (
         prompt_with_context(prompt_text, stateful_context, reroll_context, style)
-        if generation_path in {"proxy", "local_gemini"}
+        if generation_path == "proxy"
         else prompt_text
     )
 
@@ -2299,11 +2027,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("At least one --screenshot is required.")
     if len(screenshot_paths) > MAX_SCREENSHOT_FRAMES:
         raise ValueError(f"At most {MAX_SCREENSHOT_FRAMES} screenshots are supported.")
-    screenshot_out = run_dir / "screenshot.png"
     screenshot_outputs: list[Path] = []
     frame_logs: list[dict[str, Any]] = []
     for index, screenshot_path in enumerate(screenshot_paths):
-        frame_out = run_dir / f"screenshot_{index}.png"
+        # Preserve the source extension (Swift hands us a .jpg now) so the
+        # uploaded copy carries the right Content-Type and the run artifact
+        # isn't JPEG bytes mislabeled as .png.
+        suffix = screenshot_path.suffix or ".png"
+        frame_out = run_dir / f"screenshot_{index}{suffix}"
         shutil.copy2(screenshot_path, frame_out)
         screenshot_outputs.append(frame_out)
         frame_logs.append(
@@ -2313,6 +2044,7 @@ def main(argv: list[str] | None = None) -> int:
                 "bytes": frame_out.stat().st_size,
             }
         )
+    screenshot_out = run_dir / f"screenshot{screenshot_outputs[0].suffix}"
     shutil.copy2(screenshot_outputs[0], screenshot_out)
     save_json(run_dir / "frames.json", frame_logs)
     save_json(run_dir / "request.json", request_payload)
@@ -2351,7 +2083,7 @@ def main(argv: list[str] | None = None) -> int:
             "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
         },
         "frame_count": len(screenshot_outputs),
-        "screenshot": {"path": "screenshot.png", "bytes": screenshot_out.stat().st_size},
+        "screenshot": {"path": screenshot_out.name, "bytes": screenshot_out.stat().st_size},
         "screenshots": [
             {"path": item.name, "bytes": item.stat().st_size}
             for item in screenshot_outputs
@@ -2398,24 +2130,20 @@ def main(argv: list[str] | None = None) -> int:
             if args.stream_events:
                 emit_stream_event("partial_tldr", {"tldr": response["tldr"]})
         else:
-            if proxy_settings is not None and request_payload.get("request_id"):
-                response = generate_via_proxy(
-                    request_payload=request_payload_for_proxy(request_payload),
-                    settings=settings,
-                    proxy_settings=proxy_settings,
-                    image_paths=screenshot_outputs,
-                    stream_events=args.stream_events,
+            if proxy_settings is None:
+                raise RuntimeError(
+                    "No proxy configured. Set BLINK_PROXY_URL and a device/proxy token "
+                    "(BLINK_PROXY_TOKEN or ~/.blink/device_token)."
                 )
-            else:
-                if not os.environ.get("GEMINI_API_KEY"):
-                    raise RuntimeError("Set GEMINI_API_KEY in ~/.blink/.env or the launch environment.")
-                if args.stream_events and generation_path == "local_gemini":
-                    response = generate_streaming(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
-                else:
-                    response = generate(screenshot_outputs, model_prompt_text, settings, is_followup=is_followup)
-                response["request_id"] = request_payload.get("request_id")
-                response["warnings"] = []
-                response["model"] = settings["model"]
+            if not request_payload.get("request_id"):
+                raise RuntimeError("Proxy request requires a request_id in the request payload.")
+            response = generate_via_proxy(
+                request_payload=request_payload_for_proxy(request_payload),
+                settings=settings,
+                proxy_settings=proxy_settings,
+                image_paths=screenshot_outputs,
+                stream_events=args.stream_events,
+            )
         if isinstance(response.get("frames"), list):
             diagnostics_by_index = {
                 item.get("index"): item

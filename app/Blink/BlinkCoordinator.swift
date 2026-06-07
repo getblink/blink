@@ -1341,7 +1341,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         guard let capturePayload = ImageDiagnostics.makePayload(pngData: capture.pngData) else {
             throw NSError(domain: "BlinkCoordinator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn't inspect screenshot metadata."])
         }
-        let frameURL = staging.appendingPathComponent("screenshot_\(index).png")
+        let frameURL = staging.appendingPathComponent("screenshot_\(index).jpg")
         try capture.pngData.write(to: frameURL, options: .atomic)
         var frontmostApp: [String: Any] = [
             "pid": Int(capture.ownerPID),
@@ -1589,10 +1589,10 @@ final class BlinkCoordinator: @unchecked Sendable {
             let hostProfileURL = active.staging.appendingPathComponent("host_profile.json")
             let requestURL = active.staging.appendingPathComponent("request.json")
             try writeJSON(runtime, to: runtimeURL)
-            try? FileManager.default.removeItem(at: active.staging.appendingPathComponent("screenshot.png"))
+            try? FileManager.default.removeItem(at: active.staging.appendingPathComponent("screenshot.jpg"))
             try FileManager.default.copyItem(
                 at: firstFrame.pngURL,
-                to: active.staging.appendingPathComponent("screenshot.png")
+                to: active.staging.appendingPathComponent("screenshot.jpg")
             )
 
             let attachmentsCatalog: [[String: Any]] = DispatchQueue.main.sync {
@@ -2107,6 +2107,12 @@ final class BlinkCoordinator: @unchecked Sendable {
             self?.dismissOverlay(implicit: true)
         }
         overlay.beginSuggestionRefresh()
+        // The follow-up text has been captured into the request; clear the box
+        // now that the reroll is committed so it doesn't linger (and so the
+        // unchanged-suggestions completion path can't strand stale text).
+        if followUpInstruction?.isEmpty == false {
+            overlay.clearCustomInputText()
+        }
         status("rerolling suggestions...")
         emitEvent(
             requestID: requestID,
@@ -2361,8 +2367,13 @@ final class BlinkCoordinator: @unchecked Sendable {
                 return sorted
             }
         }
-        let fallback = bundleDir.appendingPathComponent("screenshot.png")
-        return FileManager.default.fileExists(atPath: fallback.path) ? [fallback] : []
+        for name in ["screenshot.jpg", "screenshot.png"] {
+            let fallback = bundleDir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: fallback.path) {
+                return [fallback]
+            }
+        }
+        return []
     }
 
     private func normalizedSuggestionDetails(

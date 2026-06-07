@@ -54,6 +54,8 @@ enum WindowAXTreeCapture {
         kAXTitleAttribute as String,
         kAXDescriptionAttribute as String,
         kAXValueAttribute as String,
+        kAXURLAttribute as String,
+        kAXDocumentAttribute as String,
     ]
 
     static func capture(
@@ -88,6 +90,10 @@ enum WindowAXTreeCapture {
             let title = (attrs[2] as? String)?.nonBlank
             let desc = (attrs[3] as? String)?.nonBlank
             let rawValue = stringValue(attrs[4])
+            // Link/document destination (AXURL ?? AXDocument). The visible text
+            // alone ("Open PR") doesn't tell the model where a link points; the
+            // URL does. Route/shell noise is dropped in `displayURL`.
+            let url = displayURL(attrs[5]) ?? displayURL(attrs[6])
             let name = title ?? desc
 
             // Fetch children + their attributes once; reused for both the
@@ -121,7 +127,7 @@ enum WindowAXTreeCapture {
             // value carries no content of its own, so emit nothing and keep its
             // children at the current indent.
             let childIndent: Int
-            if let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: clampedValue, indent: indent) {
+            if let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: clampedValue, url: url, indent: indent) {
                 if focusedLineIndex == nil,
                    let focused,
                    CFEqual(element, focused) {
@@ -206,9 +212,10 @@ enum WindowAXTreeCapture {
         roleDesc: String?,
         name: String?,
         value: String?,
+        url: String?,
         indent: Int
     ) -> String? {
-        if name == nil, value == nil {
+        if name == nil, value == nil, url == nil {
             return nil
         }
         let lead = roleDesc ?? role ?? "node"
@@ -221,7 +228,51 @@ enum WindowAXTreeCapture {
         if let value, value != name {
             line += " = \"\(value)\""
         }
+        // Link/document destination, after name/value so the model can resolve
+        // where a link goes. Suppressed when it echoes the name, or when the
+        // value is already the same href verbatim (scheme included) so we don't
+        // print the destination twice.
+        if let url, url != name {
+            let valueIsURL = value.map { $0 == url || $0.hasSuffix("://" + url) } ?? false
+            if !valueIsURL {
+                line += " (\(url))"
+            }
+        }
         return line
+    }
+
+    /// A link/document destination worth surfacing, or nil for noise. Drops
+    /// app-internal route schemes (`tauri://`, `app://`, `devtools://`,
+    /// `chrome-extension://`, `blob:`, `data:`, `about:`) and the Electron
+    /// `file://…index.html` shell — on Tauri/Electron surfaces these dominate
+    /// (a Conductor capture is ~33 `tauri://` routes to ~4 real links), so
+    /// emitting them raw would be pure token noise. Strips the `http(s)://`
+    /// scheme for economy and caps length so a tracking-query URL can't blow the
+    /// budget. Returning nil keeps a route-only node collapsing as before.
+    private static func displayURL(_ ref: CFTypeRef?) -> String? {
+        let raw: String
+        if let url = ref as? URL {
+            raw = url.absoluteString
+        } else if let string = ref as? String {
+            raw = string
+        } else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        for noise in ["tauri://", "app://", "devtools://", "chrome-extension://", "blob:", "data:", "about:"] {
+            if lower.hasPrefix(noise) { return nil }
+        }
+        if lower.hasPrefix("file://"), lower.hasSuffix("index.html") { return nil }
+        var stripped = trimmed
+        for scheme in ["https://", "http://"] where stripped.lowercased().hasPrefix(scheme) {
+            stripped = String(stripped.dropFirst(scheme.count))
+            break
+        }
+        guard !stripped.isEmpty else { return nil }
+        let cap = 180
+        return stripped.count > cap ? String(stripped.prefix(cap)) + "…" : stripped
     }
 
     // MARK: - AX access

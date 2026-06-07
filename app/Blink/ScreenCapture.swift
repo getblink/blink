@@ -43,7 +43,7 @@ enum ScreenCapture {
                 if let owner = owner { return "no capturable window for \(owner)" }
                 return "no capturable window"
             case .imageEncodingFailed:
-                return "couldn't encode capture as PNG"
+                return "couldn't encode capture as JPEG"
             case .permissionDenied:
                 return "Screen Recording permission not granted"
             case .underlying(let err):
@@ -284,7 +284,7 @@ enum ScreenCapture {
             captureSize: sizing.size,
             scale: scale
         )
-        guard let pngData = cgImageToPNG(cgImage) else {
+        guard let pngData = cgImageToJPEG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
         if confirmCapture {
@@ -826,14 +826,14 @@ enum ScreenCapture {
             }
             throw CaptureError.underlying(error)
         }
-        // PNG-encoding a full-display CGImage is its own cost (NSBitmapImageRep
-        // on a 6016×3384 grab is megabytes); measure it separately from capture.
+        // JPEG-encoding a full-display CGImage is its own cost (NSBitmapImageRep
+        // on a 6016×3384 grab is non-trivial); measure it separately from capture.
         let encodeStartedAt = Date()
-        guard let pngData = cgImageToPNG(cgImage) else {
+        guard let pngData = cgImageToJPEG(cgImage) else {
             throw CaptureError.imageEncodingFailed
         }
         TCCDiagnostics.log(
-            "display_capture_png_encoded bytes=\(pngData.count) png_encode_ms=\(Int(Date().timeIntervalSince(encodeStartedAt) * 1000))"
+            "display_capture_jpeg_encoded bytes=\(pngData.count) jpeg_encode_ms=\(Int(Date().timeIntervalSince(encodeStartedAt) * 1000))"
         )
         return pngData
     }
@@ -916,9 +916,14 @@ enum ScreenCapture {
         return max(1, Int(round(NSScreen.main?.backingScaleFactor ?? 2)))
     }
 
-    private static func cgImageToPNG(_ image: CGImage) -> Data? {
+    /// Encode a captured CGImage straight to JPEG. Blink uploads this to the
+    /// server (which forwards it to Gemini at MEDIA_RESOLUTION_LOW), so a
+    /// moderately compressed JPEG keeps the upload small without a separate
+    /// re-compression pass. q≈0.75 is well clear of any artifacting the model
+    /// would see after its internal downsample.
+    private static func cgImageToJPEG(_ image: CGImage, quality: CGFloat = 0.75) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
-        return rep.representation(using: .png, properties: [:])
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 
     private static func logSCKError(_ event: String, error: Error) {
