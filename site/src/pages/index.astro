@@ -103,7 +103,7 @@ const faqs = [
             <span class="btn__arrow" aria-hidden="true">→</span>
           </a>
           <a class="btn btn--ghost hero__story" href="/story">
-            <span>read the story</span>
+            <span class="hero__story-label">read the story</span>
           </a>
         </div>
       </div>
@@ -383,12 +383,17 @@ const faqs = [
       gap: 22px;
       margin-top: 8px;
     }
-    /* darker than the global ghost button so it stays legible on the
-       painting */
+    /* plain text, no box, no underline, no arrow — bare dark text on the
+       painting was hard to read, so the heavier weight + a strong cream halo
+       lift it off the art while keeping the affordance as quiet as possible. */
     .hero__story.btn--ghost {
-      gap: 8px;
-      color: var(--fg-2);
+      color: var(--fg);
       font-weight: 600;
+      text-shadow:
+        0 0 2px color-mix(in oklch, var(--paper) 95%, transparent),
+        0 0 8px color-mix(in oklch, var(--paper) 88%, transparent),
+        0 0 18px color-mix(in oklch, var(--paper) 78%, transparent),
+        0 1px 24px color-mix(in oklch, var(--paper) 60%, transparent);
     }
     .hero__story.btn--ghost:hover {
       color: var(--fg);

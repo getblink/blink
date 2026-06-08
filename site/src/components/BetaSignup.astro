@@ -56,18 +56,17 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
       <span class="share__goal-text--met"
         >shared with 1 friend. you're in line for the next batch.</span
       >
-    </p>
-    <div class="share__row">
-      <input
-        class="share__url"
-        type="text"
-        readonly
-        aria-label="your referral link"
-      />
-      <button class="share__copy" type="button">
+      {" "}<button class="share__copy" type="button">
         <span class="share__copy-label">copy link</span>
       </button>
-    </div>
+    </p>
+    <input
+      class="share__url"
+      type="text"
+      readonly
+      hidden
+      aria-label="your referral link"
+    />
     <p class="share__email" hidden>
       signed up as <span class="share__email-value"></span>
     </p>
@@ -195,34 +194,36 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
   .share[data-met="true"] .share__goal-text--met {
     display: inline;
   }
-  .share__row {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-  }
   /* URL kept in the DOM for its value (copy target) but hidden — the visible
-     affordance is "copy link". */
+     affordance is the "copy link" link riding the goal sentence. */
   .share__url {
     display: none;
   }
+  /* reads as a real link: it sits at the end of the goal line in the sky
+     accent with an underline, instead of a faint button on its own row. */
   .share__copy {
     appearance: none;
+    margin: 0;
     padding: 0;
     font: inherit;
-    font-size: 14px;
-    font-weight: 500;
-    color: color-mix(in oklch, var(--paper) 60%, transparent);
+    font-size: inherit;
+    font-weight: 600;
+    color: var(--sky);
     background: transparent;
     border: 0;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
     white-space: nowrap;
-    transition: color 120ms ease;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: color-mix(in oklch, var(--sky) 55%, transparent);
+    transition:
+      color 120ms ease,
+      text-decoration-color 120ms ease;
   }
   .share__copy:hover {
-    color: var(--paper);
+    color: var(--sky);
+    text-decoration-color: var(--sky);
   }
   .share__copy:focus-visible {
     outline: 2px solid var(--sky);
