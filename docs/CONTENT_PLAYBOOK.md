@@ -19,6 +19,17 @@ cron job, it's over-built — pull it back.
 
 ---
 
+## Before you start (one-time)
+
+- **Branch off `staging`, not `main`.** `staging` is the trunk where all work —
+  including this blog system — lives; `main` lags it between releases, so a post
+  branched off `main` may not even have the blog infra (`content.config.ts`,
+  `src/pages/blog/`, etc.). See
+  [CLAUDE.md → Branches & deploys](../CLAUDE.md#branches--deploys).
+- **Install site deps once:** `cd site && npm install`.
+
+---
+
 ## Publish a post (~10 min + writing)
 
 ### 1. Create the file
@@ -61,21 +72,26 @@ already the h1. match the lowercase, plain voice of /story.
 ### 4. Preview locally
 
 ```bash
-cd site && npm run dev
-# open http://localhost:4321/blog/<slug>
+cd site && npm install   # first time only (skip if you already did it)
+npm run dev
+# open the URL Astro prints — http://localhost:4321/blog/<slug>
+# (if 4321 is busy Astro bumps to 4322/4323, so trust the printed port)
 ```
 
 ### 5. Ship
 
 ```bash
-git add site/src/content/blog/<slug>.md
+git add site/src/content/blog/<slug>.md   # stage ONLY the post — nothing else
 git commit -m "post: <slug>"
-git push                       # then open a PR to main
+git push                                   # push your branch, then open a PR
 ```
 
-When it merges to `main`, Cloudflare Pages rebuilds the production site
-(`useblink.dev`) automatically — usually live in 1–2 min. Branch pushes get a
-Cloudflare preview URL if you want to eyeball it before merging.
+A post is content-only — it touches no `server/**`, so it triggers no server
+deploy. It goes live by landing on `main` (the Cloudflare **production**
+branch); `staging` deploys to the staging site if you want a dress rehearsal.
+When it merges to `main`, Cloudflare Pages rebuilds `useblink.dev`
+automatically — usually live in 1–2 min. Branch pushes also get a Cloudflare
+preview deploy if you want to eyeball it before merging.
 
 > Confirm once that Cloudflare's **production branch is `main`** (Pages →
 > project → Settings → Builds & deployments). Everything else (root `site`,
