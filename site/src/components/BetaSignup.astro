@@ -51,15 +51,16 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
   <div class="share" data-met="false" hidden>
     <p class="share__goal">
       <span class="share__goal-text"
-        >you're on the list. share to skip the line.</span
+        >you're on the list. share your custom invite link to one friend to
+        skip the line.</span
       >
       <span class="share__goal-text--met"
         >shared with 1 friend. you're in line for the next batch.</span
       >
-      {" "}<button class="share__copy" type="button">
-        <span class="share__copy-label">copy link</span>
-      </button>
     </p>
+    <button class="share__copy" type="button">
+      <span class="share__copy-label">copy link</span>
+    </button>
     <input
       class="share__url"
       type="text"
@@ -101,6 +102,12 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
   .signup[data-state="success"] .signup__field,
   .signup[data-state="already"] .signup__field {
     display: none;
+  }
+  /* in the share state the email pill is gone, so let the block run wider than
+     the 560px input so the goal sentence sits on one line instead of wrapping. */
+  .signup[data-state="success"],
+  .signup[data-state="already"] {
+    max-width: 680px;
   }
   .signup[data-state="success"] .share,
   .signup[data-state="already"] .share {
@@ -180,7 +187,7 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
     font-weight: 600;
     color: var(--paper);
     line-height: 1.4;
-    max-width: 42ch;
+    max-width: none;
     margin: 0;
   }
   .share__goal-text--met {
@@ -199,16 +206,18 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
   .share__url {
     display: none;
   }
-  /* reads as a real link: it sits at the end of the goal line in the sky
-     accent with an underline, instead of a faint button on its own row. */
+  /* a quiet text link on its own line below the goal — underlined in cream
+     (not the sky accent), lighter than the goal so it reads as the secondary
+     action. */
   .share__copy {
     appearance: none;
+    justify-self: start;
     margin: 0;
     padding: 0;
     font: inherit;
-    font-size: inherit;
-    font-weight: 600;
-    color: var(--sky);
+    font-size: 14px;
+    font-weight: 500;
+    color: color-mix(in oklch, var(--paper) 82%, transparent);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -216,14 +225,14 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
     text-decoration: underline;
     text-underline-offset: 3px;
     text-decoration-thickness: 1.5px;
-    text-decoration-color: color-mix(in oklch, var(--sky) 55%, transparent);
+    text-decoration-color: color-mix(in oklch, var(--paper) 40%, transparent);
     transition:
       color 120ms ease,
       text-decoration-color 120ms ease;
   }
   .share__copy:hover {
-    color: var(--sky);
-    text-decoration-color: var(--sky);
+    color: var(--paper);
+    text-decoration-color: var(--paper);
   }
   .share__copy:focus-visible {
     outline: 2px solid var(--sky);
@@ -231,7 +240,7 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
   }
   .share[data-copied="true"] .share__copy-label::after {
     content: " ✓";
-    color: var(--sky);
+    color: var(--paper);
   }
   .share__email {
     display: none;

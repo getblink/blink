@@ -11,22 +11,22 @@ const description =
 
 const reasons = [
   {
-    h: "it sees what you see.",
+    h: "sees what you see.",
     t: "the context is already on your screen, so you stop re-explaining yourself to a chat box.",
   },
   {
-    h: "it sounds like you, not like an ai.",
+    h: "sounds like you, not an ai.",
     t: "drafts in your voice instead of generic filler.",
   },
   {
-    h: "it's always there, never in the way.",
+    h: "always there, never in the way.",
     t: "blink follows you window to window, ready the moment you need it and quiet when you don't.",
   },
 ];
 
 const privacy = [
   {
-    h: "it only looks when you summon it.",
+    h: "asleep until you summon it.",
     t: "the rest of the time blink is idle. no background watching, no always-on recording.",
   },
   {
@@ -73,8 +73,8 @@ const faqs = [
     a: "not yet. blink is macOS only for now. join the waitlist and we'll let you know if that changes.",
   },
   {
-    q: "why is it invite-only?",
-    a: "because we onboard every person ourselves: set you up, learn how you work, and tune blink to fit. that only works a few people at a time, so we invite in small batches. leave your email and we'll reach out when there's room.",
+    q: "is blink available to the public?",
+    a: "yes. it's a waitlist for now, only because we onboard everyone ourselves: we set you up, learn how you work, and tune blink to fit. that only works a few people at a time, so we invite in small batches. leave your email and we'll reach out when there's room. the code is public too, so you can read exactly what it does or self-host it today.",
   },
 ];
 ---
@@ -115,7 +115,7 @@ const faqs = [
         <div class="how__head">
           <p class="section__label reveal">how it works</p>
           <h2 class="section__lead reveal" id="how-lead">
-            it reads, it drafts, it's in.
+            blink reads the chat and writes your reply.
           </h2>
         </div>
         <div class="how__demo reveal">
@@ -124,16 +124,14 @@ const faqs = [
       </div>
     </section>
 
-    <!-- WHY -->
-    <section class="section" id="why" aria-labelledby="why-lead">
+    <!-- THE DIFFERENCE -->
+    <section class="section" id="difference" aria-labelledby="difference-lead">
       <div class="container section__inner">
-        <p class="section__label reveal">why blink</p>
+        <p class="section__label reveal">the difference</p>
         <div class="section__content">
-          <h2 class="sr-only">why blink</h2>
-          <blockquote class="quote reveal" id="why-lead">
-            <span class="quote__mark" aria-hidden="true">“</span>it feels like
-            blink is reading my mind.
-          </blockquote>
+          <h2 class="section__lead reveal" id="difference-lead">
+            blink doesn't feel like a chat box.
+          </h2>
           <div class="reasons">
             {
               reasons.map((r) => (
@@ -148,18 +146,46 @@ const faqs = [
       </div>
     </section>
 
+    <!-- WHY -->
+    <section class="section" id="why" aria-labelledby="why-lead">
+      <div class="container section__inner">
+        <p class="section__label reveal">why blink</p>
+        <div class="why__split">
+          <h2 class="why__hook reveal" id="why-lead">
+            just because<br />we're dumb apes<br />doesn't mean<br />you have to
+            feel<br />like one.
+          </h2>
+          <div class="why__body-col">
+            <p class="why__body reveal">
+              managing a dozen things at once is hard work. every time you
+              switch threads you have to remind yourself what was even going on.
+              that little reset, over and over, is what makes a whole day feel
+              scattered and slow.
+            </p>
+            <p class="why__body reveal">
+              blink is the assistant that remembers for you. it catches you up
+              on what's happening and suggests the next step, so you can stay in
+              the flow instead of rebuilding context all day.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- PRIVACY -->
     <section class="section" id="privacy" aria-labelledby="privacy-lead">
       <div class="container section__inner">
         <p class="section__label reveal">privacy</p>
-        <div class="section__content">
-          <h2 class="section__lead reveal" id="privacy-lead">
-            reading your screen, without the creep.
-          </h2>
-          <p class="section__sub reveal">
-            blink reads your screen so you never have to re-explain the
-            conversation. here's what that does and doesn't mean.
-          </p>
+        <div class="privacy__split">
+          <div class="privacy__intro">
+            <h2 class="section__lead reveal" id="privacy-lead">
+              reading your screen, without the creep.
+            </h2>
+            <p class="section__sub reveal">
+              blink reads your screen so you never have to re-explain the
+              conversation. here's what that does and doesn't mean.
+            </p>
+          </div>
           <ul class="points">
             {
               privacy.map((p) => (
@@ -370,7 +396,7 @@ const faqs = [
       }
     }
     .tagline {
-      font-size: clamp(1.5rem, 2.4vw, 2.2rem);
+      font-size: var(--fs-h3);
       font-weight: 560;
       line-height: 1.1;
       letter-spacing: -0.025em;
@@ -400,31 +426,44 @@ const faqs = [
     }
 
     /* ============================================================= *
-     * SECTION — minimal left label rail + content that leads
+     * SECTION — eyebrow label above full-width content
      * ============================================================= */
     .section {
-      padding-block: clamp(72px, 13vh, 168px);
+      position: relative;
+      padding-block: clamp(48px, 8vh, 104px);
+    }
+    /* a hairline divider at the top of each content section (container-width,
+       aligned with the content), instead of alternating background bands. the
+       first content section (how) and the dark join card are skipped. */
+    .section:not(.how):not(.join)::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(min(100%, var(--container)) - 2 * var(--gutter));
+      height: 1px;
+      background: var(--line-faint);
     }
     .section__inner {
-      display: grid;
-      grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
-      gap: clamp(32px, 7vw, 112px);
-      align-items: start;
+      /* full container width, left-aligned at the gutter — same footprint as
+         the "how it works" section, so every section lines up on the same edge
+         instead of a narrow column floating mid-page. */
+      display: block;
     }
-    /* A sticky section anchor — the section name as a real, present header
-       that tracks beside the content as you read it. */
+    /* the section name as a small eyebrow above the content (same pattern as
+       "how it works") — the old sticky left rail squeezed the headings into a
+       cramped column and forced ugly wraps, so it's gone. */
     .section__label {
-      position: sticky;
-      top: calc(var(--topbar-h) + 38px);
-      font-size: clamp(1.2rem, 1.5vw, 1.5rem);
+      font-size: var(--fs-eyebrow);
       font-weight: 680;
       letter-spacing: -0.02em;
       line-height: 1.12;
       color: var(--fg);
-      max-width: 8ch;
+      margin-bottom: clamp(18px, 2.6vh, 28px);
     }
     .section__content {
-      max-width: 760px;
+      max-width: none;
     }
     .section__content > * + * {
       margin-top: clamp(30px, 4.5vh, 52px);
@@ -434,17 +473,18 @@ const faqs = [
     .section__content > .sr-only:first-child + * {
       margin-top: 0;
     }
-    /* the value-prop heading, now on the right above its content */
+    /* the value-prop heading — full measure now, with balanced line breaks */
     .section__lead {
-      font-size: clamp(1.7rem, 3vw, 2.6rem);
+      font-size: var(--fs-h2);
       font-weight: 640;
       line-height: 1.08;
       letter-spacing: -0.03em;
       color: var(--fg);
-      max-width: 20ch;
+      max-width: 24ch;
+      text-wrap: balance;
     }
     .section__sub {
-      font-size: 1rem;
+      font-size: var(--fs-body);
       line-height: 1.55;
       color: var(--fg-muted);
       max-width: 46ch;
@@ -477,26 +517,42 @@ const faqs = [
       }
     }
 
-    /* why — quote is the lead, then reasons */
-    .quote {
-      position: relative;
-      font-size: clamp(1.7rem, 3.2vw, 2.7rem);
-      font-weight: 500;
-      font-style: italic;
-      line-height: 1.16;
-      letter-spacing: -0.02em;
-      color: var(--fg);
-      max-width: 18ch;
+    /* why — the pain in our own voice. a two-column split fills the section
+       width (like how-it-works): the punchy hook on the left, the case for it
+       on the right, instead of a narrow column with a big empty right side. */
+    .why__split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: clamp(36px, 6vw, 96px);
+      align-items: start;
     }
-    /* hang the mark into the margin so the quote text aligns flush-left with
-       the reasons below it */
-    .quote__mark {
-      position: absolute;
-      right: 100%;
-      top: 0.02em;
-      margin-right: 0.1em;
-      color: var(--clay);
-      font-style: normal;
+    .why__hook {
+      font-size: var(--fs-h2);
+      font-weight: 600;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+      color: var(--fg);
+      /* line breaks are authored explicitly (<br>) for the intended rhythm */
+    }
+    .why__body-col {
+      display: grid;
+      gap: clamp(18px, 2.4vh, 26px);
+      /* drop the body to sit a touch below the hook's cap height */
+      margin-top: 0.4em;
+    }
+    .why__body {
+      font-size: var(--fs-lead);
+      line-height: 1.55;
+      color: var(--fg-2);
+    }
+    @media (max-width: 760px) {
+      .why__split {
+        grid-template-columns: 1fr;
+        gap: clamp(22px, 4vh, 30px);
+      }
+      .why__body-col {
+        margin-top: 0;
+      }
     }
     .reasons {
       display: grid;
@@ -510,7 +566,7 @@ const faqs = [
       }
     }
     .reason__h {
-      font-size: 1.1rem;
+      font-size: var(--fs-h4);
       font-weight: 620;
       letter-spacing: -0.015em;
       line-height: 1.25;
@@ -518,17 +574,35 @@ const faqs = [
       margin-bottom: 9px;
     }
     .reason__t {
-      font-size: 1rem;
+      font-size: var(--fs-body);
       line-height: 1.55;
       color: var(--fg-2);
     }
 
-    /* privacy — checkmark points */
+    /* privacy — a two-column split like "why": the intro on the left, a
+       vertical checklist on the right, so it fills the width without turning
+       the checks into a side-by-side row. */
+    .privacy__split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: clamp(36px, 6vw, 96px);
+      align-items: start;
+    }
+    .privacy__intro > * + * {
+      margin-top: clamp(14px, 2vh, 20px);
+    }
+    @media (max-width: 760px) {
+      .privacy__split {
+        grid-template-columns: 1fr;
+        gap: clamp(22px, 4vh, 30px);
+      }
+    }
+    /* checkmark points — a vertical checklist */
     .points {
       list-style: none;
       display: flex;
       flex-direction: column;
-      gap: clamp(24px, 3.4vh, 38px);
+      gap: clamp(22px, 3vh, 34px);
     }
     .point {
       display: grid;
@@ -555,17 +629,16 @@ const faqs = [
       transform: rotate(43deg);
     }
     .point__h {
-      font-size: 1.1rem;
+      font-size: var(--fs-h4);
       font-weight: 620;
       letter-spacing: -0.015em;
       color: var(--fg);
       margin-bottom: 7px;
     }
     .point__t {
-      font-size: 1rem;
+      font-size: var(--fs-body);
       line-height: 1.55;
       color: var(--fg-2);
-      max-width: 58ch;
     }
 
     /* faq accordion */
@@ -587,7 +660,7 @@ const faqs = [
       align-items: center;
       gap: 14px;
       padding: clamp(18px, 2.6vh, 24px) 0;
-      font-size: clamp(1.02rem, 1.4vw, 1.2rem);
+      font-size: var(--fs-lead);
       font-weight: 560;
       letter-spacing: -0.015em;
       color: var(--fg);
@@ -600,7 +673,7 @@ const faqs = [
       color: var(--sky-deep);
     }
     .qa__n {
-      font-size: 0.86rem;
+      font-size: var(--fs-small);
       font-weight: 700;
       color: var(--sky-deep);
       font-variant-numeric: tabular-nums;
@@ -638,7 +711,7 @@ const faqs = [
     .qa__a {
       grid-column: 1 / -1;
       padding: 0 0 clamp(18px, 2.6vh, 24px) 52px;
-      font-size: 1rem;
+      font-size: var(--fs-body);
       line-height: 1.6;
       color: var(--fg-2);
       max-width: 66ch;
@@ -705,7 +778,7 @@ const faqs = [
       max-width: 820px;
     }
     .join__title {
-      font-size: clamp(2.2rem, 5vw, 3.8rem);
+      font-size: var(--fs-display);
       font-weight: 680;
       line-height: 1;
       letter-spacing: -0.035em;
@@ -713,7 +786,7 @@ const faqs = [
       margin-bottom: clamp(38px, 5.5vh, 56px);
     }
     .join__note {
-      font-size: 0.9rem;
+      font-size: var(--fs-small);
       line-height: 1.5;
       color: color-mix(in oklch, var(--paper) 60%, transparent);
       max-width: 54ch;
@@ -754,17 +827,6 @@ const faqs = [
     /* ============================================================= *
      * RESPONSIVE
      * ============================================================= */
-    @media (max-width: 820px) {
-      .section__inner {
-        grid-template-columns: 1fr;
-        gap: clamp(14px, 3vh, 22px);
-      }
-      .section__label {
-        position: static;
-        top: auto;
-      }
-    }
-
     @media (max-width: 560px) {
       .qa__a {
         padding-left: 0;
