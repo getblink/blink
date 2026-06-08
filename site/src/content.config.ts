@@ -17,6 +17,10 @@ const blog = defineCollection({
     title: z.string(),
     description: z.string(),
     publishedAt: z.coerce.date(),
+    // Optional: set when you meaningfully revise a published post. Feeds the
+    // Article schema's dateModified (a freshness signal) and shows an
+    // "updated" line on the page. Leave unset for unrevised posts.
+    updatedAt: z.coerce.date().optional(),
     cluster: z.enum(["context-loss", "screen-aware", "agent-tooling"]),
     related: z.array(z.string()).default([]),
     draft: z.boolean().default(false),

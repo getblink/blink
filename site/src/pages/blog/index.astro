@@ -13,8 +13,11 @@ const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
   (a, b) => b.data.publishedAt.getTime() - a.data.publishedAt.getTime(),
 );
 
+// UTC to match the <time datetime> attr — see note in ArticleLayout. A bare
+// YYYY-MM-DD frontmatter date is UTC midnight; local formatting would shift it.
 const fmtDate = (d: Date) =>
   d.toLocaleDateString("en-US", {
+    timeZone: "UTC",
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -53,7 +56,7 @@ const grouped = Object.keys(CLUSTERS)
               <ul class="post-list">
                 {group.posts.map((post) => (
                   <li class="post-item">
-                    <a class="post-item__link" href={`/blog/${post.id}`}>
+                    <a class="post-item__link" href={`/blog/${post.id}/`}>
                       <span class="post-item__title">{post.data.title}</span>
                       <span class="post-item__desc muted">
                         {post.data.description}

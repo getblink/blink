@@ -12,26 +12,52 @@ interface Props {
   title: string;
   description: string;
   publishedAt: Date;
+  updatedAt?: Date;
   clusterLabel: string;
   related?: RelatedLink[];
 }
 
-const { title, description, publishedAt, clusterLabel, related = [] } =
-  Astro.props;
+const {
+  title,
+  description,
+  publishedAt,
+  updatedAt,
+  clusterLabel,
+  related = [],
+} = Astro.props;
+
+// Format in UTC. publishedAt comes from `z.coerce.date()` parsing a bare
+// `YYYY-MM-DD` as UTC midnight; formatting in the build machine's local TZ
+// (behind UTC) would render the previous day. Keep the label in UTC so it
+// matches the <time datetime> attribute and the JSON-LD date.
+const fmt = (d: Date) =>
+  d.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 
 const publishedISO = publishedAt.toISOString();
-const publishedLabel = publishedAt.toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
+const publishedLabel = fmt(publishedAt);
+
+// Only treat updatedAt as a real revision if it lands on a later day than the
+// publish date — avoids a noisy "updated" line on the day of publishing.
+const isRevised =
+  !!updatedAt &&
+  updatedAt.getTime() > publishedAt.getTime() &&
+  fmt(updatedAt) !== publishedLabel;
+const modifiedISO = isRevised ? updatedAt!.toISOString() : undefined;
+const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
 ---
 
 <Base
   title={`${title} — Blink`}
+  headline={title}
   description={description}
   ogType="article"
   publishedAt={publishedISO}
+  modifiedAt={modifiedISO}
 >
   <TopBar />
 
@@ -44,6 +70,11 @@ const publishedLabel = publishedAt.toLocaleDateString("en-US", {
       <h1>{title.toLowerCase()}</h1>
       <p class="article__date muted">
         <time datetime={publishedISO}>{publishedLabel}</time>
+        {
+          updatedLabel && (
+            <span> · updated <time datetime={modifiedISO}>{updatedLabel}</time></span>
+          )
+        }
       </p>
 
       <div class="article__body">
@@ -57,7 +88,7 @@ const publishedLabel = publishedAt.toLocaleDateString("en-US", {
             <ul>
               {related.map((link) => (
                 <li>
-                  <a href={`/blog/${link.slug}`}>{link.title}</a>
+                  <a href={`/blog/${link.slug}/`}>{link.title}</a>
                 </li>
               ))}
             </ul>
