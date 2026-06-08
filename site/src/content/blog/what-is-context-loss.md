@@ -3,7 +3,7 @@ title: "What is context loss?"
 description: "Context loss is the gap between what you understood a minute ago and what you can act on now. Here's how to think about it when you work with AI agents."
 publishedAt: 2026-06-07
 cluster: context-loss
-related: []
+related: ["what-is-an-agent-handoff"]
 draft: false
 ---
 
