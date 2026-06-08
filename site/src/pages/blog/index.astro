@@ -44,9 +44,6 @@ const grouped = Object.keys(CLUSTERS)
         <p class="blog__lede muted">
           notes, benchmarks, and teardowns from building blink.
         </p>
-        <p class="blog__start">
-          new here? start with <a href="/story">what is blink?</a> →
-        </p>
       </header>
 
       {
@@ -105,19 +102,6 @@ const grouped = Object.keys(CLUSTERS)
     .blog__lede {
       font-size: clamp(16px, 1.4vw, 19px);
       line-height: 1.6;
-    }
-    .blog__start {
-      font-size: 14.5px;
-      margin-top: 16px;
-    }
-    .blog__start a {
-      color: var(--fg);
-      font-weight: 600;
-      border-bottom: 1px solid var(--sky);
-      transition: background 140ms ease;
-    }
-    .blog__start a:hover {
-      background: var(--sky-soft);
     }
     .blog__empty {
       font-size: 16px;

@@ -21,7 +21,12 @@ const blog = defineCollection({
     // Article schema's dateModified (a freshness signal) and shows an
     // "updated" line on the page. Leave unset for unrevised posts.
     updatedAt: z.coerce.date().optional(),
-    cluster: z.enum(["context-loss", "screen-aware", "agent-tooling"]),
+    cluster: z.enum([
+      "vision",
+      "context-loss",
+      "screen-aware",
+      "agent-tooling",
+    ]),
     related: z.array(z.string()).default([]),
     draft: z.boolean().default(false),
   }),
@@ -30,9 +35,11 @@ const blog = defineCollection({
 export const collections = { blog };
 
 // Human labels for the cluster slugs, used by the blog index to group posts.
-// Add a cluster here and to the enum above when a new theme earns one — not
-// before. Three is plenty for now.
+// Declaration order is render order on /blog, so `vision` (the cornerstone
+// "what is blink?" manifesto) sits first regardless of publish dates. Add a
+// cluster here and to the enum above when a new theme earns one — not before.
 export const CLUSTERS: Record<string, string> = {
+  vision: "Vision",
   "context-loss": "Context Loss",
   "screen-aware": "Screen-Aware Computing",
   "agent-tooling": "Agent Tooling",
