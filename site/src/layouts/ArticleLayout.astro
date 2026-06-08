@@ -115,7 +115,7 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
     }
 
     .article__kicker {
-      font-size: 13px;
+      font-size: var(--fs-xs);
       font-weight: 600;
       letter-spacing: 0.01em;
       margin-bottom: 18px;
@@ -130,7 +130,7 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
     }
 
     .article__date {
-      font-size: 13.5px;
+      font-size: var(--fs-xs);
       margin-bottom: 40px;
     }
 
@@ -140,7 +140,7 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
       border-top: 1px solid var(--line-faint);
     }
     .related__label {
-      font-size: 11px;
+      font-size: var(--fs-2xs);
       font-weight: 600;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -153,7 +153,7 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
       gap: 10px;
     }
     .related a {
-      font-size: clamp(15px, 1.2vw, 17px);
+      font-size: var(--fs-prose-body);
       font-weight: 600;
       color: var(--fg);
       border-bottom: 1px solid transparent;

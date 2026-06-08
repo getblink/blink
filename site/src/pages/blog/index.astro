@@ -93,7 +93,7 @@ const grouped = Object.keys(CLUSTERS)
       margin-bottom: 56px;
     }
     .blog h1 {
-      font-size: clamp(2.4rem, 5vw, 3.6rem);
+      font-size: var(--fs-prose-h1);
       font-weight: 720;
       letter-spacing: -0.04em;
       line-height: 1;
@@ -101,11 +101,11 @@ const grouped = Object.keys(CLUSTERS)
       color: var(--fg);
     }
     .blog__lede {
-      font-size: clamp(16px, 1.4vw, 19px);
+      font-size: var(--fs-lead);
       line-height: 1.6;
     }
     .blog__empty {
-      font-size: 16px;
+      font-size: var(--fs-body);
     }
 
     .cluster {
@@ -115,7 +115,7 @@ const grouped = Object.keys(CLUSTERS)
       margin-bottom: 0;
     }
     .cluster__label {
-      font-size: 11px;
+      font-size: var(--fs-2xs);
       font-weight: 600;
       letter-spacing: 0.08em;
       text-transform: uppercase;
@@ -141,7 +141,7 @@ const grouped = Object.keys(CLUSTERS)
       gap: 6px;
     }
     .post-item__title {
-      font-size: clamp(18px, 1.6vw, 21px);
+      font-size: var(--fs-prose-h3);
       font-weight: 680;
       letter-spacing: -0.02em;
       color: var(--fg);
@@ -154,12 +154,12 @@ const grouped = Object.keys(CLUSTERS)
       border-bottom-color: var(--fg);
     }
     .post-item__desc {
-      font-size: clamp(14px, 1.1vw, 15px);
+      font-size: var(--fs-small);
       line-height: 1.55;
       text-wrap: pretty;
     }
     .post-item__date {
-      font-size: 13px;
+      font-size: var(--fs-xs);
       white-space: nowrap;
     }
 
@@ -170,7 +170,7 @@ const grouped = Object.keys(CLUSTERS)
       }
       .post-item__date {
         order: -1;
-        font-size: 12px;
+        font-size: var(--fs-xs);
       }
     }
   </style>

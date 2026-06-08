@@ -59,6 +59,16 @@
   --fs-h4: 1.1rem; /* card / point titles */
   --fs-body: 1rem; /* body copy */
   --fs-small: 0.9rem; /* notes, numbers, hints */
+  --fs-xs: 0.8125rem; /* 13px — captions, meta, status, footer fine print */
+  --fs-2xs: 0.6875rem; /* 11px — micro labels */
+
+  /* Long-form reading ladder — articles + blog listing. A separate, gentler
+     hierarchy than the display scale above (smaller headings, roomy body), so
+     reading pages don't borrow the landing page's louder steps. */
+  --fs-prose-h1: clamp(2.4rem, 5vw, 3.6rem); /* article / blog title */
+  --fs-prose-h2: clamp(1.35rem, 2.4vw, 1.7rem);
+  --fs-prose-h3: clamp(1.1rem, 1.8vw, 1.25rem); /* + blog list titles */
+  --fs-prose-body: clamp(16px, 1.3vw, 18px); /* prose copy */
 
   --topbar-h: 66px;
   --container: 1200px;
