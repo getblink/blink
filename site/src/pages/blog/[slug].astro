@@ -4,7 +4,12 @@ import { CLUSTERS } from "../../content.config";
 import ArticleLayout from "../../layouts/ArticleLayout.astro";
 
 export async function getStaticPaths() {
-  const posts = await getCollection("blog", ({ data }) => !data.draft);
+  // Drafts (draft: true) render in local dev for preview but are excluded from
+  // production builds — so `draft: true` means "previewable locally, never shipped".
+  const posts = await getCollection(
+    "blog",
+    ({ data }) => import.meta.env.DEV || !data.draft,
+  );
   // Title lookup so `related` slugs can render as real titles (and so a
   // related slug that points at a draft / missing post is silently dropped
   // rather than rendering a dead link).

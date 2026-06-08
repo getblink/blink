@@ -9,9 +9,10 @@ const title = "Blog — Blink";
 const description =
   "Notes, benchmarks, and teardowns from building Blink — a Mac assistant that reads your screen and writes the rest.";
 
-const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
-  (a, b) => b.data.publishedAt.getTime() - a.data.publishedAt.getTime(),
-);
+// Drafts render in local dev for preview, excluded from production builds.
+const posts = (
+  await getCollection("blog", ({ data }) => import.meta.env.DEV || !data.draft)
+).sort((a, b) => b.data.publishedAt.getTime() - a.data.publishedAt.getTime());
 
 // UTC to match the <time datetime> attr — see note in ArticleLayout. A bare
 // YYYY-MM-DD frontmatter date is UTC midnight; local formatting would shift it.
