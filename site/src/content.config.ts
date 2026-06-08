@@ -9,7 +9,9 @@ import { glob } from "astro/loaders";
 //   description   — one line; powers <meta description>, OG, and the blog index blurb
 //   publishedAt   — YYYY-MM-DD; feeds Article schema datePublished + sitemap lastmod
 //   cluster       — which topic cluster this belongs to (see CLUSTERS below)
-//   related       — optional list of other article slugs to link at the foot
+//   related       — optional list of other article slugs to link at the foot.
+//                   The cornerstone "vision" post is auto-appended to every
+//                   other post, so never list it here (see blog/[slug].astro).
 //   draft         — optional; true keeps it out of the build (and the index)
 const blog = defineCollection({
   loader: glob({ pattern: "**/*.md", base: "./src/content/blog" }),

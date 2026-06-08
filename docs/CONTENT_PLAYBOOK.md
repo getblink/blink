@@ -117,7 +117,7 @@ Adding the one markdown file is the whole job. On build you get, for free:
 | `description` | ✅ | ~1 sentence, ~150 chars; reused in 4 places, so make it good |
 | `publishedAt` | ✅ | `YYYY-MM-DD`; parsed as UTC, displayed as-is |
 | `cluster` | ✅ | exactly one of the three in `site/src/content.config.ts` |
-| `related` | — | array of other slugs; renders as links at the post foot |
+| `related` | — | array of other slugs; renders as links at the post foot. The cornerstone "vision" post (`what-is-blink`) is auto-linked from every post, so don't list it here |
 | `updatedAt` | — | set on a real later revision → `dateModified` + an "updated" line |
 | `draft` | — | `true` hides it from the build, index, routes, and RSS |
 
