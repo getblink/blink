@@ -218,6 +218,15 @@ struct GlassCaptureLoadingView: View {
     /// (Settings → Advanced); the default here is the fallback for previews and
     /// the launch prewarm.
     var speed: Double = RuntimeConfigFile.defaultLensAnimationSpeed
+    /// When re-anchoring the live lens to a new rect mid-drain (the precise
+    /// captured rect can arrive after the instant-ack guess — notably in
+    /// fullscreen), the controller passes the original drain start here so the
+    /// animation CONTINUES from where it was instead of replaying from frame zero.
+    /// nil on a fresh present.
+    var startOverride: Date? = nil
+    /// Reports the resolved drain start back to the controller on first appear, so
+    /// it can be replayed into a later re-anchor.
+    var onStart: ((Date) -> Void)? = nil
     // Anchored to the first rendered frame (.onAppear), not view init — the glass
     // surface has a first-composite warmup, and starting the clock at init meant
     // the first visible frame already landed mid-drain.
@@ -229,7 +238,11 @@ struct GlassCaptureLoadingView: View {
             // tightens uniformly; segment boundaries below stay in nominal time.
             // Floor the multiplier so a stray 0/negative from a hand-edited
             // config can't freeze or reverse the drain.
-            let t = (start.map { ctx.date.timeIntervalSince($0) } ?? 0) * max(0.25, speed)
+            // Prefer the persisted @State start; fall back to the controller's
+            // startOverride so an in-place re-anchor (which swaps rootView without
+            // a fresh .onAppear) keeps a continuous clock even if @State is reset.
+            let clockStart = start ?? startOverride
+            let t = (clockStart.map { ctx.date.timeIntervalSince($0) } ?? 0) * max(0.25, speed)
             let appear = glEaseOut(glSeg(t, 0.0, 0.05))
             let drain = glSmooth(glSeg(t, 0.0, drainDur))                  // ease-in: gentle start so a warmup hitch isn't mid-sweep
             let grow = glSpring(glSeg(t, 0.18, 0.70))
@@ -261,7 +274,13 @@ struct GlassCaptureLoadingView: View {
                 .frame(width: size.width - 32, height: size.height - 32, alignment: .bottomTrailing)
             }
             .frame(width: size.width, height: size.height)
-            .onAppear { if start == nil { start = ctx.date } }
+            .onAppear {
+                if start == nil {
+                    let s = startOverride ?? ctx.date
+                    start = s
+                    onStart?(s)
+                }
+            }
         }
     }
 
@@ -285,18 +304,81 @@ struct GlassCaptureLoadingView: View {
 final class GlassCaptureLoadingController {
     private var panel: NSPanel?
     private var backstop: DispatchWorkItem?
+    /// Drain start of the live presentation, reported by the view on first appear.
+    /// Replayed into a `reanchor` so the move continues the animation instead of
+    /// restarting it. Reset on every fresh `show`.
+    private var animationStart: Date?
+    /// The live hosting view, retained so `reanchor` can resize it IN PLACE rather
+    /// than rebuild the panel — reusing the same glass surface avoids the
+    /// first-composite warmup (a visible stutter) a fresh panel would pay.
+    private var host: NSHostingView<GlassCaptureLoadingView>?
     /// Invoked (on the main thread) only when the 90s backstop fires — i.e. the
     /// panel was torn down without the normal coordinator dismiss path. Lets the
     /// coordinator clear any state it armed for the loading session (e.g. the
     /// overlay-active key-tap mirror) so a hung request can't leave it stuck.
     var onBackstop: (() -> Void)?
 
-    /// Present the glass loading over `windowRect` (AppKit screen coords). Safe to
-    /// call repeatedly; replaces any existing presentation.
+    /// Present the glass loading over `windowRect` (AppKit screen coords) with a
+    /// fresh drain. Safe to call repeatedly; replaces any existing presentation.
     func show(
         windowRect: NSRect,
         cornerRadius: CGFloat = 12,
         speed: Double = RuntimeConfigFile.defaultLensAnimationSpeed
+    ) {
+        animationStart = nil
+        present(windowRect: windowRect, cornerRadius: cornerRadius, speed: speed, startOverride: nil)
+    }
+
+    /// Re-anchor the live lens to a new rect WITHOUT restarting the drain. The
+    /// precise captured rect can differ from the instant-ack guess (notably in
+    /// fullscreen, where CGWindowList reports the window minus the menu bar while
+    /// the capture is the full display); continuing from the original start makes
+    /// the reposition read as one uninterrupted drain rather than a visible replay.
+    func reanchor(
+        to windowRect: NSRect,
+        cornerRadius: CGFloat = 12,
+        speed: Double = RuntimeConfigFile.defaultLensAnimationSpeed
+    ) {
+        guard let panel, let host, windowRect.width > 16, windowRect.height > 16 else {
+            present(windowRect: windowRect, cornerRadius: cornerRadius, speed: speed, startOverride: animationStart)
+            return
+        }
+        // A LARGE size change can't be resized in place: the glass surface
+        // re-samples at the old bounds and leaves a visible seam at the old edge.
+        // This happens when the instant-ack anchored to the wrong window — e.g.
+        // Edge fullscreen reports a thin top strip as frontmost, so the re-anchor
+        // jumps ~8x to the full display. Rebuild the panel fresh for big jumps
+        // (clean surface, brief warmup), but still continue the drain via
+        // startOverride so it doesn't replay. Small adjustments (the common
+        // menu-bar-strip case, ~1.03x) resize in place: smooth and warmup-free.
+        let big = windowRect.height > panel.frame.height * 1.5
+            || panel.frame.height > windowRect.height * 1.5
+            || windowRect.width > panel.frame.width * 1.5
+            || panel.frame.width > windowRect.width * 1.5
+        if big {
+            present(windowRect: windowRect, cornerRadius: cornerRadius, speed: speed, startOverride: animationStart)
+            return
+        }
+        // Resize the existing panel + glass surface in place. No new NSPanel/
+        // NSHostingView means no first-composite warmup, so the move is a smooth
+        // continuation. The rootView swap keeps the same view identity (so @State
+        // start persists); `startOverride` re-seeds the clock as a belt-and-braces
+        // in case it doesn't.
+        panel.setFrame(windowRect, display: true)
+        host.frame = NSRect(origin: .zero, size: windowRect.size)
+        host.rootView = GlassCaptureLoadingView(
+            size: windowRect.size,
+            cornerRadius: cornerRadius,
+            speed: speed,
+            startOverride: animationStart,
+            onStart: { [weak self] start in self?.animationStart = start })
+    }
+
+    private func present(
+        windowRect: NSRect,
+        cornerRadius: CGFloat,
+        speed: Double,
+        startOverride: Date?
     ) {
         dismiss()
         guard windowRect.width > 16, windowRect.height > 16 else { return }
@@ -315,12 +397,18 @@ final class GlassCaptureLoadingController {
         p.ignoresMouseEvents = true   // never block the user's window
 
         let host = NSHostingView(rootView:
-            GlassCaptureLoadingView(size: windowRect.size, cornerRadius: cornerRadius, speed: speed))
+            GlassCaptureLoadingView(
+                size: windowRect.size,
+                cornerRadius: cornerRadius,
+                speed: speed,
+                startOverride: startOverride,
+                onStart: { [weak self] start in self?.animationStart = start }))
         host.frame = NSRect(origin: .zero, size: windowRect.size)
         host.autoresizingMask = [.width, .height]
         p.contentView = host
         p.orderFrontRegardless()
         panel = p
+        self.host = host
 
         // Backstop: never let the panel linger if a dismiss hook is missed.
         let work = DispatchWorkItem { [weak self] in
@@ -336,6 +424,10 @@ final class GlassCaptureLoadingController {
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
+        host = nil
+        // `animationStart` is deliberately NOT cleared here: `present()` calls
+        // dismiss() mid-reanchor, and the next `show()` resets it for a fresh
+        // drain anyway, so there is no stale-read path.
     }
 
     /// Warm the SwiftUI runtime + Liquid Glass view graph at launch so the first
