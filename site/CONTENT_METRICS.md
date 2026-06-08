@@ -4,6 +4,10 @@ The entire measurement system for the content flywheel. One file, updated once a
 month, ~5 minutes. No dashboard, no tooling. If this ever wants a cron job or a
 database, it's over-built — pull it back.
 
+> Publishing a post and the full flywheel are documented in
+> [`docs/CONTENT_PLAYBOOK.md`](../docs/CONTENT_PLAYBOOK.md). This file is just
+> the monthly log.
+
 The trend lives in git history. To read a year of progress, scroll the table.
 
 ## Monthly ritual (~5 min)
