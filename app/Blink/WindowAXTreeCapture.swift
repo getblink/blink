@@ -26,7 +26,12 @@ enum WindowAXTreeCapture {
 
     static let defaultMaxNodes = 4000
     static let defaultMaxDepth = 60
-    static let defaultMaxValueChars = 500
+    /// Per-node value clamp for the inline-leaf / mixed-container path (head
+    /// clamp, newlines flattened). Sole-carrier leaves — a node with NO children
+    /// whose AXValue is the only copy of its text in the tree, e.g. a terminal or
+    /// editor that dumps the whole document into one AXValue — get the far larger
+    /// tail-preserving clamp instead; see `defaultLeafTailFraction`.
+    static let defaultMaxValueChars = 1000
     /// Keep a little headroom under the server's `AX_TREE_MAX_CHARS` backstop
     /// so elision markers and future wrapper text do not accidentally push the
     /// request into a naive server-side head clamp.
@@ -38,6 +43,13 @@ enum WindowAXTreeCapture {
     /// pathological single-node value (a whole file in one AXValue) exceeds it
     /// and keeps its children instead of being cut.
     static let defaultCollapseValueChars = 1200
+    /// Fraction of the text budget kept for a single sole-carrier leaf. Terminals
+    /// and editors expose the entire document as one AXValue with no children, so
+    /// the small per-node clamp above would amputate ~99% of it. We keep the TAIL
+    /// (live content sits at the bottom; the caret is unavailable on terminals)
+    /// with newlines intact. Derived from `defaultTextBudgetChars` so retuning the
+    /// budget carries the leaf cap with it instead of leaving a stale constant.
+    static let defaultLeafTailFraction = 0.5
 
     /// Raw AX roles (post-`shortenRole`) whose nodes are plain-text leaves:
     /// their content lives entirely in value/title, with no URLs or interactive
@@ -76,6 +88,32 @@ enum WindowAXTreeCapture {
         var focusedLineIndex: Int?
         var nodeCount = 0
         var nodeTruncated = false
+        let leafTailChars = Int(Double(textBudgetChars) * defaultLeafTailFraction)
+
+        // Is a child's entire subtree foldable into its ancestor's single line —
+        // i.e. pure text with nothing of its own to emit? True for a plain-text
+        // leaf (StaticText/ListMarker), or an empty structural node (no
+        // name/value/url — see `formatLine`) whose whole subtree is likewise pure
+        // text. False the moment we hit something that emits its own line (a link,
+        // a named/valued node, an image with a label): that must be preserved, so
+        // its ancestor can't be folded away. An empty, childless decorative node
+        // (unnamed image, presentational span) emits nothing and contributes no
+        // text, so it is ignorable (true) and never blocks the fold. Bounded by
+        // `maxDepth`.
+        func subtreeIsPureText(_ element: AXUIElement, _ attrs: [CFTypeRef?], depth: Int) -> Bool {
+            if let role = shortenRole(attrs[0] as? String), plainTextLeafRoles.contains(role) {
+                return true
+            }
+            let hasName = (((attrs[2] as? String)?.nonBlank) ?? ((attrs[3] as? String)?.nonBlank)) != nil
+            let hasValue = stringValue(attrs[4]) != nil
+            let hasURL = (displayURL(attrs[5]) ?? displayURL(attrs[6])) != nil
+            guard !hasName, !hasValue, !hasURL, depth < maxDepth else { return false }
+            let kids = childrenOf(element)
+            guard !kids.isEmpty else { return true }
+            return kids.allSatisfy {
+                subtreeIsPureText($0, copyMultiple($0, nodeAttributes), depth: depth + 1)
+            }
+        }
 
         // `attrs` is pre-fetched by the caller (the root fetches its own) so the
         // collapse decision and the recursive descent share one IPC per node.
@@ -100,28 +138,59 @@ enum WindowAXTreeCapture {
             // collapse decision below and the recursive descent (no double IPC).
             let children = depth < maxDepth ? childrenOf(element) : []
             let childAttrs = children.map { copyMultiple($0, nodeAttributes) }
-            let childrenAllPlainText = !children.isEmpty && childAttrs.allSatisfy {
-                guard let childRole = shortenRole($0[0] as? String) else { return false }
-                return plainTextLeafRoles.contains(childRole)
-            }
 
-            // De-duplication: a container's AXValue is the concatenation of its
-            // text descendants, so emitting BOTH the value line and the child
-            // text lines doubles the tokens (observed ~2x on chat/article
-            // surfaces). When the children are all plain text, collapse the
-            // subtree into the single value line; if the value is too long to
-            // hold safely, drop the redundant value and let the children carry
-            // the full text instead (no content loss either way).
+            // De-duplication / de-fragmentation. WebKit/Chromium shatter a link's,
+            // heading's, list item's, or paragraph's text across many plain-text
+            // leaves (one per inline span). When this node's WHOLE subtree is pure
+            // text, that text is recoverable as one correctly-spaced line, so we
+            // emit it once and skip the fragmented children. Capability-probed
+            // chain (no app/bundle sniffing):
+            //   Tier 1 — the node already rolls the text up into its own name
+            //            (link accname, heading) or value (textarea, list item):
+            //            keep that line, drop the children. A too-long value is
+            //            dropped instead so the children carry it in full
+            //            (formatLine doesn't clamp names, so names always collapse).
+            //   Tier 0 — an empty structural wrapper with no name/value of its own
+            //            (a web <p>/<div>): synthesize the line from the element's
+            //            AXStringForTextMarkerRange, WebKit's rendered text with
+            //            inline spans correctly spaced. `textMarkerLine` returns nil
+            //            for multi-line results so we fold at paragraph granularity,
+            //            and nil on native surfaces (no text markers).
+            //   else  — empty wrapper, no marker (native, fragmented, rare): leave
+            //            the fragments rather than risk a lossy join.
             var value = rawValue
             var descend = true
-            if rawValue != nil, childrenAllPlainText {
-                if rawValue!.count <= defaultCollapseValueChars {
+            if !children.isEmpty,
+               zip(children, childAttrs).allSatisfy({ subtreeIsPureText($0.0, $0.1, depth: depth + 1) }) {
+                if let name {
                     descend = false
-                } else {
-                    value = nil
+                    // Guard the one case folding-into-name can lose text: an
+                    // aria-label `name` that diverges from the visible child text
+                    // (the rolled-up name is NOT a superset). When the rendered
+                    // text isn't already covered by the name, surface it in the
+                    // value so it survives. No-op for the common name-from-content
+                    // case, and on native (no marker).
+                    if let rendered = textMarkerLine(for: element),
+                       !name.filter({ !$0.isWhitespace }).contains(rendered.filter { !$0.isWhitespace }) {
+                        value = rendered
+                    }
+                } else if let rawValue {
+                    if rawValue.count > defaultCollapseValueChars { value = nil } else { descend = false }
+                } else if let paragraph = textMarkerLine(for: element) {
+                    value = paragraph
+                    descend = false
                 }
             }
-            let clampedValue = value?.clamped(to: descend ? maxValueChars : defaultCollapseValueChars)
+            // Sole-carrier leaf: no children to fall back on, so this value is the
+            // ONLY copy of its text in the tree. Clamp gently — keep the TAIL and
+            // preserve newlines (see `tailClamped`) instead of the small head
+            // clamp that would amputate a terminal/editor buffer.
+            let clampedValue: String?
+            if children.isEmpty, let leafValue = value, leafValue.count > maxValueChars {
+                clampedValue = leafValue.tailClamped(to: leafTailChars)
+            } else {
+                clampedValue = value?.clamped(to: descend ? maxValueChars : defaultCollapseValueChars)
+            }
 
             // Collapse empty structural wrappers: a node with no name and no
             // value carries no content of its own, so emit nothing and keep its
@@ -162,6 +231,32 @@ enum WindowAXTreeCapture {
             requiredIndexes: nodeTruncated ? [lines.count - 1] : []
         )
         return Result(text: selected.text, nodeCount: nodeCount, truncated: nodeTruncated)
+    }
+
+    /// WebKit/Chromium's rendered text for an element's whole subtree, as a single
+    /// trimmed line, via the text-marker parameterized attributes. This is the
+    /// ground-truth string the engine lays out, so inline spans come back
+    /// contiguous and correctly spaced — no fragment-joining heuristic. Returns nil
+    /// when:
+    ///   - the surface has no text markers (native AppKit views), or
+    ///   - the result spans multiple lines (a multi-paragraph container) — we fold
+    ///     at paragraph granularity, so a multi-line result means "descend and let
+    ///     each paragraph fold on its own" rather than merging them.
+    /// Object-replacement placeholders (`U+FFFC`, inline images) are stripped; the
+    /// caller only invokes this for pure-text subtrees, where they shouldn't occur.
+    private static func textMarkerLine(for element: AXUIElement) -> String? {
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+                element, "AXTextMarkerRangeForUIElement" as CFString, element, &rangeRef) == .success,
+              let rangeRef else { return nil }
+        var stringRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+                element, "AXStringForTextMarkerRange" as CFString, rangeRef, &stringRef) == .success,
+              let string = stringRef as? String else { return nil }
+        let stripped = string.replacingOccurrences(of: "\u{FFFC}", with: "")
+        guard !stripped.contains("\n"), !stripped.contains("\r") else { return nil }
+        let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Select a budgeted window from a flat, indented AX dump.
@@ -562,5 +657,16 @@ private extension String {
             .replacingOccurrences(of: "\r", with: " ")
         guard flattened.count > limit else { return flattened }
         return String(flattened.prefix(limit)) + "…"
+    }
+
+    /// Clamp to `limit` characters by keeping the TAIL, with newlines preserved.
+    /// Used for sole-carrier leaves (terminals, editors) where the live content
+    /// sits at the end and the line structure carries meaning. Prepends an
+    /// ellipsis when cut. The retained newlines mean the emitted node spans
+    /// several physical lines; the budget windower treats it as one unit, which is
+    /// fine because the suffix is already bounded to `limit`.
+    func tailClamped(to limit: Int) -> String {
+        guard count > limit else { return self }
+        return "…" + String(suffix(limit))
     }
 }
