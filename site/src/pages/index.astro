@@ -766,6 +766,30 @@ const faqs = [
       }
     }
 
+    /* On phones the framed look stops paying for itself — screen real estate is
+       too tight to spend on insets, and the vertical rhythm is far too loose.
+       So: hero + join go full-bleed (edge to edge, no rounded card or shadow),
+       and the generous desktop section spacing tightens up. */
+    @media (max-width: 640px) {
+      .hero {
+        --hero-inset: 0px;
+        --hero-shadow: none;
+        border-radius: 0;
+      }
+      /* ~110px of dead space between sections (109px top + bottom) is too much
+         on a phone; tighten to a calmer mobile rhythm. */
+      .section {
+        padding-block: clamp(44px, 8vh, 60px);
+      }
+      /* the closing card goes full-bleed too, so the page reads as one surface
+         top (hero) to bottom (join) instead of floating chips on cream. */
+      .join__card {
+        margin-inline: 0;
+        border-radius: 0;
+        padding-block: clamp(56px, 10vh, 92px);
+      }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .cursor {
         animation: none;
