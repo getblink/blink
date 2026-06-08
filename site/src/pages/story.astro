@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import TopBar from "../components/TopBar.astro";
 import MetaFooter from "../components/MetaFooter.astro";
+import "../styles/article.css";
 
 const title = "What is Blink?";
 const description =
@@ -15,6 +16,7 @@ const description =
     <article class="container article">
       <h1>what is blink?</h1>
 
+      <div class="prose">
       <p>the slowest thing on my computer is me typing.</p>
 
       <p>
@@ -70,6 +72,8 @@ const description =
         go back.
       </p>
 
+      </div>
+
       <p class="article__back">
         <a href="/#join">join the beta →</a>
       </p>
@@ -79,38 +83,12 @@ const description =
   <MetaFooter />
 
   <style>
-    .story {
-      padding-block: clamp(48px, 8vh, 104px) clamp(64px, 10vh, 128px);
-    }
-    .article {
-      max-width: 680px;
-    }
+    /* Container, prose, and the closing CTA come from the shared
+       src/styles/article.css. Only the title spacing differs here: /story goes
+       straight from the title into body copy, so it needs more room than a
+       post (which has a date line under the title). */
     .article h1 {
-      font-size: clamp(2.4rem, 5vw, 3.6rem);
-      font-weight: 720;
-      letter-spacing: -0.04em;
-      line-height: 1;
       margin-bottom: 36px;
-      color: var(--fg);
-    }
-    .article p {
-      font-size: clamp(16px, 1.3vw, 18px);
-      line-height: 1.7;
-      color: var(--fg-2);
-      margin-bottom: 20px;
-      text-wrap: pretty;
-    }
-    .article__back {
-      margin-top: 40px;
-    }
-    .article__back a {
-      font-weight: 600;
-      color: var(--fg);
-      border-bottom: 1px solid var(--line-soft);
-      transition: border-color 140ms ease;
-    }
-    .article__back a:hover {
-      border-bottom-color: var(--fg);
     }
   </style>
 </Base>

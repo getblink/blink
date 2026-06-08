@@ -2,6 +2,7 @@
 import Base from "./Base.astro";
 import TopBar from "../components/TopBar.astro";
 import MetaFooter from "../components/MetaFooter.astro";
+import "../styles/article.css";
 
 interface RelatedLink {
   slug: string;
@@ -77,7 +78,7 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
         }
       </p>
 
-      <div class="article__body">
+      <div class="prose">
         <slot />
       </div>
 
@@ -105,11 +106,12 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
   <MetaFooter />
 
   <style>
-    .story {
-      padding-block: clamp(48px, 8vh, 104px) clamp(64px, 10vh, 128px);
-    }
-    .article {
-      max-width: 680px;
+    /* Container + prose + closing CTA live in src/styles/article.css (shared
+       with /story). What's left here is blog-post-only chrome. */
+
+    /* tighter than the shared default — a date line follows the title */
+    .article h1 {
+      margin-bottom: 12px;
     }
 
     .article__kicker {
@@ -127,104 +129,9 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
       border-bottom-color: var(--fg);
     }
 
-    .article h1 {
-      font-size: clamp(2.4rem, 5vw, 3.6rem);
-      font-weight: 720;
-      letter-spacing: -0.04em;
-      line-height: 1.02;
-      margin-bottom: 12px;
-      color: var(--fg);
-    }
-
     .article__date {
       font-size: 13.5px;
       margin-bottom: 40px;
-    }
-
-    /* Prose — markdown body comes through the <slot>, so target with :global. */
-    .article__body :global(h2) {
-      font-size: clamp(1.35rem, 2.4vw, 1.7rem);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      line-height: 1.2;
-      margin-top: 52px;
-      margin-bottom: 16px;
-      color: var(--fg);
-    }
-    .article__body :global(h3) {
-      font-size: clamp(1.1rem, 1.8vw, 1.25rem);
-      font-weight: 700;
-      line-height: 1.3;
-      margin-top: 36px;
-      margin-bottom: 12px;
-      color: var(--fg);
-    }
-    .article__body :global(p) {
-      font-size: clamp(16px, 1.3vw, 18px);
-      line-height: 1.7;
-      color: var(--fg-2);
-      margin-bottom: 20px;
-      text-wrap: pretty;
-    }
-    .article__body :global(ul),
-    .article__body :global(ol) {
-      font-size: clamp(16px, 1.3vw, 18px);
-      line-height: 1.7;
-      color: var(--fg-2);
-      margin: 0 0 20px 1.2em;
-    }
-    .article__body :global(li) {
-      margin-bottom: 8px;
-    }
-    .article__body :global(li::marker) {
-      color: var(--fg-muted);
-    }
-    .article__body :global(strong) {
-      font-weight: 680;
-      color: var(--fg);
-    }
-    .article__body :global(blockquote) {
-      margin: 0 0 20px;
-      padding-left: 18px;
-      border-left: 2px solid var(--line-soft);
-      color: var(--fg-muted);
-    }
-    .article__body :global(a) {
-      color: var(--fg);
-      border-bottom: 1px solid var(--sky);
-      transition: background 140ms ease;
-    }
-    .article__body :global(a:hover) {
-      background: var(--sky-soft);
-    }
-    .article__body :global(code) {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.88em;
-      background: color-mix(in oklch, var(--fg) 7%, transparent);
-      padding: 0.1em 0.35em;
-      border-radius: var(--r-1);
-    }
-    .article__body :global(pre) {
-      background: color-mix(in oklch, var(--fg) 7%, transparent);
-      padding: 16px 18px;
-      border-radius: var(--r-2);
-      overflow-x: auto;
-      margin-bottom: 20px;
-    }
-    .article__body :global(pre code) {
-      background: none;
-      padding: 0;
-    }
-    .article__body :global(img) {
-      max-width: 100%;
-      height: auto;
-      border-radius: var(--r-2);
-      margin: 8px 0 20px;
-    }
-    .article__body :global(hr) {
-      border: 0;
-      border-top: 1px solid var(--line-faint);
-      margin: 36px 0;
     }
 
     .related {
@@ -253,19 +160,6 @@ const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
       transition: border-color 140ms ease;
     }
     .related a:hover {
-      border-bottom-color: var(--fg);
-    }
-
-    .article__back {
-      margin-top: 48px;
-    }
-    .article__back a {
-      font-weight: 600;
-      color: var(--fg);
-      border-bottom: 1px solid var(--line-soft);
-      transition: border-color 140ms ease;
-    }
-    .article__back a:hover {
       border-bottom-color: var(--fg);
     }
   </style>
