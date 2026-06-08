@@ -194,4 +194,33 @@ const links = [
       margin-left: auto;
     }
   }
+
+  /* On phones, drop the floating-pill chrome entirely: no frosted bar, no logo
+     — just the "join the beta" button parked top-right. On the landing it still
+     only drops in once you scroll past the hero (whose own CTA covers the top);
+     on /story it sits there from the start. */
+  @media (max-width: 640px) {
+    /* Hide the logo only in the floating state, so the landing (always floating)
+       shows just the CTA, while /story keeps its logo + home link at rest until
+       you scroll. */
+    .topbar.is-floating .topbar__brand {
+      display: none;
+    }
+    .topbar.is-floating {
+      padding-top: clamp(10px, 2.6vw, 16px);
+    }
+    .topbar.is-floating .topbar__inner {
+      max-width: none;
+      height: auto;
+      padding-block: 0;
+      padding-inline: var(--gutter);
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-shadow: none;
+    }
+    .topbar__cta {
+      margin-left: auto;
+    }
+  }
 </style>

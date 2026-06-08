@@ -240,12 +240,13 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
     font-weight: 600;
   }
 
-  /* stack into a pill input + full-width accent button on narrow screens */
+  /* stack into two matched full-width pills on narrow screens: the email field
+     above, the accent button below. */
   @media (max-width: 560px) {
     .signup__field {
       flex-direction: column;
       align-items: stretch;
-      gap: 8px;
+      gap: 10px;
       padding: 0;
       background: transparent;
       box-shadow: none;
@@ -254,13 +255,23 @@ const shareOrigin = (Astro.site?.toString() ?? "").replace(/\/$/, "");
       box-shadow: none;
     }
     input[type="email"] {
-      height: 52px;
+      /* reset the base `flex: 1`: in a column it makes flex-basis:0 win over
+         `height`, collapsing the field to a ~20px sliver. */
+      flex: 0 0 auto;
+      height: 54px;
       border-radius: 999px;
-      padding-inline: 20px;
+      padding-inline: 22px;
       background: color-mix(in oklch, var(--paper) 96%, transparent);
+      box-shadow: 0 1px 2px color-mix(in oklch, var(--ink) 35%, transparent);
     }
+    input[type="email"]:focus-visible {
+      box-shadow:
+        0 1px 2px color-mix(in oklch, var(--ink) 35%, transparent),
+        0 0 0 3px var(--sky-soft);
+    }
+    /* match the field height so the two pills read as a pair */
     .signup__field .signup__submit {
-      height: 50px;
+      height: 54px;
       justify-content: center;
     }
   }
