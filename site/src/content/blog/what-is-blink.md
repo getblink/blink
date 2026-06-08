@@ -3,7 +3,7 @@ title: "What is Blink?"
 description: "Blink is a Mac assistant for the replies hiding in plain sight: it reads your screen, drafts the next words, and stays quiet until you need it."
 publishedAt: 2026-04-19
 cluster: vision
-related: ["what-is-context-loss", "what-is-an-agent-handoff"]
+related: []
 draft: false
 ---
 

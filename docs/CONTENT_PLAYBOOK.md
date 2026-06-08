@@ -50,7 +50,7 @@ title: ""                         # rendered as the <h1> — don't repeat it in 
 description: ""                    # one line; powers <meta>, OG card, blog-index blurb, RSS
 publishedAt: 2026-01-01            # YYYY-MM-DD
 cluster: context-loss             # one of: context-loss | screen-aware | agent-tooling
-related: []                       # optional: other post slugs, e.g. ["what-is-context-loss"]
+related: []                       # optional: other post slugs, e.g. ["some-other-post"]
 # updatedAt: 2026-02-01           # add ONLY when you later revise a published post
 # draft: true                     # uncomment to keep it out of the build while writing
 ---
