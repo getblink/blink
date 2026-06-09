@@ -344,6 +344,15 @@ final class BlinkCoordinator: @unchecked Sendable {
     ///   window open during capture. The submit path arms it once the run is
     ///   about to stream.
     private func presentGlassLoading(windowRect: NSRect, speed: Double, armKeyTap: Bool = true) {
+        // The submit path (armKeyTap == true) re-presenting over a live lens is a
+        // re-anchor: the precise captured rect arrived after the instant-ack guess
+        // and differs (notably in fullscreen, where the cheap CGWindowList rect is
+        // the window minus the menu bar while the capture is the full display).
+        // Reposition WITHOUT restarting the drain, or the user sees the animation
+        // replay ("double lens"). The instant-ack (armKeyTap == false) always
+        // starts fresh — it begins a new capture, even if a prior capture's lens
+        // is somehow still up — so it must not continue an older drain.
+        let isReanchor = glassLoadingActive && armKeyTap
         glassLoadingActive = true
         glassLoadingPresentedRect = windowRect
         if armKeyTap {
@@ -364,7 +373,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         // `speed` is supplied by the caller (from the @MainActor store at hotkey
         // time, or the captured Sendable runtime at submit) so a Settings change
         // to Loading animation speed takes effect on the very next capture.
-        glassLoading.show(windowRect: windowRect, speed: speed)
+        if isReanchor {
+            glassLoading.reanchor(to: windowRect, speed: speed)
+        } else {
+            glassLoading.show(windowRect: windowRect, speed: speed)
+        }
     }
 
     /// Tear down the glass loading lens. Clears the overlay-active mirror only
@@ -395,11 +408,50 @@ final class BlinkCoordinator: @unchecked Sendable {
     @MainActor
     private func presentInstantCaptureAck(pressedAt: DispatchTime) -> Bool {
         let ownPID = NSRunningApplication.current.processIdentifier
-        guard let cgRect = ScreenCapture.frontmostCapturableWindowRect(excluding: ownPID) else {
+        let glass = RuntimeEnvironment.glassLoadingEnabled()
+        let cgRect = ScreenCapture.frontmostCapturableWindowRect(excluding: ownPID)
+
+        // FAST PATH: a substantial on-screen window is almost certainly the content
+        // we'll capture — anchor the lens there directly with NO Accessibility call,
+        // so the instant-ack stays a ~1-5ms CGWindowList lookup. Only when the cheap
+        // path can't see a plausible content window — nil, or a thin strip much
+        // shorter than the screen — do we escalate to the AX probe. That strip is
+        // the tell that the real window is FULLSCREEN in its own Space (Edge reports
+        // a ~116pt top strip); CGWindowList can't see the fullscreen content window
+        // from Blink's Space. The size check here only ROUTES whether to probe — the
+        // AX probe is the authority, and a wrong route only costs latency (a probe),
+        // never correctness. (Probing unconditionally added 20-330ms to every
+        // capture, varying with the target app's AX responsiveness — a regression.)
+        let activeFrame = NSScreen.main?.frame
+        let cheapLooksLikeContent: Bool = {
+            guard let r = cgRect else { return false }
+            guard let s = activeFrame, s.height > 0 else { return true }
+            return r.height >= s.height * 0.33
+        }()
+        if !cheapLooksLikeContent,
+           let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           frontPID != ownPID,
+           ScreenCapture.focusedWindowAXProbe(for: frontPID).isFullscreen,
+           let display = activeFrame, display.height > 0 {
+            if glass {
+                presentGlassLoading(windowRect: display, speed: runtimeStore.lensAnimationSpeed, armKeyTap: false)
+            } else {
+                CaptureConfirmationOverlay.flash(frame: CGRect(origin: .zero, size: display.size))
+            }
+            latencyLogger.info(
+                "instant_ack shown=\(true, privacy: .public) glass=\(glass, privacy: .public) anchor=fullscreen_display press_to_visual_ms=\(self.durationMS(from: pressedAt, to: self.monotonicNow()), privacy: .public)"
+            )
+            return true
+        }
+
+        guard let cgRect else {
             latencyLogger.info("instant_ack shown=\(false, privacy: .public) reason=no_window")
             return false
         }
-        let glass = RuntimeEnvironment.glassLoadingEnabled()
+        guard let screenFrame = NSScreen.screens.first?.frame, screenFrame.height > 0 else {
+            latencyLogger.info("instant_ack shown=\(false, privacy: .public) reason=no_screen")
+            return false
+        }
         if glass {
             // CGWindow bounds are CG-global (top-left origin, +Y down); the lens
             // panel wants AppKit-screen coords (bottom-left, +Y up). Flip against
@@ -407,13 +459,9 @@ final class BlinkCoordinator: @unchecked Sendable {
             // `captureRectInAppKitScreen`, inlined because we're already on the
             // main thread (that helper hops via DispatchQueue.main.sync and would
             // deadlock here).
-            guard let primaryHeight = NSScreen.screens.first?.frame.height, primaryHeight > 0 else {
-                latencyLogger.info("instant_ack shown=\(false, privacy: .public) reason=no_screen")
-                return false
-            }
             let appKitRect = NSRect(
                 x: cgRect.origin.x,
-                y: primaryHeight - cgRect.maxY,
+                y: screenFrame.height - cgRect.maxY,
                 width: cgRect.width,
                 height: cgRect.height
             )

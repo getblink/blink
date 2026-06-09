@@ -76,7 +76,21 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ax_tree = extract_ax_tree(input_path.read_text(encoding="utf-8"))
-    lines = parse_lines(ax_tree)
+    node_texts = rejoined_node_texts(ax_tree)
+    collapsed_texts, collapse_stats = collapse_tandem_runs(node_texts)
+    (out_dir / "collapsed.txt").write_text("\n".join(collapsed_texts), encoding="utf-8")
+
+    # Strategies run on the collapsed tree, mirroring the shipped order (fold
+    # duplication first, then window the remainder under budget).
+    lines = [
+        Line(
+            index=i,
+            text=t,
+            depth=(len(t) - len(t.lstrip(" "))) // 2,
+            chars=len(t) + 1,
+        )
+        for i, t in enumerate(collapsed_texts)
+    ]
     if not lines:
         raise SystemExit("No AX tree lines found.")
     if args.budget <= 0:
@@ -109,6 +123,7 @@ def main() -> None:
         lines=lines,
         selections=selections,
     )
+    report["collapse"] = collapse_stats
     (out_dir / "report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=True) + "\n",
         encoding="utf-8",
@@ -168,15 +183,121 @@ def strip_ax_header(text: str) -> str:
 
 def parse_lines(ax_tree: str) -> list[Line]:
     lines: list[Line] = []
-    for raw_line in ax_tree.splitlines():
-        text = raw_line.rstrip()
-        if not text:
-            continue
+    for text in rejoined_node_texts(ax_tree):
         leading = len(text) - len(text.lstrip(" "))
         depth = leading // 2
         index = len(lines)
         lines.append(Line(index=index, text=text, depth=depth, chars=len(text) + 1))
     return lines
+
+
+def rejoined_node_texts(ax_tree: str) -> list[str]:
+    """One string per emitted node, undoing the lossy `\\n`.join.
+
+    A node name/value can contain an embedded newline (e.g. a `pop up button`
+    titled "Honorlock\\nHas access to this site"), so splitting the serialized
+    tree on newlines shatters it into a phantom unindented line. The Swift
+    capture folds duplication on the node array *before* joining, where this
+    never happens; to backtest faithfully we re-fold any unindented
+    continuation line (leading space 0, and not the root) into its predecessor.
+    """
+    nodes: list[str] = []
+    for raw_line in ax_tree.splitlines():
+        text = raw_line.rstrip()
+        if not text:
+            continue
+        leading = len(text) - len(text.lstrip(" "))
+        if nodes and leading == 0 and not text.startswith("standard window"):
+            nodes[-1] = nodes[-1] + " " + text  # flatten, matching name handling
+        else:
+            nodes.append(text)
+    return nodes
+
+
+def collapse_tandem_runs(
+    texts: list[str],
+    *,
+    min_gain: int = 2,
+    max_period: int = 256,
+) -> tuple[list[str], dict[str, Any]]:
+    """Port of `WindowAXTreeCapture.collapseTandemRuns` for backtesting.
+
+    Folds adjacent indent-normalized tandem repeats (subtree dups, sibling-run
+    dups, single-line dups) into one copy plus an `[↑ … ×N …]` marker, recursing
+    into the kept copy so nested repeats fold in one pass.
+    """
+    n = len(texts)
+    if n <= 1:
+        return list(texts), {"events": 0}
+
+    depth = [(len(t) - len(t.lstrip(" "))) // 2 for t in texts]
+    body = [t.lstrip(" ") for t in texts]
+    positions: dict[str, list[int]] = {}
+    for index, key in enumerate(body):
+        positions.setdefault(key, []).append(index)
+
+    def blocks_equal(a: int, b: int, p: int) -> bool:
+        min_a = min(depth[a : a + p])
+        min_b = min(depth[b : b + p])
+        for t in range(p):
+            if body[a + t] != body[b + t]:
+                return False
+            if depth[a + t] - min_a != depth[b + t] - min_b:
+                return False
+        return True
+
+    out: list[str] = []
+    events = 0
+
+    def emit(lo: int, hi: int) -> None:
+        nonlocal events
+        i = lo
+        while i < hi:
+            best_period = best_count = best_gain = 0
+            for j in positions.get(body[i], ()):
+                if j <= i:
+                    continue
+                p = j - i
+                if p > max_period or i + 2 * p > hi:
+                    break
+                if not blocks_equal(i, i + p, p):
+                    continue
+                k = 2
+                while i + (k + 1) * p <= hi and blocks_equal(i, i + k * p, p):
+                    k += 1
+                gain = (k - 1) * p
+                if gain >= min_gain and gain > best_gain:
+                    best_gain, best_period, best_count = gain, p, k
+            if best_gain > 0:
+                p, k = best_period, best_count
+                emit(i, i + p)
+                if p == 1:
+                    if out:
+                        out[-1] = out[-1] + f"  [×{k}]"
+                else:
+                    indent = "  " * depth[i]
+                    out.append(f"{indent}[↑ {p}-line block, ×{k} identical, shown once]")
+                events += 1
+                i += k * p
+            else:
+                out.append(texts[i])
+                i += 1
+
+    emit(0, n)
+    before_chars = sum(len(t) + 1 for t in texts)
+    after_chars = sum(len(t) + 1 for t in out)
+    stats = {
+        "events": events,
+        "lines_before": n,
+        "lines_after": len(out),
+        "chars_before": before_chars,
+        "chars_after": after_chars,
+        "chars_reclaimed": before_chars - after_chars,
+        "pct_reclaimed": round(100 * (before_chars - after_chars) / before_chars, 1)
+        if before_chars
+        else 0.0,
+    }
+    return out, stats
 
 
 def resolve_anchor(
@@ -415,8 +536,16 @@ def format_segment(start: int, end: int) -> str:
 
 
 def render_console_summary(report: dict[str, Any]) -> str:
-    parts = [
-        f"total: {report['total_lines']} lines, {report['total_chars']} chars",
+    collapse = report.get("collapse", {})
+    parts = []
+    if collapse:
+        parts.append(
+            f"collapse: {collapse['lines_before']}->{collapse['lines_after']} lines, "
+            f"{collapse['chars_before']}->{collapse['chars_after']} chars "
+            f"(-{collapse['pct_reclaimed']}%, {collapse['events']} folds)"
+        )
+    parts += [
+        f"post-collapse total: {report['total_lines']} lines, {report['total_chars']} chars",
         f"anchor: line {report['anchor_index']} depth {report['anchor_depth']}: {report['anchor_line']}",
     ]
     for name, metrics in report["strategies"].items():
@@ -428,12 +557,21 @@ def render_console_summary(report: dict[str, Any]) -> str:
 
 
 def render_summary(report: dict[str, Any]) -> str:
+    collapse = report.get("collapse", {})
     lines = [
         "# AX Tree Truncation Probe",
         "",
         f"- Input: `{report['input']}`",
         f"- Budget: `{report['budget']}` chars",
-        f"- Total: `{report['total_lines']}` lines, `{report['total_chars']}` chars",
+    ]
+    if collapse:
+        lines.append(
+            f"- Collapse: `{collapse['lines_before']}`→`{collapse['lines_after']}` lines, "
+            f"`{collapse['chars_before']}`→`{collapse['chars_after']}` chars "
+            f"(**-{collapse['pct_reclaimed']}%**, `{collapse['events']}` folds)"
+        )
+    lines += [
+        f"- Total (post-collapse): `{report['total_lines']}` lines, `{report['total_chars']}` chars",
         f"- Anchor: line `{report['anchor_index']}` depth `{report['anchor_depth']}`",
         "",
         "```text",
@@ -455,9 +593,12 @@ def render_summary(report: dict[str, Any]) -> str:
             "",
             "Artifacts:",
             "",
+            "- `collapsed.txt` is the tree after tandem-duplication folding (the shipped pre-windowing step).",
             "- `head.txt` models the current server clamp.",
             "- `tail.txt` models a simple recency-biased fallback.",
             "- `anchor.txt` keeps ancestors plus a window around the anchor.",
+            "",
+            "Strategies run on the collapsed tree, mirroring the shipped order (fold first, then window).",
         ]
     )
     return "\n".join(lines) + "\n"
