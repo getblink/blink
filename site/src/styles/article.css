@@ -1,0 +1,132 @@
+/* Shared article prose — the single source of truth for long-form typography,
+   used by /story and every /blog post. Imported (and therefore global) by
+   src/layouts/ArticleLayout.astro and src/pages/story.astro.
+
+   Global is deliberate: it lets these rules reach blog post bodies that arrive
+   through a <slot> as rendered markdown, with no per-element :global() wrappers.
+
+   Scope discipline: body copy is styled under `.prose` (the wrapper around the
+   long-form content) so it never touches article chrome like the kicker or the
+   date line, which are <p> siblings that sit OUTSIDE .prose. */
+
+.story {
+  padding-block: clamp(48px, 8vh, 104px) clamp(64px, 10vh, 128px);
+}
+
+.article {
+  max-width: 740px;
+}
+
+/* The title. Lives directly under .article in both layouts (outside .prose),
+   so one selector covers both. Vertical spacing below it is left to each page:
+   posts put a date line under the title, /story goes straight into body copy. */
+.article h1 {
+  font-size: var(--fs-prose-h1);
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+  color: var(--fg);
+}
+
+/* Long-form body. */
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose h2 {
+  font-size: var(--fs-prose-h2);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-top: 52px;
+  margin-bottom: 16px;
+  color: var(--fg);
+}
+.prose h3 {
+  font-size: var(--fs-prose-h3);
+  font-weight: 700;
+  line-height: 1.3;
+  margin-top: 36px;
+  margin-bottom: 12px;
+  color: var(--fg);
+}
+.prose p {
+  font-size: var(--fs-prose-body);
+  line-height: 1.7;
+  color: var(--fg-2);
+  margin-bottom: 20px;
+  text-wrap: pretty;
+}
+.prose ul,
+.prose ol {
+  font-size: var(--fs-prose-body);
+  line-height: 1.7;
+  color: var(--fg-2);
+  margin: 0 0 20px 1.2em;
+}
+.prose li {
+  margin-bottom: 8px;
+}
+.prose li::marker {
+  color: var(--fg-muted);
+}
+.prose strong {
+  font-weight: 680;
+  color: var(--fg);
+}
+.prose blockquote {
+  margin: 0 0 20px;
+  padding-left: 18px;
+  border-left: 2px solid var(--line-soft);
+  color: var(--fg-muted);
+}
+.prose a {
+  color: var(--fg);
+  border-bottom: 1px solid var(--sky);
+  transition: background 140ms ease;
+}
+.prose a:hover {
+  background: var(--sky-soft);
+}
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: color-mix(in oklch, var(--fg) 7%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: var(--r-1);
+}
+.prose pre {
+  background: color-mix(in oklch, var(--fg) 7%, transparent);
+  padding: 16px 18px;
+  border-radius: var(--r-2);
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+}
+.prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--r-2);
+  margin: 8px 0 20px;
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--line-faint);
+  margin: 36px 0;
+}
+
+/* Closing CTA shared by /story and posts. */
+.article__back {
+  margin-top: 48px;
+}
+.article__back a {
+  font-weight: 600;
+  color: var(--fg);
+  border-bottom: 1px solid var(--line-soft);
+  transition: border-color 140ms ease;
+}
+.article__back a:hover {
+  border-bottom-color: var(--fg);
+}

@@ -7,7 +7,7 @@ const links = [
   { href: "/#why", label: "why blink" },
   { href: "/#privacy", label: "privacy" },
   { href: "/#faq", label: "faq" },
-  { href: "/story", label: "story" },
+  { href: "/blog", label: "blog" },
 ];
 ---
 
@@ -156,7 +156,7 @@ const links = [
   .topbar__nav a {
     position: relative;
     padding: 4px 0;
-    font-size: 14.5px;
+    font-size: var(--fs-small);
     font-weight: 500;
     color: var(--fg-muted);
     transition: color 150ms ease;
@@ -182,7 +182,7 @@ const links = [
   .topbar__cta {
     height: 40px;
     padding: 0 18px;
-    font-size: 14px;
+    font-size: var(--fs-small);
   }
 
   /* On small screens the nav collapses to logo + CTA. */

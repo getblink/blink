@@ -12,7 +12,9 @@ const year = new Date().getFullYear();
     <nav class="footer__nav" aria-label="Footer">
       <a href="/#how">how it works</a>
       <a href="/#faq">faq</a>
-      <a href="/story">story</a>
+      <a href="/blog/what-is-blink">story</a>
+      <a href="/blog">blog</a>
+      <a href="/rss.xml">rss</a>
       <a href="https://github.com/getblink/blink" rel="noopener" target="_blank"
         >github</a
       >
@@ -44,7 +46,7 @@ const year = new Date().getFullYear();
     display: flex;
     align-items: baseline;
     gap: 12px;
-    font-size: 14px;
+    font-size: var(--fs-small);
   }
   .footer__word {
     font-weight: 700;
@@ -55,7 +57,7 @@ const year = new Date().getFullYear();
     display: flex;
     flex-wrap: wrap;
     gap: 18px 22px;
-    font-size: 14px;
+    font-size: var(--fs-small);
   }
   .footer__nav a {
     color: var(--fg-muted);
@@ -71,7 +73,7 @@ const year = new Date().getFullYear();
     flex-direction: column;
     align-items: flex-end;
     gap: 2px;
-    font-size: 12.5px;
+    font-size: var(--fs-xs);
     text-align: right;
   }
 

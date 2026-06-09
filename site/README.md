@@ -2,6 +2,13 @@
 
 Marketing site for Blink. Static Astro build, deployed to Cloudflare Pages.
 
+## Blog
+
+Posts live in `src/content/blog/*.md` (one file per post, filename = URL slug).
+To publish a post or run the monthly metrics check, follow
+[`docs/CONTENT_PLAYBOOK.md`](../docs/CONTENT_PLAYBOOK.md) — it's the copy-paste
+runbook for both. The monthly log is [`CONTENT_METRICS.md`](CONTENT_METRICS.md).
+
 ## Develop
 
 ```bash

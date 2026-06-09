@@ -8,6 +8,11 @@ interface Props {
   ogType?: string;
   ogImage?: string;
   publishedAt?: string;
+  // Optional: clean article title for the schema `headline` (without the
+  // "— Blink" suffix the <title> tag carries). Falls back to `title`.
+  headline?: string;
+  // Optional: ISO timestamp for the article's last meaningful edit.
+  modifiedAt?: string;
 }
 
 const {
@@ -16,10 +21,36 @@ const {
   ogType = "website",
   ogImage = "/og-image.png",
   publishedAt,
+  headline,
+  modifiedAt,
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const ogImageURL = new URL(ogImage, Astro.site);
+
+// Shared entity definitions so author/publisher resolve to real, linked
+// entities (helps both Google's knowledge graph and AI systems ground "who
+// is Blink / Henry Zhang" rather than treating them as bare strings).
+const blinkOrg = {
+  "@type": "Organization",
+  name: "Blink",
+  url: Astro.site?.toString(),
+  logo: {
+    "@type": "ImageObject",
+    url: new URL("/blink-icon.png", Astro.site).toString(),
+  },
+  sameAs: [
+    "https://github.com/getblink/blink",
+    "https://x.com/thehenryinsf",
+  ],
+};
+
+const henryPerson = {
+  "@type": "Person",
+  name: "Henry Zhang",
+  url: "https://x.com/thehenryinsf",
+  sameAs: ["https://x.com/thehenryinsf"],
+};
 
 const websiteSchema = {
   "@type": "WebSite",
@@ -48,12 +79,13 @@ const articleSchema =
   ogType === "article"
     ? {
         "@type": "Article",
-        headline: title,
+        headline: headline ?? title,
         description,
         url: canonicalURL.toString(),
-        author: { "@type": "Person", name: "Henry Zhang" },
-        publisher: { "@type": "Organization", name: "Blink" },
+        author: henryPerson,
+        publisher: blinkOrg,
         ...(publishedAt ? { datePublished: publishedAt } : {}),
+        ...(modifiedAt ? { dateModified: modifiedAt } : {}),
       }
     : null;
 
@@ -79,6 +111,12 @@ const structuredData = {
     <link rel="icon" type="image/png" href="/blink-icon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="canonical" href={canonicalURL} />
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="Blink Blog"
+      href={new URL("/rss.xml", Astro.site)}
+    />
     <link rel="preconnect" href="https://dl.useblink.dev" crossorigin />
     <link rel="preconnect" href="https://us.i.posthog.com" crossorigin />
 
