@@ -1,0 +1,166 @@
+---
+import Base from "./Base.astro";
+import TopBar from "../components/TopBar.astro";
+import MetaFooter from "../components/MetaFooter.astro";
+import "../styles/article.css";
+
+interface RelatedLink {
+  slug: string;
+  title: string;
+}
+
+interface Props {
+  title: string;
+  description: string;
+  publishedAt: Date;
+  updatedAt?: Date;
+  clusterLabel: string;
+  related?: RelatedLink[];
+}
+
+const {
+  title,
+  description,
+  publishedAt,
+  updatedAt,
+  clusterLabel,
+  related = [],
+} = Astro.props;
+
+// Format in UTC. publishedAt comes from `z.coerce.date()` parsing a bare
+// `YYYY-MM-DD` as UTC midnight; formatting in the build machine's local TZ
+// (behind UTC) would render the previous day. Keep the label in UTC so it
+// matches the <time datetime> attribute and the JSON-LD date.
+const fmt = (d: Date) =>
+  d.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+const publishedISO = publishedAt.toISOString();
+const publishedLabel = fmt(publishedAt);
+
+// Only treat updatedAt as a real revision if it lands on a later day than the
+// publish date — avoids a noisy "updated" line on the day of publishing.
+const isRevised =
+  !!updatedAt &&
+  updatedAt.getTime() > publishedAt.getTime() &&
+  fmt(updatedAt) !== publishedLabel;
+const modifiedISO = isRevised ? updatedAt!.toISOString() : undefined;
+const updatedLabel = isRevised ? fmt(updatedAt!) : undefined;
+---
+
+<Base
+  title={`${title} — Blink`}
+  headline={title}
+  description={description}
+  ogType="article"
+  publishedAt={publishedISO}
+  modifiedAt={modifiedISO}
+>
+  <TopBar />
+
+  <main class="story">
+    <article class="container article">
+      <p class="article__kicker">
+        <a href="/blog">blog</a>
+        <span class="muted">· {clusterLabel.toLowerCase()}</span>
+      </p>
+      <h1>{title.toLowerCase()}</h1>
+      <p class="article__date muted">
+        <time datetime={publishedISO}>{publishedLabel}</time>
+        {
+          updatedLabel && (
+            <span> · updated <time datetime={modifiedISO}>{updatedLabel}</time></span>
+          )
+        }
+      </p>
+
+      <div class="prose">
+        <slot />
+      </div>
+
+      {
+        related.length > 0 && (
+          <nav class="related" aria-label="Related articles">
+            <p class="related__label">related</p>
+            <ul>
+              {related.map((link) => (
+                <li>
+                  <a href={`/blog/${link.slug}/`}>{link.title}</a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )
+      }
+
+      <p class="article__back">
+        <a href="/#join">join the beta →</a>
+      </p>
+    </article>
+  </main>
+
+  <MetaFooter />
+
+  <style>
+    /* Container + prose + closing CTA live in src/styles/article.css (shared
+       with /story). What's left here is blog-post-only chrome. */
+
+    /* tighter than the shared default — a date line follows the title */
+    .article h1 {
+      margin-bottom: 12px;
+    }
+
+    .article__kicker {
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      margin-bottom: 18px;
+    }
+    .article__kicker a {
+      color: var(--fg);
+      border-bottom: 1px solid var(--line-soft);
+      transition: border-color 140ms ease;
+    }
+    .article__kicker a:hover {
+      border-bottom-color: var(--fg);
+    }
+
+    .article__date {
+      font-size: var(--fs-xs);
+      margin-bottom: 40px;
+    }
+
+    .related {
+      margin-top: 56px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line-faint);
+    }
+    .related__label {
+      font-size: var(--fs-2xs);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      margin-bottom: 14px;
+    }
+    .related ul {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+    }
+    .related a {
+      font-size: var(--fs-prose-body);
+      font-weight: 600;
+      color: var(--fg);
+      border-bottom: 1px solid transparent;
+      transition: border-color 140ms ease;
+    }
+    .related a:hover {
+      border-bottom-color: var(--fg);
+    }
+  </style>
+</Base>
