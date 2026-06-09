@@ -660,6 +660,60 @@
     color: var(--sky);
   }
 
+  /* ---- mobile: the terminal mock is sized for a wide desktop window. On
+     phones its content wraps and would overflow a fixed-height box (clipping
+     the prompt + hint) and the reply cards would truncate. Let it breathe. ---- */
+  @media (max-width: 640px) {
+    /* stage + window grow to fit the wrapped content instead of clipping the
+       bottom against a fixed height; the window moves into normal flow so the
+       auto-height stage can size to it (the lens/keycap/panel still overlay it,
+       since they anchor to the same insets + width). */
+    .stage {
+      height: auto;
+      /* go full-bleed: break out of the section gutter to the screen edges,
+         square the corners, and slim the blue "desktop" frame to a thin themed
+         edge — the terminal's own chrome carries the "window" metaphor, so the
+         width is better spent on the terminal than on nested framing. */
+      --pad: 12px;
+      --pad-y: 12px;
+      margin-inline: calc(var(--gutter) * -1);
+      border-radius: 0;
+      border: 0;
+      box-shadow: none;
+    }
+    .win {
+      position: relative;
+      left: auto;
+      top: auto;
+      bottom: auto;
+      transform: none;
+      margin: var(--pad-y) auto;
+    }
+    .win__body {
+      overflow: visible;
+    }
+    /* long file-path chips wrap instead of being cut off at the window edge */
+    .cli code {
+      overflow-wrap: anywhere;
+    }
+    /* show the full reply suggestion — the payload of the "draft" step —
+       instead of ellipsising each card to a single line */
+    .card__text {
+      white-space: normal;
+    }
+    /* stack see / draft / insert so each step has room to read */
+    .track {
+      grid-template-columns: 1fr;
+    }
+    .track li {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .track li:last-child {
+      border-bottom: 0;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .lens,
     .tcaret {
