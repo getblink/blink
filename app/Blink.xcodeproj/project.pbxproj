@@ -110,6 +110,7 @@
 		E8321CD61F8AD8F21CDECF9C /* LGProto13.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE30179D90510906DEBE437A /* LGProto13.swift */; };
 		F3497B0C6C8B84A41D3D9E20 /* MenubarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009080B616A8506A5210AC26 /* MenubarController.swift */; };
 		F38B835C8929C86855ACB8BF /* WelcomeOverlayPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D8E5685B1437D8D2C2B165 /* WelcomeOverlayPanel.swift */; };
+		F5C3D87D5CC85C1F219F3B74 /* WindowAXTreeCollapseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DC218F21F94144943A72549 /* WindowAXTreeCollapseTests.swift */; };
 		F98F38FA0D707A3CDDD1C94B /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6CFA143AF216667464AF0DE /* Config.swift */; };
 		FBA4A540708D0BA00A2BDD15 /* CaptureModeDeriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FDBB8FC33DE2F5D3D76871 /* CaptureModeDeriver.swift */; };
 /* End PBXBuildFile section */
@@ -155,6 +156,7 @@
 		3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		3B6A4F1D256A1BB62E0C9EEF /* AboutMeTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeTextEditor.swift; sourceTree = "<group>"; };
 		3D804AB181B0B3965CEFDBC8 /* SoundEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundEffects.swift; sourceTree = "<group>"; };
+		3DC218F21F94144943A72549 /* WindowAXTreeCollapseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAXTreeCollapseTests.swift; sourceTree = "<group>"; };
 		40A3234FC54834D91492DCC2 /* ApplicationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ApplicationServices.framework; path = System/Library/Frameworks/ApplicationServices.framework; sourceTree = SDKROOT; };
 		41BACCF164226F25B851C687 /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		4214D54A0ABE9369A9BBC560 /* PermissionsActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsActions.swift; sourceTree = "<group>"; };
@@ -417,6 +419,7 @@
 				8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */,
 				AC02E623B66431ABA042FD7C /* SuggestionChoiceStateTests.swift */,
 				81737ADBA9EC614DB7528265 /* TLDROverlayTextTests.swift */,
+				3DC218F21F94144943A72549 /* WindowAXTreeCollapseTests.swift */,
 			);
 			path = BlinkTests;
 			sourceTree = "<group>";
@@ -625,6 +628,7 @@
 				D104FE490D8660B2C0C81706 /* SelectionCaptureTests.swift in Sources */,
 				C971D556C829BE1101F2EC1D /* SuggestionChoiceStateTests.swift in Sources */,
 				D5F87C7631EDC265C21F8EF2 /* TLDROverlayTextTests.swift in Sources */,
+				F5C3D87D5CC85C1F219F3B74 /* WindowAXTreeCollapseTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -117,7 +117,7 @@ enum WindowAXTreeCapture {
 
         // `attrs` is pre-fetched by the caller (the root fetches its own) so the
         // collapse decision and the recursive descent share one IPC per node.
-        func walk(_ element: AXUIElement, _ attrs: [CFTypeRef?], depth: Int, indent: Int) {
+        func walk(_ element: AXUIElement, _ attrs: [CFTypeRef?], depth: Int, indent: Int, inheritedName: String?) {
             if nodeCount >= maxNodes {
                 nodeTruncated = true
                 return
@@ -133,6 +133,19 @@ enum WindowAXTreeCapture {
             // URL does. Route/shell noise is dropped in `displayURL`.
             let url = displayURL(attrs[5]) ?? displayURL(attrs[6])
             let name = title ?? desc
+
+            // Name-rollup suppression. A structural node that merely repeats an
+            // ancestor's already-emitted name (window → group → HTML content all
+            // carrying the page title; a profile link → group → image all named
+            // "Square profile picture") adds no new text. Drop the repeated name
+            // for display, keeping the node's role and href. `inheritedName` only
+            // holds a string an ancestor already emitted, so the text still appears
+            // once above — safe even when this node folds its children below.
+            let nameRepeatsAncestor = name != nil && name == inheritedName
+            let displayName = nameRepeatsAncestor ? nil : name
+            // Children inherit the name this node actually showed (or, if it showed
+            // none, whatever the ancestors carried down).
+            let childInheritedName = displayName ?? inheritedName
 
             // Fetch children + their attributes once; reused for both the
             // collapse decision below and the recursive descent (no double IPC).
@@ -195,8 +208,14 @@ enum WindowAXTreeCapture {
             // Collapse empty structural wrappers: a node with no name and no
             // value carries no content of its own, so emit nothing and keep its
             // children at the current indent.
+            // Drop a value that merely echoes the node's name (a button whose
+            // title and value coincide) — including when the name itself is
+            // suppressed as an ancestor rollup, so the repeated text doesn't
+            // sneak back in as a value. Compared against the original `name`,
+            // not `displayName`, since suppression nils the latter.
+            let displayValue = clampedValue == name ? nil : clampedValue
             let childIndent: Int
-            if let line = formatLine(role: role, roleDesc: roleDesc, name: name, value: clampedValue, url: url, indent: indent) {
+            if let line = formatLine(role: role, roleDesc: roleDesc, name: displayName, value: displayValue, url: url, indent: indent) {
                 if focusedLineIndex == nil,
                    let focused,
                    CFEqual(element, focused) {
@@ -214,21 +233,30 @@ enum WindowAXTreeCapture {
                     nodeTruncated = true
                     break
                 }
-                walk(child, childAttr, depth: depth + 1, indent: childIndent)
+                walk(child, childAttr, depth: depth + 1, indent: childIndent, inheritedName: childInheritedName)
             }
         }
 
-        walk(root, copyMultiple(root, nodeAttributes), depth: 0, indent: 0)
+        walk(root, copyMultiple(root, nodeAttributes), depth: 0, indent: 0, inheritedName: nil)
 
         guard !lines.isEmpty else { return nil }
         if nodeTruncated {
             lines.append("[… tree truncated at \(maxNodes) nodes]")
         }
+
+        // Fold structural duplication before the budget windower runs. Chromium
+        // mounts the browser frame (toolbar, bookmarks bar, tab strip) under both
+        // the window root and the web area, and exposes the tab strip more than
+        // once inside each — a busy window can spend ~45% of the tree on chrome
+        // the screenshot already shows. Collapsing it here keeps the budget on
+        // real page content. Runs on the node array (not the joined text) so a
+        // name carrying an embedded newline stays a single element.
+        let folded = collapseTandemRuns(lines, anchorIndex: focusedLineIndex)
         let selected = anchoredWindowText(
-            for: lines,
-            anchorIndex: focusedLineIndex,
+            for: folded.lines,
+            anchorIndex: folded.anchorIndex,
             budget: textBudgetChars,
-            requiredIndexes: nodeTruncated ? [lines.count - 1] : []
+            requiredIndexes: nodeTruncated ? [folded.lines.count - 1] : []
         )
         return Result(text: selected.text, nodeCount: nodeCount, truncated: nodeTruncated)
     }
@@ -298,6 +326,115 @@ enum WindowAXTreeCapture {
         return (assemble(lines: lines, kept: kept), true)
     }
 
+    // MARK: - Duplication folding
+
+    /// Collapse adjacent tandem repeats of contiguous node runs into a single
+    /// copy plus an `[↑ … ×N …]` marker, applied before the budget windower so
+    /// structural duplication doesn't crowd out real content. Catches the browser
+    /// tab strip / toolbar that Chromium emits several times per window.
+    ///
+    /// Equality is indent-normalized: a block at indent 2 matches its twin at
+    /// indent 1 (Chromium mounts the browser frame under both the window root and
+    /// the web area, at different depths). The scan recurses into the kept copy,
+    /// so nested repeats fold too — the whole chrome block ×2, and the tab strip
+    /// ×2 inside each copy, in one pass.
+    ///
+    /// `anchorIndex` (the focused line) is remapped through the collapse: if it
+    /// falls inside a dropped copy it is folded onto the matching line in the kept
+    /// copy, so the caller's budget anchor still points at real content. A run of
+    /// `k` copies is only collapsed when it nets at least `minGain` lines, so a
+    /// bare pair whose marker would cost as much as it saves is left intact.
+    static func collapseTandemRuns(
+        _ lines: [String],
+        anchorIndex: Int? = nil,
+        minGain: Int = 2,
+        maxPeriod: Int = 256
+    ) -> (lines: [String], anchorIndex: Int?) {
+        let n = lines.count
+        guard n > 1 else { return (lines, anchorIndex) }
+
+        let depth = lines.map { indentationDepth($0) }
+        // Body = the line with leading indent stripped; this is what must match
+        // between two copies regardless of their absolute depth.
+        let body = lines.map { String($0.drop { $0 == " " }) }
+        var positions: [String: [Int]] = [:]
+        for (index, key) in body.enumerated() {
+            positions[key, default: []].append(index)
+        }
+
+        // Are blocks [a, a+p) and [b, b+p) identical after normalizing each to its
+        // own minimum indent? Compares body text and *relative* depth shape.
+        func blocksEqual(_ a: Int, _ b: Int, _ p: Int) -> Bool {
+            var minA = Int.max
+            var minB = Int.max
+            for t in 0..<p {
+                minA = min(minA, depth[a + t])
+                minB = min(minB, depth[b + t])
+            }
+            for t in 0..<p {
+                if body[a + t] != body[b + t] { return false }
+                if depth[a + t] - minA != depth[b + t] - minB { return false }
+            }
+            return true
+        }
+
+        var out: [String] = []
+        var anchor = anchorIndex
+        var anchorOut: Int?
+
+        func emit(_ lo: Int, _ hi: Int) {
+            var i = lo
+            while i < hi {
+                // Largest-gain tandem repeat starting at i, bounded to [lo, hi).
+                // Candidate periods come from later positions sharing i's body, so
+                // the common (no-duplication) case stays near-linear.
+                var bestPeriod = 0
+                var bestCount = 0
+                var bestGain = 0
+                for j in positions[body[i]] ?? [] {
+                    if j <= i { continue }
+                    let p = j - i
+                    if p > maxPeriod || i + 2 * p > hi { break }
+                    guard blocksEqual(i, i + p, p) else { continue }
+                    var k = 2
+                    while i + (k + 1) * p <= hi && blocksEqual(i, i + k * p, p) { k += 1 }
+                    let gain = (k - 1) * p
+                    if gain >= minGain && gain > bestGain {
+                        bestGain = gain
+                        bestPeriod = p
+                        bestCount = k
+                    }
+                }
+                if bestGain > 0 {
+                    let p = bestPeriod
+                    let k = bestCount
+                    // An anchor inside a dropped copy folds onto the kept (first)
+                    // copy; the recursion below emits that copy and records it.
+                    if let a = anchor, a >= i + p, a < i + k * p {
+                        anchor = i + ((a - i) % p)
+                    }
+                    emit(i, i + p)
+                    if p == 1 {
+                        if !out.isEmpty {
+                            out[out.count - 1] += "  [×\(k)]"
+                        }
+                    } else {
+                        let indent = String(repeating: "  ", count: depth[i])
+                        out.append("\(indent)[↑ \(p)-line block, ×\(k) identical, shown once]")
+                    }
+                    i += k * p
+                } else {
+                    if anchor == i { anchorOut = out.count }
+                    out.append(lines[i])
+                    i += 1
+                }
+            }
+        }
+
+        emit(0, n)
+        return (out, anchorOut)
+    }
+
     // MARK: - Formatting
 
     /// One line per emitted node: `<indent><lead> "name" = "value"`. Returns
@@ -310,13 +447,26 @@ enum WindowAXTreeCapture {
         url: String?,
         indent: Int
     ) -> String? {
+        // Drop a value that is just a separator glyph (a metadata dot "·", a list
+        // bullet "•", a lone bracket). It carries no text the model needs, and
+        // when it's the node's only content the whole line falls away below.
+        let value = value.flatMap { isSeparatorOnly($0) ? nil : $0 }
+        // An image's href is its raw media src (an avatar or CDN URL) — never
+        // load-bearing for composing a reply. Keep hrefs on links, drop on images.
+        let url = role == "Image" ? nil : url
+
         if name == nil, value == nil, url == nil {
             return nil
         }
         let lead = roleDesc ?? role ?? "node"
         var line = String(repeating: "  ", count: indent) + lead
         if let name {
-            line += " \"\(name)\""
+            // Flatten embedded newlines (e.g. a multi-line `pop up button` title
+            // like "Honorlock\nHas access to this site"). Values are already
+            // flattened by `clamped`; names weren't, and a stray newline breaks
+            // the one-line-per-node invariant that `indentationDepth` and the
+            // budget windower depend on.
+            line += " \"\(name.flattenedInline)\""
         }
         // Suppress value when it merely repeats the name (common for buttons /
         // static text where title and value coincide).
@@ -337,6 +487,17 @@ enum WindowAXTreeCapture {
             }
         }
         return line
+    }
+
+    /// True when a value is nothing but separator punctuation — a metadata dot
+    /// ("·"), a list bullet ("•"), a pipe, a lone bracket. Visual chrome with no
+    /// textual content, so it is dropped (and the node with it when that was its
+    /// only content). Bounded to ≤2 chars so real short text ("ok", "12", "-4")
+    /// survives.
+    static func isSeparatorOnly(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.count <= 2 else { return false }
+        return trimmed.allSatisfy { !$0.isLetter && !$0.isNumber }
     }
 
     /// A link/document destination worth surfacing, or nil for noise. Drops
@@ -648,6 +809,13 @@ private extension String {
     var nonBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Collapse internal newlines to spaces so a node stays a single emitted
+    /// line. Used for names; values get the same treatment via `clamped`.
+    var flattenedInline: String {
+        replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
     }
 
     /// Clamp to `limit` characters, collapsing internal newlines to spaces so a
