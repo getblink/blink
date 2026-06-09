@@ -12,11 +12,11 @@ const description =
 const reasons = [
   {
     h: "sees what you see.",
-    t: "the context is already on your screen, so you stop re-explaining yourself to a chat box.",
+    t: "the context is already on your screen, so you stop re-explaining yourself to a chatbot.",
   },
   {
     h: "sounds like you, not an ai.",
-    t: "drafts in your voice instead of generic filler.",
+    t: "drafts in your voice and moves the conversation forward with sharp replies that take the initiative.",
   },
   {
     h: "always there, never in the way.",
@@ -130,7 +130,7 @@ const faqs = [
         <p class="section__label reveal">the difference</p>
         <div class="section__content">
           <h2 class="section__lead reveal" id="difference-lead">
-            blink doesn't feel like a chat box.
+            blink doesn't feel like a chatbot.
           </h2>
           <div class="reasons">
             {
@@ -152,8 +152,8 @@ const faqs = [
         <p class="section__label reveal">why blink</p>
         <div class="why__split">
           <h2 class="why__hook reveal" id="why-lead">
-            just because<br />we're dumb apes<br />doesn't mean<br />you have to
-            feel<br />like one.
+            just because<br />we're dumb apes<br />doesn't mean you<br />have to
+            feel like one.
           </h2>
           <div class="why__body-col">
             <p class="why__body reveal">
@@ -430,21 +430,10 @@ const faqs = [
      * ============================================================= */
     .section {
       position: relative;
-      padding-block: clamp(48px, 8vh, 104px);
+      padding-block: clamp(72px, 11vh, 150px);
     }
-    /* a hairline divider at the top of each content section (container-width,
-       aligned with the content), instead of alternating background bands. the
-       first content section (how) and the dark join card are skipped. */
-    .section:not(.how):not(.join)::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: calc(min(100%, var(--container)) - 2 * var(--gutter));
-      height: 1px;
-      background: var(--line-faint);
-    }
+    /* No dividers or bands between sections — separation is carried by the
+       generous section padding (whitespace) alone. */
     .section__inner {
       /* full container width, left-aligned at the gutter — same footprint as
          the "how it works" section, so every section lines up on the same edge

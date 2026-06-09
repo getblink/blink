@@ -1,6 +1,6 @@
 ---
 title: "Blink vs just asking ChatGPT"
-description: "ChatGPT is a chat box you re-explain yourself to every turn. Blink already sees the thread and writes the reply into the box. here's the honest tradeoff."
+description: "ChatGPT is a chatbot you re-explain yourself to every turn. Blink already sees the thread and writes the reply into the box. here's the honest tradeoff."
 publishedAt: 2026-06-07
 cluster: context-loss
 related: []
@@ -9,15 +9,15 @@ draft: true
 
 ## the obvious question
 
-you've got a chat box that can write anything. why install a Mac app to write replies?
+you've got a chatbot that can write anything. why install a Mac app to write replies?
 
-fair. and for a lot of things, the chat box wins. but the comparison isn't apples to apples, and the difference comes down to one thing: where the context lives.
+fair. and for a lot of things, the chatbot wins. but the comparison isn't apples to apples, and the difference comes down to one thing: where the context lives.
 
 ## the context tax
 
 with ChatGPT, the work starts before the answer does. you switch to the chat window, you paste in the thread, you explain what you're trying to do, then you read the response and paste it back. every turn, you re-supply the situation. the model has no idea what's on your screen unless you tell it.
 
-that's the tax. it's small once and it adds up across a day of replies. blink's whole bet is to remove it: the context is already on screen, so you stop re-explaining yourself to a chat box. you summon it, it reads the whole thread on demand (not just the last few visible messages), drafts a reply in your voice, and drops it into the box you were already typing in. it writes a draft and stops. you decide what to send.
+that's the tax. it's small once and it adds up across a day of replies. blink's whole bet is to remove it: the context is already on screen, so you stop re-explaining yourself to a chatbot. you summon it, it reads the whole thread on demand (not just the last few visible messages), drafts a reply in your voice, and drops it into the box you were already typing in. it writes a draft and stops. you decide what to send.
 
 ## "but ChatGPT can see my screen now"
 
@@ -35,7 +35,7 @@ third, and this is the big one: even with Work with Apps, ChatGPT doesn't write 
 
 a floating quick helper is *not* a blink-exclusive thing. ChatGPT has a global summon shortcut too: Option+Space brings up a [companion window that stays in front](https://x.com/OpenAI/status/1820914089612439622?lang=en) while you work in other apps. if "summonable" is what you want, both have it. blink's actual differentiators are narrower: auto-context (no re-paste), your voice, and insert-into-the-box across any text field.
 
-and the chat box is genuinely better at some things. open-ended exploration and back-and-forth. no install, runs in a browser. cross-platform. blink is macOS-only and invite-only beta right now. if you're brainstorming, learning something new, or working through a problem with no fixed answer, that's a chat conversation, not a one-shot reply.
+and the chatbot is genuinely better at some things. open-ended exploration and back-and-forth. no install, runs in a browser. cross-platform. blink is macOS-only and invite-only beta right now. if you're brainstorming, learning something new, or working through a problem with no fixed answer, that's a chat conversation, not a one-shot reply.
 
 ## the voice thing
 
