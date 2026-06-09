@@ -1,0 +1,58 @@
+---
+import { getCollection, render } from "astro:content";
+import { CLUSTERS } from "../../content.config";
+import ArticleLayout from "../../layouts/ArticleLayout.astro";
+
+export async function getStaticPaths() {
+  // Drafts (draft: true) render in local dev for preview but are excluded from
+  // production builds — so `draft: true` means "previewable locally, never shipped".
+  const posts = await getCollection(
+    "blog",
+    ({ data }) => import.meta.env.DEV || !data.draft,
+  );
+  // Title lookup so `related` slugs can render as real titles (and so a
+  // related slug that points at a draft / missing post is silently dropped
+  // rather than rendering a dead link).
+  const titleBySlug = new Map(posts.map((post) => [post.id, post.data.title]));
+
+  // The cornerstone "vision" post (what-is-blink) is appended to every other
+  // post's related list by default, so you never hand-add it. Keyed off the
+  // cluster, not a hardcoded slug, so renaming the file doesn't break it.
+  const cornerstone = posts.find((post) => post.data.cluster === "vision");
+
+  return posts.map((post) => {
+    const slugs = (post.data.related ?? []).filter((slug) =>
+      titleBySlug.has(slug),
+    );
+    if (
+      cornerstone &&
+      post.id !== cornerstone.id &&
+      !slugs.includes(cornerstone.id)
+    ) {
+      slugs.push(cornerstone.id);
+    }
+    return {
+      params: { slug: post.id },
+      props: {
+        post,
+        related: slugs.map((slug) => ({ slug, title: titleBySlug.get(slug)! })),
+      },
+    };
+  });
+}
+
+const { post, related } = Astro.props;
+const { Content } = await render(post);
+const clusterLabel = CLUSTERS[post.data.cluster] ?? post.data.cluster;
+---
+
+<ArticleLayout
+  title={post.data.title}
+  description={post.data.description}
+  publishedAt={post.data.publishedAt}
+  updatedAt={post.data.updatedAt}
+  clusterLabel={clusterLabel}
+  related={related}
+>
+  <Content />
+</ArticleLayout>

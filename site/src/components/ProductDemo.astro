@@ -103,7 +103,7 @@
     </li>
     <li data-step="draft">
       <span class="tnum">02</span><span class="tverb">draft</span><span class="tdesc"
-        >three ways to steer it</span
+        >generates three responses</span
       >
     </li>
     <li data-step="insert">
@@ -126,9 +126,11 @@
 
   .stage {
     --pad: clamp(18px, 2.6vw, 36px);
-    /* a deeper vertical inset so the window floats with more room top + bottom.
-       kept modest + capped so it can't outgrow the window's fixed content. */
-    --pad-y: clamp(26px, 2.6vw, 42px);
+    /* a deeper vertical inset so the window floats with more room top + bottom
+       inside the blue stage — this is the breathing room, not a wider window. */
+    --pad-y: clamp(44px, 4.5vw, 84px);
+    /* the terminal window width — shared by the lens + keycap so they track it. */
+    --win-w: min(100% - 2 * var(--pad), 700px);
     /* dark theme applies to the terminal + overlay only */
     --win: oklch(0.215 0.008 262);
     --ink: oklch(0.93 0.008 255);
@@ -160,7 +162,7 @@
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    width: min(100% - 2 * var(--pad), 700px);
+    width: var(--win-w);
     top: calc(var(--mbh) + var(--pad-y));
     bottom: var(--pad-y);
     display: flex;
@@ -169,7 +171,9 @@
     background: var(--win);
     border: 1px solid var(--line);
     border-radius: 14px;
-    box-shadow: 0 20px 44px -26px oklch(0.3 0.03 68 / 0.4);
+    box-shadow:
+      0 34px 60px -24px oklch(0.24 0.03 68 / 0.55),
+      0 12px 24px -12px oklch(0.24 0.03 68 / 0.34);
   }
   .win__bar {
     display: flex;
@@ -298,7 +302,7 @@
     z-index: 3;
     left: 50%;
     transform: translateX(-50%);
-    width: min(100% - 2 * var(--pad), 700px);
+    width: var(--win-w);
     top: calc(var(--mbh) + var(--pad-y));
     bottom: var(--pad-y);
     border-radius: 14px;
@@ -341,7 +345,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    left: calc((100% - min(100% - 2 * var(--pad), 700px)) / 2 + 22px);
+    left: calc((100% - var(--win-w)) / 2 + 22px);
     bottom: calc(var(--pad-y) + 20px);
     transform: translateY(6px) scale(0.97);
     opacity: 0;
@@ -595,41 +599,42 @@
     }
   }
 
+  /* the step track — a light, borderless row (no boxed grid) so it reads as a
+     caption under the demo, not a separate UI panel. each step lights up in
+     sync with the animation via a sky number + a thin underline. */
   .track {
     list-style: none;
-    margin: 16px 0 0;
+    margin: clamp(22px, 3.4vh, 38px) 0 0;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    overflow: hidden;
+    gap: clamp(16px, 2.4vw, 40px);
   }
   .track li {
     position: relative;
-    padding: 16px clamp(14px, 1.8vw, 22px);
-    border-right: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    transition: background 0.4s ease;
-  }
-  .track li:last-child {
-    border-right: 0;
+    padding-bottom: 12px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 10px;
+    row-gap: 3px;
+    align-items: baseline;
   }
   .track .tnum {
-    font-family: var(--mono);
-    font-size: 12px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
     color: var(--ink-soft);
     transition: color 0.3s ease;
   }
   .track .tverb {
-    font-weight: 700;
-    font-size: clamp(1.1rem, 1.6vw, 1.35rem);
-    letter-spacing: -0.02em;
+    font-weight: 640;
+    font-size: 1.05rem;
+    letter-spacing: -0.015em;
     color: var(--fg);
   }
   .track .tdesc {
-    font-size: 0.92rem;
+    grid-column: 2;
+    font-size: 0.9rem;
     color: var(--ink-soft);
   }
   .track li::after {
@@ -639,20 +644,25 @@
     bottom: 0;
     height: 2px;
     width: 100%;
+    background: var(--line);
+  }
+  .track li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    z-index: 1;
+    height: 2px;
+    width: 100%;
     background: var(--sky);
     transform: scaleX(0);
     transform-origin: left;
     transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .demo[data-act="see"] [data-step="see"]::after,
-  .demo[data-act="draft"] [data-step="draft"]::after,
-  .demo[data-act="insert"] [data-step="insert"]::after {
+  .demo[data-act="see"] [data-step="see"]::before,
+  .demo[data-act="draft"] [data-step="draft"]::before,
+  .demo[data-act="insert"] [data-step="insert"]::before {
     transform: scaleX(1);
-  }
-  .demo[data-act="see"] [data-step="see"],
-  .demo[data-act="draft"] [data-step="draft"],
-  .demo[data-act="insert"] [data-step="insert"] {
-    background: oklch(0.68 0.12 235 / 0.06);
   }
   .demo[data-act="see"] [data-step="see"] .tnum,
   .demo[data-act="draft"] [data-step="draft"] .tnum,

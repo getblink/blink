@@ -35,7 +35,7 @@ _chip: macOS beta_
 
 here's why:
 
-- **it sees what you see.** the context is already on your screen, so you stop re-explaining yourself to a chat box.
+- **it sees what you see.** the context is already on your screen, so you stop re-explaining yourself to a chatbot.
 - **it sounds like you, not like an ai.** drafts in your voice instead of generic filler.
 - **it's always there, never in the way.** blink follows you window to window, ready the moment you need it and quiet when you don't.
 
