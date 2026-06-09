@@ -27,10 +27,17 @@ Inputs can be:
 - a Blink request envelope JSON containing `ax_tree`
 - a raw AX tree text file
 
+The probe first folds tandem duplication (the shipped `collapseTandemRuns` step:
+browser tab strip / toolbar that Chromium emits several times per window),
+mirroring the production order, then runs the windowing strategies on the
+collapsed tree. It also re-folds embedded-newline continuation lines so a saved
+serialized tree backtests the same node array the Swift capture folds in memory.
+
 The output directory contains:
 
-- `summary.md` with metrics for `head`, `tail`, and `anchor` strategies
-- `report.json` with the same metrics in machine-readable form
+- `summary.md` with the collapse reclaim and metrics for `head`, `tail`, and `anchor` strategies
+- `report.json` with the same metrics (including the `collapse` block) in machine-readable form
+- `collapsed.txt` with the tree after duplication folding
 - `head.txt`, `tail.txt`, and `anchor.txt` with the selected tree text
 
 Use `--anchor-index`, `--anchor-ratio`, or `--anchor-text` to simulate where the
