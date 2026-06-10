@@ -70,8 +70,8 @@ def _posthog_capture(distinct_id: str, event: str, properties: Optional[dict] = 
     # first positional. The legacy `capture(distinct_id, event, ...)` form
     # raises TypeError ("takes 2 positional arguments but 3 were given"),
     # which posthog's internal wrapper swallows — so requests still 200, but
-    # every event is silently dropped. requirements.txt now pins posthog>=6
-    # so the signature stays consistent with this call site.
+    # every event is silently dropped. requirements.txt pins posthog to a 6.x
+    # version so the signature stays consistent with this call site.
     if properties is None:
         _posthog_client.capture(event, distinct_id=distinct_id)
     else:
@@ -1413,13 +1413,18 @@ async def _run_tldr_request(
         )
     # Sync Redis/Postgres lookups (thread cache + store fallback) — keep them
     # off the event loop so one slow dependency doesn't stall every other
-    # in-flight request on this worker.
-    thread_context = await asyncio.to_thread(
-        _thread_context_for_request,
-        envelope=envelope,
-        token_id=token_id,
-        warnings=warnings,
-    )
+    # in-flight request on this worker. Only hop for actual rerolls: the
+    # helper returns None immediately otherwise, and the default executor is
+    # small (~5 threads at 1 vCPU) and shared with up-to-120s Gemini calls,
+    # so a no-op hop on every request would queue the hot path behind them.
+    thread_context: dict[str, Any] | None = None
+    if isinstance(reroll_context, dict):
+        thread_context = await asyncio.to_thread(
+            _thread_context_for_request,
+            envelope=envelope,
+            token_id=token_id,
+            warnings=warnings,
+        )
     conversation_turns = _conversation_turns_for_request(
         thread_context,
         str(envelope["request_id"]),
