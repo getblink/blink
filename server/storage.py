@@ -28,6 +28,10 @@ except ImportError:  # pragma: no cover - optional dependency for local dev
 _POOL_CACHE: dict[str, "ConnectionPool"] = {}
 _POOL_LOCK = threading.Lock()
 
+# Process-wide TelemetryStore singleton; see TelemetryStore.shared().
+_SHARED_STORE: "TelemetryStore | None" = None
+_SHARED_STORE_LOCK = threading.Lock()
+
 
 def _shared_pool(database_url: str) -> "ConnectionPool | None":
     if ConnectionPool is None:
@@ -189,6 +193,22 @@ class TelemetryStore:
         database_url = (os.environ.get("DATABASE_URL") or "").strip()
         enabled = bool(database_url and psycopg is not None)
         return cls(database_url=database_url or None, enabled=enabled)
+
+    @classmethod
+    def shared(cls) -> "TelemetryStore":
+        """Process-wide singleton, so `schema_ready` survives across requests.
+
+        A fresh `from_env()` instance starts with `schema_ready=False` and
+        replays the full schema migration (including a `DROP VIEW` that takes
+        an AccessExclusiveLock) on its first query. Hot paths — notably
+        device-token validation in auth — must share one instance so that
+        cost is paid once per process, during the startup warmup.
+        """
+        global _SHARED_STORE
+        with _SHARED_STORE_LOCK:
+            if _SHARED_STORE is None:
+                _SHARED_STORE = cls.from_env()
+            return _SHARED_STORE
 
     @contextmanager
     def _connection(self) -> "Iterator[Any]":

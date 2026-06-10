@@ -32,7 +32,7 @@ Build toward a trustworthy, local-first cross-app assistant, starting with one v
 - Do not add background daemons, hotkeys, or polished UI until manual value is proven.
 - Favor additive iteration with clear experiment boundaries; do not delete prior learning artifacts unless explicitly requested.
 - Keep deployed protocol surfaces stable: `/v1/tldr`, `tldr_*` tables/caches, and `tldr_dt_*` token prefixes are deliberately frozen v1 names.
-- Land changes via short-lived branches → PR to `main`. Don't commit directly to `staging`; it's a Cloud Run deploy mirror (deployed by `.github/workflows/deploy-server.yml`) that gets fast-set from `main` (`git push origin +origin/main:staging`). See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy).
+- `staging` is the trunk: branch new work off `origin/staging` and land it there (fast-forward: `git push origin HEAD:staging`); promote to `main` via PR (`gh pr create --base main`) at release time. `main` legitimately lags `staging` between releases. NEVER force-reset `staging` from `main` (`git push origin +origin/main:staging` silently drops everything accumulated on the trunk — this has destroyed work before). Both branches deploy to Cloud Run via `.github/workflows/deploy-server.yml` when `server/**` changes. See [docs/CONTRIBUTING_INTERNAL.md](docs/CONTRIBUTING_INTERNAL.md#branch-strategy).
 - Rebuilds and deploys are independent: `install_local_app.sh` only rebuilds the app; pushing `staging` only redeploys the server. Changes touching both need both.
 - Runtime config has *two-copy* footguns. The loaded file beats the in-code default:
   - Prompts: edit `server/prompt.txt` and `app/Resources/prompt.txt` together (parity test enforces).

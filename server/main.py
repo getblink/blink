@@ -189,7 +189,9 @@ def _thread_cache() -> ThreadCache:
 
 @lru_cache(maxsize=1)
 def _telemetry_store() -> TelemetryStore:
-    return TelemetryStore.from_env()
+    # Same process-wide instance auth.validate_device_token uses, so the
+    # startup warmup's _ensure_schema() covers the auth path too.
+    return TelemetryStore.shared()
 
 
 @app.on_event("startup")

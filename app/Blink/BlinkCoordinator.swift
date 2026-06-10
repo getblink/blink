@@ -661,21 +661,14 @@ final class BlinkCoordinator: @unchecked Sendable {
         lastDismissedSessionExpiry = nil
     }
 
+    /// Wires the full set of overlay interaction callbacks. Every path that
+    /// (re)presents the result panel — fresh result, reroll, and
+    /// restore-after-dismiss — must install the identical set, so this is
+    /// the single place they are assigned. (The three previously copy-pasted
+    /// blocks had already diverged: the restore path omitted `onArrowKey`,
+    /// killing arrow-nav after auto-resume.)
     @MainActor
-    private func restoreLastDismissedSession(_ snapshot: LastDismissedSession) {
-        let resumedRequestID = "resumed-" + UUID().uuidString.lowercased()
-        currentRequestID = resumedRequestID
-        currentSuggestions = snapshot.suggestions
-        currentSuggestionDetails = snapshot.suggestionDetails
-        currentBundleDir = snapshot.bundleDir
-        // Restore the submitted-run context so a follow-up hotkey on the
-        // resumed chat can still enter modal multi-frame. Without this,
-        // `handleSummaryHotkeyWhileOverlay` falls into the "nothing to
-        // add to" branch on auto-resumed chats.
-        lastSubmittedRun = snapshot.submittedRun
-        terminalEmittedRequestID = nil
-        resetChoiceState(suggestionCount: snapshot.suggestions.count)
-
+    private func wireOverlayCallbacks() {
         overlay.onCustomInputFocusChanged = { [weak self] active in
             self?.setCustomInputActive(active)
         }
@@ -687,6 +680,9 @@ final class BlinkCoordinator: @unchecked Sendable {
         }
         overlay.onChoiceKey = { [weak self] index in
             self?.chooseSuggestion(index: index)
+        }
+        overlay.onArrowKey = { [weak self] direction in
+            self?.handleArrowNav(direction)
         }
         overlay.onInsertKey = { [weak self] in
             self?.insertExpandedSuggestion() ?? false
@@ -727,6 +723,24 @@ final class BlinkCoordinator: @unchecked Sendable {
         overlay.onOutsideClickDismiss = { [weak self] in
             self?.dismissOverlay(implicit: true)
         }
+    }
+
+    @MainActor
+    private func restoreLastDismissedSession(_ snapshot: LastDismissedSession) {
+        let resumedRequestID = "resumed-" + UUID().uuidString.lowercased()
+        currentRequestID = resumedRequestID
+        currentSuggestions = snapshot.suggestions
+        currentSuggestionDetails = snapshot.suggestionDetails
+        currentBundleDir = snapshot.bundleDir
+        // Restore the submitted-run context so a follow-up hotkey on the
+        // resumed chat can still enter modal multi-frame. Without this,
+        // `handleSummaryHotkeyWhileOverlay` falls into the "nothing to
+        // add to" branch on auto-resumed chats.
+        lastSubmittedRun = snapshot.submittedRun
+        terminalEmittedRequestID = nil
+        resetChoiceState(suggestionCount: snapshot.suggestions.count)
+
+        wireOverlayCallbacks()
         overlay.show(
             tldr: snapshot.tldr,
             suggestionDetails: snapshot.suggestionDetails
@@ -1916,60 +1930,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                 self.currentBundleDir = bundleDir
                 self.currentRequestID = requestID
                 self.resetChoiceState(suggestionCount: self.currentSuggestions.count)
-                self.overlay.onCustomInputFocusChanged = { [weak self] active in
-                    self?.setCustomInputActive(active)
-                }
-                self.overlay.onCustomInsert = { [weak self] text in
-                    self?.insertCustomReply(text: text)
-                }
-                self.overlay.onCustomFollowUp = { [weak self] text in
-                    self?.rerollCurrentSuggestions(followUpInstruction: text)
-                }
-                self.overlay.onChoiceKey = { [weak self] index in
-                    self?.chooseSuggestion(index: index)
-                }
-                self.overlay.onArrowKey = { [weak self] direction in
-                    self?.handleArrowNav(direction)
-                }
-                self.overlay.onInsertKey = { [weak self] in
-                    self?.insertExpandedSuggestion() ?? false
-                }
-                self.overlay.onCustomInsertKey = { [weak self] in
-                    _ = self?.submitCustomInputFromInput()
-                    return true
-                }
-                self.overlay.onLeaveCustomInputKey = { [weak self] in
-                    self?.leaveCustomInput()
-                }
-                self.overlay.onTextEditingKey = { [weak self] shortcut in
-                    self?.performCustomInputShortcut(shortcut) ?? false
-                }
-                self.overlay.onRerollKey = { [weak self] in
-                    self?.rerollCurrentSuggestions()
-                }
-                self.overlay.onTogglePinKey = { [weak self] in
-                    guard let self else { return }
-                    self.overlay.setPinned(!self.overlay.isPinned)
-                }
-                self.overlay.onCycleThinkingKey = { [weak self] in
-                    self?.cycleThinkingForCurrentSurface()
-                }
-                self.overlay.onSetReasoning = { [weak self] level in
-                    self?.setReasoningForCurrentSurface(level)
-                }
-                self.overlay.reasoningOverrideValue = { [weak self] in
-                    guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
-                    return self.runtimeStore.appThinkingLevels[bundle]
-                }
-                self.overlay.onPinnedChanged = { [weak self] pinned in
-                    self?.setOverlayPinnedMirror(pinned)
-                }
-                self.overlay.onDismissKey = { [weak self] in
-                    self?.dismissOverlay()
-                }
-                self.overlay.onOutsideClickDismiss = { [weak self] in
-                    self?.dismissOverlay(implicit: true)
-                }
+                self.wireOverlayCallbacks()
                 // Hand off from the glass loading (if active) to the result panel.
                 self.dismissGlassLoading()
                 if self.overlay.isStreamingActive {
@@ -2325,60 +2286,7 @@ final class BlinkCoordinator: @unchecked Sendable {
                     }
                     self.currentBundleDir = bundleDir
                     self.resetChoiceState(suggestionCount: self.currentSuggestions.count)
-                    self.overlay.onCustomInputFocusChanged = { [weak self] active in
-                        self?.setCustomInputActive(active)
-                    }
-                    self.overlay.onCustomInsert = { [weak self] text in
-                        self?.insertCustomReply(text: text)
-                    }
-                    self.overlay.onCustomFollowUp = { [weak self] text in
-                        self?.rerollCurrentSuggestions(followUpInstruction: text)
-                    }
-                    self.overlay.onChoiceKey = { [weak self] index in
-                        self?.chooseSuggestion(index: index)
-                    }
-                    self.overlay.onArrowKey = { [weak self] direction in
-                        self?.handleArrowNav(direction)
-                    }
-                    self.overlay.onInsertKey = { [weak self] in
-                        self?.insertExpandedSuggestion() ?? false
-                    }
-                    self.overlay.onCustomInsertKey = { [weak self] in
-                        _ = self?.submitCustomInputFromInput()
-                        return true
-                    }
-                    self.overlay.onLeaveCustomInputKey = { [weak self] in
-                        self?.leaveCustomInput()
-                    }
-                    self.overlay.onTextEditingKey = { [weak self] shortcut in
-                        self?.performCustomInputShortcut(shortcut) ?? false
-                    }
-                    self.overlay.onRerollKey = { [weak self] in
-                        self?.rerollCurrentSuggestions()
-                    }
-                    self.overlay.onTogglePinKey = { [weak self] in
-                        guard let self else { return }
-                        self.overlay.setPinned(!self.overlay.isPinned)
-                    }
-                    self.overlay.onCycleThinkingKey = { [weak self] in
-                        self?.cycleThinkingForCurrentSurface()
-                    }
-                    self.overlay.onSetReasoning = { [weak self] level in
-                        self?.setReasoningForCurrentSurface(level)
-                    }
-                    self.overlay.reasoningOverrideValue = { [weak self] in
-                        guard let self, let bundle = self.currentSurfaceBundleID else { return nil }
-                        return self.runtimeStore.appThinkingLevels[bundle]
-                    }
-                    self.overlay.onPinnedChanged = { [weak self] pinned in
-                        self?.setOverlayPinnedMirror(pinned)
-                    }
-                    self.overlay.onDismissKey = { [weak self] in
-                        self?.dismissOverlay()
-                    }
-                    self.overlay.onOutsideClickDismiss = { [weak self] in
-                        self?.dismissOverlay(implicit: true)
-                    }
+                    self.wireOverlayCallbacks()
                     // Append this turn to model follow-up history (for next request's context).
                     let turnInstruction = followUpInstruction ?? ""
                     self.followUpHistory.append(FollowUpTurn(

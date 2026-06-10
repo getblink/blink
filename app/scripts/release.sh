@@ -103,6 +103,16 @@ if [[ "$UPLOAD" != "0" ]]; then
         echo "[blink] error: BLINK_SPARKLE_FEED_URL must be set so SUFeedURL gets stamped into the build (or set BLINK_RELEASE_UPLOAD=0 for a local dry run)" >&2
         exit 1
     fi
+    # Same incident class as feed-URL drift: if BLINK_SPARKLE_PUBLIC_ED_KEY is
+    # unset, build.sh skips stamping and the DMG ships with project.yml's
+    # REPLACE_WITH_SPARKLE_PUBLIC_ED25519_KEY placeholder — every install
+    # rejects all signed appcasts and is permanently quarantined from Sparkle
+    # updates with no in-band recovery. Fail fast instead of relying on a
+    # human grepping the build log for the stamping line.
+    if [[ -z "${BLINK_SPARKLE_PUBLIC_ED_KEY:-}" ]]; then
+        echo "[blink] error: BLINK_SPARKLE_PUBLIC_ED_KEY must be set so SUPublicEDKey gets stamped into the build (or set BLINK_RELEASE_UPLOAD=0 for a local dry run)" >&2
+        exit 1
+    fi
     # Normalize: tolerate trailing slash on R2_DOMAIN and leading slash on
     # APPCAST_REMOTE_KEY so config-time typos don't masquerade as drift.
     # BLINK_SPARKLE_FEED_URL itself is exact-string-matched: Sparkle stamps

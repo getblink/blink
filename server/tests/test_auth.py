@@ -79,12 +79,21 @@ class AuthTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BLINK_TRUST_PROXY_HEADERS": "false"}, clear=False):
             self.assertEqual(client_ip_for(request), "10.0.0.99")
 
-    def test_client_ip_for_uses_xff_first_hop_when_trusted(self) -> None:
+    def test_client_ip_for_uses_xff_last_hop_when_trusted(self) -> None:
+        # Cloud Run appends the real client IP as the last hop; earlier
+        # hops are client-controlled and spoofable.
         request = mock.Mock()
-        request.headers = {"x-forwarded-for": "203.0.113.5, 10.0.0.1"}
+        request.headers = {"x-forwarded-for": "1.2.3.4, 203.0.113.5"}
         request.client = mock.Mock(host="10.0.0.99")
         with mock.patch.dict(os.environ, {"BLINK_TRUST_PROXY_HEADERS": "true"}, clear=False):
             self.assertEqual(client_ip_for(request), "203.0.113.5")
+
+    def test_client_ip_for_ignores_spoofed_xff_prefix(self) -> None:
+        request = mock.Mock()
+        request.headers = {"x-forwarded-for": "spoofed, also-spoofed, 198.51.100.7"}
+        request.client = mock.Mock(host="10.0.0.99")
+        with mock.patch.dict(os.environ, {"BLINK_TRUST_PROXY_HEADERS": "true"}, clear=False):
+            self.assertEqual(client_ip_for(request), "198.51.100.7")
 
 
 if __name__ == "__main__":

@@ -135,9 +135,13 @@ def client_ip_for(request: Request) -> str:
     if trust_proxy_headers():
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            first = forwarded.split(",", 1)[0].strip()
-            if first:
-                return first
+            # Cloud Run (and well-behaved proxies generally) APPEND the
+            # real client IP, so the last hop is the only trustworthy one.
+            # The first hop is client-controlled and trivially spoofable,
+            # which would defeat mint/signup rate limits.
+            last = forwarded.rsplit(",", 1)[-1].strip()
+            if last:
+                return last
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -147,7 +151,9 @@ def validate_device_token(token: str) -> str:
     if not token.startswith("tldr_dt_"):
         raise ValueError("invalid device token")
     token_hash = token_hash_for(token)
-    if not TelemetryStore.from_env().device_token_active(token_hash):
+    # Use the process-wide singleton: a fresh from_env() instance would
+    # replay the full schema migration (incl. DROP VIEW) on every request.
+    if not TelemetryStore.shared().device_token_active(token_hash):
         raise ValueError("invalid device token")
     return token_id_for(token)
 
