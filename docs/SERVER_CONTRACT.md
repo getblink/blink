@@ -147,8 +147,14 @@ bricked between launch and a successful mint round-trip. When
 
 The mint endpoint's per-IP rate limit reads `X-Forwarded-For` only when
 `BLINK_TRUST_PROXY_HEADERS=true`. Set this when the server runs behind a
-trusted reverse proxy (Cloud Run / Google Frontend, Cloudflare, etc.); otherwise the limit
-falls back to `request.client.host`.
+trusted reverse proxy; otherwise the limit falls back to
+`request.client.host`. `client_ip_for` takes the **last** XFF hop — the one
+appended by the trusted proxy — which is only correct with **exactly one**
+trusted appending layer in front of the service (today: Cloud Run / Google
+Frontend; `api.useblink.dev` is DNS-only). If a CDN or extra load balancer is
+ever added in front (e.g. orange-clouding the domain in Cloudflare), the last
+hop becomes the CDN's egress IP and per-IP rate limiting collapses — revisit
+`client_ip_for` before doing that.
 
 Error responses:
 

@@ -226,7 +226,7 @@ class TelemetryStore:
             with pool.connection() as conn:
                 yield conn
         else:  # pragma: no cover - exercised only when psycopg_pool missing
-            with self._connection() as conn:
+            with psycopg.connect(self.database_url) as conn:
                 yield conn
 
     def _ensure_schema(self) -> None:

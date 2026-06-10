@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server dependencies
+        run: pip install -r server/requirements.txt pytest
+
+      # Run from the repo root: tests import `server.*`, so rootdir must be
+      # the repo, not server/.
+      - name: Run server tests
+        run: python -m pytest server/tests
+
+  app-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The worker suite is stdlib-only by design (it ships inside the app
+      # bundle); no pip install step.
+      - name: Run app worker tests
+        run: python -m unittest discover app/python/tests
+
+      - name: Byte-compile worker sources
+        run: python -m compileall -q app/python

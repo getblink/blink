@@ -13,8 +13,27 @@ env:
   GCP_REGION: us-west1
 
 jobs:
+  # Gate the deploy on the server suite: a push to staging/main deploys
+  # straight to a live service, so a red suite must stop it here.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install server dependencies
+        run: pip install -r server/requirements.txt pytest
+
+      # Run from the repo root: tests import `server.*`.
+      - name: Run server tests
+        run: python -m pytest server/tests
+
   deploy:
     runs-on: ubuntu-latest
+    needs: test
     permissions:
       contents: read
       id-token: write

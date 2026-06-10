@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
@@ -78,6 +79,10 @@ def _posthog_capture(distinct_id: str, event: str, properties: Optional[dict] = 
 
 MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024
 MAX_SCREENSHOT_FRAMES = 8
+# /v1/describe-file upload cap. Generous (user-chosen attachments can be
+# large PDFs) but bounded: the PDF path slices to 3 pages / 2MB before Gemini
+# anyway, and an unbounded read is an OOM vector on a 512Mi container.
+MAX_DESCRIBE_FILE_BYTES = 20 * 1024 * 1024
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
 UUID_RE = re.compile(
@@ -187,10 +192,11 @@ def _thread_cache() -> ThreadCache:
     return ThreadCache.from_env()
 
 
-@lru_cache(maxsize=1)
 def _telemetry_store() -> TelemetryStore:
     # Same process-wide instance auth.validate_device_token uses, so the
-    # startup warmup's _ensure_schema() covers the auth path too.
+    # startup warmup's _ensure_schema() covers the auth path too. No
+    # lru_cache here: TelemetryStore.shared() is already the singleton, and
+    # an extra cache layer would make cache_clear() silently a no-op.
     return TelemetryStore.shared()
 
 
@@ -1321,7 +1327,8 @@ async def mint_device_token(
         )
     plaintext_token = generate_device_token()
     try:
-        _telemetry_store().mint_device_token(
+        await asyncio.to_thread(
+            _telemetry_store().mint_device_token,
             install_id=install_id,
             token_hash=token_hash_for(plaintext_token),
         )
@@ -1404,7 +1411,11 @@ async def _run_tldr_request(
             envelope.get("request_id"),
             reroll_context.get("source_request_id"),
         )
-    thread_context = _thread_context_for_request(
+    # Sync Redis/Postgres lookups (thread cache + store fallback) — keep them
+    # off the event loop so one slow dependency doesn't stall every other
+    # in-flight request on this worker.
+    thread_context = await asyncio.to_thread(
+        _thread_context_for_request,
         envelope=envelope,
         token_id=token_id,
         warnings=warnings,
@@ -1426,7 +1437,7 @@ async def _run_tldr_request(
     cache = _response_cache()
     cache_key = _request_cache_key(model_envelope, image_bytes_list) if _cache_allowed(envelope) else None
     if not stream and cache.enabled and cache_key is not None:
-        cached = cache.get(cache_key)
+        cached = await asyncio.to_thread(cache.get, cache_key)
         if cached is not None:
             cached_warnings = warnings + ["cache_hit"]
             _log_request(
@@ -1435,7 +1446,8 @@ async def _run_tldr_request(
                 duration_ms=cached.get("duration_ms"),
                 usage_tokens=None,
             )
-            _record_request(
+            await asyncio.to_thread(
+                _record_request,
                 token_id=token_id,
                 envelope=storage_envelope,
                 settings=settings,
@@ -1464,7 +1476,8 @@ async def _run_tldr_request(
                     "cache_hit": True,
                 },
             )
-            _store_thread_success(
+            await asyncio.to_thread(
+                _store_thread_success,
                 token_id=token_id,
                 envelope=envelope,
                 image_bytes_list=image_bytes_list,
@@ -1683,7 +1696,13 @@ async def _run_tldr_request(
         return StreamingResponse(stream_events(), media_type="text/event-stream")
 
     try:
-        payload = gemini.generate_tldr_and_suggestions(
+        # The Gemini SDK call is synchronous and can take up to ~120s; run it
+        # in a worker thread so it doesn't block the event loop (uvicorn runs
+        # a single loop — a blocking call here stalls every request,
+        # including /v1/healthz). The SSE path escapes via Starlette's
+        # sync-generator threadpool; this is the non-stream equivalent.
+        payload = await asyncio.to_thread(
+            gemini.generate_tldr_and_suggestions,
             client=client,
             settings=settings,
             prompt_text=prompt_text,
@@ -1701,7 +1720,8 @@ async def _run_tldr_request(
             duration_ms=None,
             usage_tokens=None,
         )
-        _record_request(
+        await asyncio.to_thread(
+            _record_request,
             token_id=token_id,
             envelope=storage_envelope,
             settings=settings,
@@ -1757,7 +1777,8 @@ async def _run_tldr_request(
 
     if payload.get("status") == "ok":
         if cache.enabled and cache_key is not None:
-            cache.set(
+            await asyncio.to_thread(
+                cache.set,
                 cache_key,
                 {
                     "tldr": payload["tldr"],
@@ -1767,7 +1788,8 @@ async def _run_tldr_request(
                     "model": payload["model"],
                 },
             )
-        _record_request(
+        await asyncio.to_thread(
+            _record_request,
             token_id=token_id,
             envelope=storage_envelope,
             settings=settings,
@@ -1798,7 +1820,8 @@ async def _run_tldr_request(
                 "cache_hit": False,
             },
         )
-        _store_thread_success(
+        await asyncio.to_thread(
+            _store_thread_success,
             token_id=token_id,
             envelope=envelope,
             image_bytes_list=image_bytes_list,
@@ -1809,7 +1832,8 @@ async def _run_tldr_request(
 
     if payload.get("status") == "parse_error":
         detail = "parse_error: Gemini returned non-JSON output"
-        _record_request(
+        await asyncio.to_thread(
+            _record_request,
             token_id=token_id,
             envelope=storage_envelope,
             settings=settings,
@@ -1836,7 +1860,8 @@ async def _run_tldr_request(
         )
 
     detail = "schema_mismatch: Gemini returned an incomplete response"
-    _record_request(
+    await asyncio.to_thread(
+        _record_request,
         token_id=token_id,
         envelope=storage_envelope,
         settings=settings,
@@ -1964,12 +1989,24 @@ async def describe_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="kind must be image or pdf (text and other are described client-side)",
         )
-    raw_bytes = await file.read()
+    # Read at most cap+1 bytes so an oversized upload 413s early. (The
+    # multipart parser has already spooled the body to a temp file by the
+    # time we get here; this cap avoids the second in-heap copy and the
+    # Gemini round-trip, and Cloud Run's 32MB request cap bounds the spool.)
+    raw_bytes = await file.read(MAX_DESCRIBE_FILE_BYTES + 1)
+    if len(raw_bytes) > MAX_DESCRIBE_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="file exceeds 20MB limit",
+        )
     mime_type = file.content_type or "application/octet-stream"
 
-    # PDF: slice to first 3 pages or 2 MB, whichever smaller
+    # PDF: slice to first 3 pages or 2 MB, whichever smaller. pypdf parsing
+    # is CPU-bound sync work — keep it off the event loop.
     if kind == "pdf":
-        raw_bytes = _slice_pdf(raw_bytes, max_pages=3, max_bytes=2 * 1024 * 1024)
+        raw_bytes = await asyncio.to_thread(
+            _slice_pdf, raw_bytes, max_pages=3, max_bytes=2 * 1024 * 1024
+        )
         mime_type = "application/pdf"
 
     # Image: the raw bytes go to Gemini directly (client already downscaled)
@@ -1984,7 +2021,10 @@ async def describe_file(
             detail="server misconfigured: GEMINI_API_KEY is empty",
         )
     client = gemini.create_client(api_key=api_key)
-    description = gemini.generate_file_description(client, raw_bytes, mime_type, kind)
+    # Sync SDK call — same event-loop-blocking hazard as the tldr path.
+    description = await asyncio.to_thread(
+        gemini.generate_file_description, client, raw_bytes, mime_type, kind
+    )
     return {"description": description}
 
 
@@ -2004,7 +2044,8 @@ async def tldr_events(
     stored = False
     if _bool_env("BLINK_EVENT_LOGGING", True):
         try:
-            stored = _telemetry_store().record_event(
+            stored = await asyncio.to_thread(
+                _telemetry_store().record_event,
                 token_id=token_id,
                 event_type=str(payload["event_type"]),
                 payload=payload,
@@ -2046,7 +2087,8 @@ async def beta_signup(
     email_normalized = email_original.lower()
     source = payload.source.strip() if payload.source else None
     ip_hash = _ip_hash_for(client_ip_for(request))
-    check_signup_rate_limit(ip_hash)
+    # Redis-backed when REDIS_URL is set — sync I/O, keep it off the loop.
+    await asyncio.to_thread(check_signup_rate_limit, ip_hash)
 
     store = _telemetry_store()
 
@@ -2055,7 +2097,9 @@ async def beta_signup(
     ref_candidate = (payload.ref or "").strip().lower()
     if ref_candidate and SIGNUP_ID_RE.match(ref_candidate):
         try:
-            referrer = store.get_beta_signup_by_id(ref_candidate)
+            referrer = await asyncio.to_thread(
+                store.get_beta_signup_by_id, ref_candidate
+            )
         except Exception as exc:
             logger.warning(
                 "beta_signup_referrer_lookup_failed error=%s",
@@ -2074,7 +2118,8 @@ async def beta_signup(
 
     signup_id = uuid4().hex
     try:
-        inserted = store.record_beta_signup(
+        inserted = await asyncio.to_thread(
+            store.record_beta_signup,
             signup_id=signup_id,
             email_normalized=email_normalized,
             email_original=email_original,
@@ -2102,7 +2147,9 @@ async def beta_signup(
         )
         if referrer_signup_id:
             try:
-                referrer_row = store.get_beta_signup_by_id(referrer_signup_id)
+                referrer_row = await asyncio.to_thread(
+                    store.get_beta_signup_by_id, referrer_signup_id
+                )
             except Exception:
                 referrer_row = None
             # We only surface the referrer's original email in Discord. The
@@ -2135,8 +2182,10 @@ async def beta_signup(
     # retry) still get the share row.
     existing_id: str | None = None
     try:
-        existing = store.get_beta_signup_by_id(
-            store.get_beta_signup_id_for_email(email_normalized) or ""
+        existing = await asyncio.to_thread(
+            lambda: store.get_beta_signup_by_id(
+                store.get_beta_signup_id_for_email(email_normalized) or ""
+            )
         )
     except Exception as exc:
         logger.warning(
@@ -2175,7 +2224,7 @@ async def beta_signup_stats(
     check_signup_stats_rate_limit(ip_hash)
     store = _telemetry_store()
     try:
-        row = store.get_beta_signup_by_id(signup_id)
+        row = await asyncio.to_thread(store.get_beta_signup_by_id, signup_id)
     except Exception as exc:
         logger.warning(
             "beta_signup_stats_lookup_failed error=%s",
@@ -2191,7 +2240,7 @@ async def beta_signup_stats(
             detail="signup not found",
         )
     try:
-        referrals = store.count_beta_referrals(signup_id)
+        referrals = await asyncio.to_thread(store.count_beta_referrals, signup_id)
     except Exception as exc:
         logger.warning(
             "beta_signup_stats_count_failed error=%s",

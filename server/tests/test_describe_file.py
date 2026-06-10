@@ -111,6 +111,22 @@ class DescribeFileTests(unittest.TestCase):
             self.assertEqual(response.status_code, 422, f"kind={kind} should be rejected")
             self.assertIn("client-side", response.json()["detail"])
 
+    @mock.patch("server.main.gemini.generate_file_description")
+    @mock.patch("server.main.gemini.create_client")
+    def test_oversized_upload_rejected(self, create_client: mock.Mock, gen_desc: mock.Mock) -> None:
+        """Uploads over the 20MB cap 413 before any Gemini call."""
+        from server.main import MAX_DESCRIBE_FILE_BYTES
+
+        oversized = b"\x00" * (MAX_DESCRIBE_FILE_BYTES + 1)
+        response = self.client.post(
+            "/v1/describe-file",
+            headers={"Authorization": "Bearer dev-token"},
+            files={"file": ("huge.jpg", oversized, "image/jpeg")},
+            data={"kind": "image"},
+        )
+        self.assertEqual(response.status_code, 413)
+        gen_desc.assert_not_called()
+
     def test_unauthenticated_rejected(self) -> None:
         fake_bytes = b"data"
         response = self.client.post(
