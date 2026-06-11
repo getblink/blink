@@ -72,6 +72,10 @@
 
   --topbar-h: 66px;
   --container: 1200px;
+  /* one shared reading column for prose, centered inside the wide container.
+     full-bleed moments (hero, product demo, join card) opt out and stay 1200. */
+  --measure: 44rem; /* ~704px, the text column */
+  --measure-wide: 56rem; /* ~896px, for the privacy two-column block */
   --gutter: clamp(22px, 5vw, 72px);
 }
 

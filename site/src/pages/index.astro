@@ -5,10 +5,13 @@ import MetaFooter from "../components/MetaFooter.astro";
 import BetaSignup from "../components/BetaSignup.astro";
 import ProductDemo from "../components/ProductDemo.astro";
 
-const title = "Blink — reads your screen, writes the rest";
+const title = "Blink: reads your screen, writes the rest";
 const description =
   "Blink is a Mac assistant that reads your screen and writes the reply for you: summon it on any thread, it drafts in your voice and inserts the reply straight into the box. Invite-only macOS beta.";
 
+// the three value props. temporarily unrendered: the old "difference"/proofs
+// row was cut from the "why" section; revisiting where these belong as a
+// separate pass. kept here so the copy isn't lost.
 const reasons = [
   {
     h: "sees what you see.",
@@ -112,7 +115,7 @@ const faqs = [
     <!-- HOW IT WORKS -->
     <section class="section how" id="how" aria-labelledby="how-lead">
       <div class="container how__inner">
-        <div class="how__head">
+        <div class="measure how__head">
           <p class="section__label reveal">how it works</p>
           <h2 class="section__lead reveal" id="how-lead">
             blink reads the chat and writes your reply.
@@ -124,49 +127,37 @@ const faqs = [
       </div>
     </section>
 
-    <!-- THE DIFFERENCE -->
-    <section class="section" id="difference" aria-labelledby="difference-lead">
-      <div class="container section__inner">
-        <p class="section__label reveal">the difference</p>
-        <div class="section__content">
-          <h2 class="section__lead reveal" id="difference-lead">
-            blink doesn't feel like a chatbot.
-          </h2>
-          <div class="reasons">
-            {
-              reasons.map((r) => (
-                <div class="reason reveal">
-                  <h3 class="reason__h">{r.h}</h3>
-                  <p class="reason__t">{r.t}</p>
-                </div>
-              ))
-            }
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- WHY -->
     <section class="section" id="why" aria-labelledby="why-lead">
       <div class="container section__inner">
-        <p class="section__label reveal">why blink</p>
-        <div class="why__split">
-          <h2 class="why__hook reveal" id="why-lead">
-            just because<br />we're dumb apes<br />doesn't mean you<br />have to
-            feel like one.
-          </h2>
-          <div class="why__body-col">
-            <p class="why__body reveal">
-              managing a dozen things at once is hard work. every time you
-              switch threads you have to remind yourself what was even going on.
-              that little reset, over and over, is what makes a whole day feel
-              scattered and slow.
-            </p>
-            <p class="why__body reveal">
-              blink is the assistant that remembers for you. it catches you up
-              on what's happening and suggests the next step, so you can stay in
-              the flow instead of rebuilding context all day.
-            </p>
+        <div class="measure">
+          <p class="section__label reveal">why blink</p>
+          <div class="why__statement">
+            <h2 class="why__hook reveal" id="why-lead">
+              you switch tasks<br />every
+              <span class="why__stat">24 seconds</span><sup class="why__cite"><a
+                  class="why__cite-mark"
+                  href="https://hbr.org/2022/08/how-much-time-and-energy-do-we-waste-toggling-between-applications"
+                  target="_blank"
+                  rel="noopener"
+                  aria-label="Source: Harvard Business Review, 2022"
+                  aria-describedby="why-cite-note"
+                >1</a><span class="why__cite-pop" id="why-cite-note" role="note">harvard business review, 2022. 137 workers toggled between apps ~1,200 times a day.</span></sup>.<br />that's
+              <span class="why__stat">four hours a week</span><br />just finding
+              your place again.
+            </h2>
+            <div class="why__body-col">
+              <p class="why__body reveal">
+                and that's the easy part. the real tax is the reset that
+                follows: reminding yourself what you were even doing there, and
+                why.
+              </p>
+              <p class="why__body why__body--lead reveal">
+                blink covers the reset. it catches you up the moment you land
+                and points at the next step, so the switch barely costs you
+                anything.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -175,30 +166,32 @@ const faqs = [
     <!-- PRIVACY -->
     <section class="section" id="privacy" aria-labelledby="privacy-lead">
       <div class="container section__inner">
-        <p class="section__label reveal">privacy</p>
-        <div class="privacy__split">
-          <div class="privacy__intro">
-            <h2 class="section__lead reveal" id="privacy-lead">
-              reading your screen, without the creep.
-            </h2>
-            <p class="section__sub reveal">
-              blink reads your screen so you never have to re-explain the
-              conversation. here's what that does and doesn't mean.
-            </p>
+        <div class="measure">
+          <p class="section__label reveal">privacy</p>
+          <div class="privacy__split">
+            <div class="privacy__intro">
+              <h2 class="section__lead reveal" id="privacy-lead">
+                reading your screen, without the creep.
+              </h2>
+              <p class="section__sub reveal">
+                blink reads your screen so you never have to re-explain the
+                conversation. here's what that does and doesn't mean.
+              </p>
+            </div>
+            <ul class="points">
+              {
+                privacy.map((p) => (
+                  <li class="point reveal">
+                    <span class="point__tick" aria-hidden="true" />
+                    <div>
+                      <h3 class="point__h">{p.h}</h3>
+                      <p class="point__t">{p.t}</p>
+                    </div>
+                  </li>
+                ))
+              }
+            </ul>
           </div>
-          <ul class="points">
-            {
-              privacy.map((p) => (
-                <li class="point reveal">
-                  <span class="point__tick" aria-hidden="true" />
-                  <div>
-                    <h3 class="point__h">{p.h}</h3>
-                    <p class="point__t">{p.t}</p>
-                  </div>
-                </li>
-              ))
-            }
-          </ul>
         </div>
       </div>
     </section>
@@ -206,24 +199,26 @@ const faqs = [
     <!-- FAQ -->
     <section class="section" id="faq" aria-labelledby="faq-lead">
       <div class="container section__inner">
-        <p class="section__label reveal">faq</p>
-        <div class="section__content">
-          <h2 class="section__lead reveal" id="faq-lead">
-            questions people actually ask.
-          </h2>
-          <div class="faq">
-            {
-              faqs.map((f, i) => (
-                <details class="qa reveal" name="faq">
-                  <summary class="qa__q">
-                    <span class="qa__n">{String(i + 1).padStart(2, "0")}</span>
-                    <span class="qa__text">{f.q}</span>
-                    <span class="qa__mark" aria-hidden="true" />
-                  </summary>
-                  <p class="qa__a">{f.a}</p>
-                </details>
-              ))
-            }
+        <div class="measure">
+          <p class="section__label reveal">faq</p>
+          <div class="section__content">
+            <h2 class="section__lead reveal" id="faq-lead">
+              questions people actually ask.
+            </h2>
+            <div class="faq">
+              {
+                faqs.map((f, i) => (
+                  <details class="qa reveal" name="faq">
+                    <summary class="qa__q">
+                      <span class="qa__n">{String(i + 1).padStart(2, "0")}</span>
+                      <span class="qa__text">{f.q}</span>
+                      <span class="qa__mark" aria-hidden="true" />
+                    </summary>
+                    <p class="qa__a">{f.a}</p>
+                  </details>
+                ))
+              }
+            </div>
           </div>
         </div>
       </div>
@@ -440,6 +435,16 @@ const faqs = [
          instead of a narrow column floating mid-page. */
       display: block;
     }
+    /* the shared reading column: prose sits in a centered ~700px measure inside
+       the wide container, so text stops stranding against the left gutter with
+       an empty right half. full-bleed elements (the product demo) opt out. */
+    .measure {
+      max-width: var(--measure);
+      margin-inline: auto;
+    }
+    .measure--wide {
+      max-width: var(--measure-wide);
+    }
     /* the section name as a small eyebrow above the content (same pattern as
        "how it works") — the old sticky left rail squeezed the headings into a
        cramped column and forced ugly wraps, so it's gone. */
@@ -506,85 +511,104 @@ const faqs = [
       }
     }
 
-    /* why — the pain in our own voice. a two-column split fills the section
-       width (like how-it-works): the punchy hook on the left, the case for it
-       on the right, instead of a narrow column with a big empty right side. */
-    .why__split {
-      display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-      gap: clamp(36px, 6vw, 96px);
-      align-items: start;
-    }
+    /* why — the value-prop section, the emotional core of the page. one
+       vertical narrative: the stat statement up top, then the proof of how
+       blink answers it. (was a hook|body two-column split, which made the
+       stat and its resolution read side-by-side instead of as one thought.) */
     .why__hook {
-      font-size: var(--fs-h2);
+      font-size: clamp(1.75rem, 4.2vw, 3.3rem);
       font-weight: 600;
       line-height: 1.12;
-      letter-spacing: -0.03em;
+      letter-spacing: -0.035em;
       color: var(--fg);
       /* line breaks are authored explicitly (<br>) for the intended rhythm */
     }
+    /* the numbers are the whole argument — colour them so the eye lands on
+       them first and the dense hook reads as two stats, not four lines. */
+    .why__stat {
+      color: var(--sky-deep);
+    }
+    /* citation as a hover/focus footnote on the first stat: a small superscript
+       marker that expands the source on mouseover, instead of a separate line
+       of body copy under the hook. */
+    .why__cite {
+      position: relative;
+      font-size: 0.34em;
+      font-weight: 680;
+      line-height: 0;
+      margin-left: 0.12em;
+      vertical-align: super;
+    }
+    .why__cite-mark {
+      color: var(--sky-deep);
+      text-decoration: none;
+      border-bottom: 1px dotted
+        color-mix(in oklch, var(--sky-deep) 55%, transparent);
+      cursor: help;
+    }
+    .why__cite-pop {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 9px);
+      width: max-content;
+      max-width: 244px;
+      padding: 10px 12px;
+      border-radius: var(--r-2);
+      background: var(--surface-solid);
+      border: 1px solid var(--line-soft);
+      box-shadow: var(--e-2);
+      font-size: 0.8rem;
+      font-weight: 400;
+      line-height: 1.45;
+      letter-spacing: 0;
+      color: var(--fg-2);
+      opacity: 0;
+      transform: translateY(4px);
+      pointer-events: none;
+      transition: opacity 0.16s ease, transform 0.16s ease;
+      z-index: 5;
+    }
+    .why__cite:hover .why__cite-pop,
+    .why__cite:focus-within .why__cite-pop {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    /* the marker sits far right on its line; on narrow screens a left-anchored
+       popover would run off the right edge, so flip it to open leftward. */
+    @media (max-width: 560px) {
+      .why__cite-pop {
+        left: auto;
+        right: 0;
+      }
+    }
+    /* the cost copy sits under the hook in the same centered column, flush to
+       the same left edge as the eyebrow and hook above it. */
     .why__body-col {
       display: grid;
-      gap: clamp(18px, 2.4vh, 26px);
-      /* drop the body to sit a touch below the hook's cap height */
-      margin-top: 0.4em;
+      gap: clamp(14px, 2vh, 22px);
+      margin-top: clamp(22px, 3.2vh, 38px);
     }
     .why__body {
       font-size: var(--fs-lead);
       line-height: 1.55;
       color: var(--fg-2);
     }
-    @media (max-width: 760px) {
-      .why__split {
-        grid-template-columns: 1fr;
-        gap: clamp(22px, 4vh, 30px);
-      }
-      .why__body-col {
-        margin-top: 0;
-      }
-    }
-    .reasons {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: clamp(20px, 2.4vw, 40px);
-    }
-    @media (max-width: 720px) {
-      .reasons {
-        grid-template-columns: 1fr;
-        gap: clamp(24px, 4vh, 34px);
-      }
-    }
-    .reason__h {
-      font-size: var(--fs-h4);
-      font-weight: 620;
-      letter-spacing: -0.015em;
-      line-height: 1.25;
+    /* the turn, "blink covers the reset", carries full ink so the answer
+       lands a shade stronger than the setup above it. */
+    .why__body--lead {
       color: var(--fg);
-      margin-bottom: 9px;
-    }
-    .reason__t {
-      font-size: var(--fs-body);
-      line-height: 1.55;
-      color: var(--fg-2);
     }
 
-    /* privacy — a two-column split like "why": the intro on the left, a
-       vertical checklist on the right, so it fills the width without turning
-       the checks into a side-by-side row. */
+    /* privacy — a single centered column like every other section: the intro
+       stacked above the checklist, so the whole page shares one left edge
+       instead of widening out into a two-column block here. */
     .privacy__split {
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-      gap: clamp(36px, 6vw, 96px);
-      align-items: start;
+      grid-template-columns: 1fr;
+      gap: clamp(26px, 4vh, 42px);
     }
     .privacy__intro > * + * {
       margin-top: clamp(14px, 2vh, 20px);
-    }
-    @media (max-width: 760px) {
-      .privacy__split {
-        grid-template-columns: 1fr;
-        gap: clamp(22px, 4vh, 30px);
-      }
     }
     /* checkmark points — a vertical checklist */
     .points {
