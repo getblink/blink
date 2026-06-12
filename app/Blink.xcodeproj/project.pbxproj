@@ -78,6 +78,7 @@
 		A343378F57CCFA1434935296 /* tldr.json in Resources */ = {isa = PBXBuildFile; fileRef = 9C2C613B92765D6101795F64 /* tldr.json */; };
 		A3DCD6D9056C6D02515BB5AD /* LGBranchGallery.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF7A0BD15B432E0BCB52B017 /* LGBranchGallery.swift */; };
 		A5051A22F1FD8E5EE605A31C /* SuggestionsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E90C81EEE3D3E38D9FE1E76 /* SuggestionsOverlay.swift */; };
+		A97335F50202D20FCD25E20B /* BackgroundReadyIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 886041C240874532471FC488 /* BackgroundReadyIndicator.swift */; };
 		A9C965B96FCBA403AE5FF3E6 /* TLDROverlayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACD3E5125A3D70AEDCEC150 /* TLDROverlayText.swift */; };
 		B04B3D3A6949110D27457C9C /* PermissionsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D985E3387E960D1262D8EAA4 /* PermissionsWindow.swift */; };
 		B2C37DAAFD3A5196C78DB501 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A7EBBBA7E0240FA9EA054D3 /* GeneralSettingsView.swift */; };
@@ -193,6 +194,7 @@
 		83CABA226B77C41C6ED8BE26 /* BlinkTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BlinkTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8685E69E5ED32A19520D0C1C /* SelectionCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCaptureTests.swift; sourceTree = "<group>"; };
 		880ACFCEE13AA404044F3138 /* LGGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LGGallery.swift; sourceTree = "<group>"; };
+		886041C240874532471FC488 /* BackgroundReadyIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundReadyIndicator.swift; sourceTree = "<group>"; };
 		8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Blink.entitlements; sourceTree = "<group>"; };
 		8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -298,6 +300,7 @@
 				111C775580802A86D963BB01 /* ArtifactWriter.swift */,
 				260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */,
 				63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */,
+				886041C240874532471FC488 /* BackgroundReadyIndicator.swift */,
 				95B709DE1EA74EB78CAE55F6 /* BackgroundWindowObserver.swift */,
 				8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */,
 				989DBB159CA5CB427CCCADEF /* BlinkApp.swift */,
@@ -535,6 +538,7 @@
 				306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */,
 				0C86153A76280A714D14064C /* AttachmentLibrary.swift in Sources */,
 				82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */,
+				A97335F50202D20FCD25E20B /* BackgroundReadyIndicator.swift in Sources */,
 				644E90122CC065D296B46F4E /* BackgroundWindowObserver.swift in Sources */,
 				25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */,
 				2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */,

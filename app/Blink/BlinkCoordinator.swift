@@ -108,6 +108,10 @@ final class BlinkCoordinator: @unchecked Sendable {
     /// a whole round-trip, so each queued background run would delay a hotkey.
     private let backgroundPrefetchLock = NSLock()
     private var backgroundPrefetchActive = false
+    /// Latest background catch-up summary, ready to show when the user clicks
+    /// the readiness indicator. Main-thread only.
+    private var readyBackgroundSummary: (tldr: String, suggestions: [SuggestionDetail])?
+    private var backgroundIndicator: BackgroundReadyIndicator?
     private let overlay = SuggestionsOverlay()
     private let glassLoading = GlassCaptureLoadingController()
     // True while the glass loading lens is on screen. Glass mode suppresses the
@@ -3269,7 +3273,32 @@ final class BlinkCoordinator: @unchecked Sendable {
             TCCDiagnostics.log(
                 "background_prefetch_ok pid=\(pid) tldr=\(result.tldr) suggestions=\(result.suggestions.count)"
             )
+            // Cache the result and surface the readiness indicator (bottom-right).
+            // The indicator is just "Blink has a summary ready for <app>"; the
+            // content shows in the normal overlay when the user clicks it.
+            let label = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "Blink"
+            let tldr = result.tldr
+            let details = result.suggestionDetails
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.readyBackgroundSummary = (tldr: tldr, suggestions: details)
+                if self.backgroundIndicator == nil {
+                    self.backgroundIndicator = BackgroundReadyIndicator { [weak self] in
+                        self?.showReadyBackgroundSummary()
+                    }
+                }
+                self.backgroundIndicator?.show(label: label)
+            }
         }
+    }
+
+    /// Click handler for the background readiness indicator: show the cached
+    /// catch-up summary in the normal overlay. Main thread.
+    private func showReadyBackgroundSummary() {
+        guard let summary = readyBackgroundSummary else { return }
+        readyBackgroundSummary = nil
+        backgroundIndicator?.hide()
+        overlay.show(tldr: summary.tldr, suggestionDetails: summary.suggestions)
     }
 
     /// Catch-up / background capture: pre-compute a TL;DR for a window the user
