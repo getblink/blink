@@ -34,6 +34,7 @@ try:
     from .cache import ResponseCache, ThreadCache
     from .env_loader import load_workspace_env
     from .storage import TelemetryStore
+    from .tldr_reflow import reflow_tldr
 except ImportError:
     import gemini  # type: ignore[no-redef]
     from auth import (  # type: ignore[no-redef]
@@ -47,6 +48,7 @@ except ImportError:
     from cache import ResponseCache, ThreadCache  # type: ignore[no-redef]
     from env_loader import load_workspace_env  # type: ignore[no-redef]
     from storage import TelemetryStore  # type: ignore[no-redef]
+    from tldr_reflow import reflow_tldr  # type: ignore[no-redef]
 
 
 load_workspace_env()
@@ -896,7 +898,11 @@ def _ok_response(payload: dict[str, Any], request_id: str, warnings: list[str]) 
     return {
         "request_id": request_id,
         "status": "ok",
-        "tldr": payload["tldr"],
+        # Presentational: collapse an announced inline enumeration ("four
+        # options: a, b, c, or d") into a scannable vertical list. No-op for
+        # everything else. Applied at the client boundary only; stored raw
+        # model output is untouched.
+        "tldr": reflow_tldr(str(payload.get("tldr") or "")),
         "suggestions": payload["suggestions"],
         "suggestion_details": payload.get("suggestion_details")
         or [
