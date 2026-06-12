@@ -71,14 +71,29 @@ enum WindowAXTreeCapture {
     ]
 
     static func capture(
+        targetPID: pid_t? = nil,
         maxNodes: Int = defaultMaxNodes,
         maxDepth: Int = defaultMaxDepth,
         maxValueChars: Int = defaultMaxValueChars,
         textBudgetChars: Int = defaultTextBudgetChars
     ) -> Result? {
         guard AXIsProcessTrusted() else { return nil }
-        let focused = focusedElement()
-        guard let root = focusedWindowElement(focused: focused) else { return nil }
+        // Default (nil targetPID): capture the system-focused window — the
+        // hotkey path. With a targetPID: capture that app's window WITHOUT it
+        // being focused — the background / catch-up path. A background window
+        // has no in-window keyboard focus, so `focused` is nil and the
+        // focused-line collapse anchor just falls back (handled below).
+        let focused: AXUIElement?
+        let root: AXUIElement
+        if let targetPID {
+            focused = nil
+            guard let targetWindow = windowElement(forPID: targetPID) else { return nil }
+            root = targetWindow
+        } else {
+            focused = focusedElement()
+            guard let focusedWindow = focusedWindowElement(focused: focused) else { return nil }
+            root = focusedWindow
+        }
         // Bound AX messaging: an unresponsive app must not stall the submit
         // path. The timeout set on the app/window root propagates to its
         // element tree. Mirrors FocusedContextCapture.textTargetDecision.
@@ -568,6 +583,27 @@ enum WindowAXTreeCapture {
         }
         // Last resort: the focused element itself yields at least its subtree.
         return focused
+    }
+
+    /// Resolve a window element for a specific (background) app by pid:
+    /// focused window → main window → first window. Used by the catch-up path
+    /// to walk an app the user is NOT focused on.
+    private static func windowElement(forPID pid: pid_t) -> AXUIElement? {
+        guard pid > 0 else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.2)
+        if let window = elementAttr(app, kAXFocusedWindowAttribute as CFString) {
+            return window
+        }
+        if let window = elementAttr(app, kAXMainWindowAttribute as CFString) {
+            return window
+        }
+        var ref: CFTypeRef?
+        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &ref) == .success,
+           let windows = ref as? [AXUIElement], let first = windows.first {
+            return first
+        }
+        return nil
     }
 
     /// Batched read of several attributes in one IPC round-trip. Missing or

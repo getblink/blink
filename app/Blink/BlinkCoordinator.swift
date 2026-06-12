@@ -1394,7 +1394,8 @@ final class BlinkCoordinator: @unchecked Sendable {
         staging: URL,
         shareableContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil,
-        confirmCapture: Bool = true
+        confirmCapture: Bool = true,
+        harvestSelection: Bool = true
     ) throws -> CapturedFrameResult {
         dispatchPrecondition(condition: .notOnQueue(.main))
         TCCDiagnostics.log(
@@ -1471,7 +1472,11 @@ final class BlinkCoordinator: @unchecked Sendable {
         // PNG has landed and before any main-thread overlay dispatch —
         // so AX (and any synthesized Cmd+C) targets the still-frontmost
         // source app rather than Blink's overlay panel.
-        let selection = SelectionCapture.captureSync()
+        // Background/catch-up captures pass harvestSelection:false —
+        // SelectionCapture.captureSync() posts a real synthetic Cmd+C to the
+        // FRONTMOST app, which for an unfocused target would inject a keystroke
+        // into whatever the user is actively using.
+        let selection = harvestSelection ? SelectionCapture.captureSync() : nil
         return CapturedFrameResult(
             frame: CapturedFrame(
                 index: index,
@@ -3223,6 +3228,75 @@ final class BlinkCoordinator: @unchecked Sendable {
             }
         }
         return envelope
+    }
+
+    /// Catch-up / background capture: pre-compute a TL;DR for a window the user
+    /// is NOT looking at, REUSING the exact normal-capture pipeline —
+    /// `captureFrame` (screenshot, pinned to `pid`) + `WindowAXTreeCapture`
+    /// (AX tree of the same window via `targetPID`) + `makeRequestEnvelope`
+    /// (the real hybrid AX+screenshot envelope) + `runOnceStreaming`. No
+    /// bespoke envelope, no overlay UI.
+    ///
+    /// The foreground-only bits are deliberately skipped: no synthetic-Cmd+C
+    /// selection harvest (`harvestSelection: false`), no capture-confirmation
+    /// flash (`confirmCapture: false`), and an empty `focusedContext` / nil
+    /// `mouseScreenPoint` (markers describe where the *user's* cursor is —
+    /// meaningless for an unfocused window).
+    ///
+    /// Must run off the main queue (captureFrame asserts this). Returns nil if
+    /// the window can't be captured (minimized / on another Space) or the run
+    /// fails. Not yet wired to a trigger — the background-content observer will
+    /// drive it.
+    private func captureBackgroundWindow(pid: pid_t) -> PythonRunner.ResultPayload? {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let (runtime, clientMetadata) = DispatchQueue.main.sync {
+            (runtimeStore.snapshot, self.clientMetadata())
+        }
+        let requestID = UUID().uuidString.lowercased()
+        do {
+            let staging = try makeStagingDir()
+            let frame = try captureFrame(
+                index: 0,
+                staging: staging,
+                preferredPID: pid,
+                confirmCapture: false,
+                harvestSelection: false
+            ).frame
+            let axTree = WindowAXTreeCapture.capture(targetPID: pid)
+            let envelope = makeRequestEnvelope(
+                requestID: requestID,
+                runtime: runtime,
+                clientMetadata: clientMetadata,
+                frontmostApp: frame.frontmostApp,
+                screenshotMeta: frame.screenshotMeta,
+                diagnostics: frame.imageDiagnostics,
+                focusedContext: [:],
+                axTree: axTree?.text,
+                axTreeNodes: axTree?.nodeCount,
+                axTreeTruncated: axTree?.truncated ?? false,
+                captureMode: "background_window",
+                frames: [frame]
+            )
+            let requestURL = staging.appendingPathComponent("request.json")
+            try JSONFiles.writeObject(envelope, to: requestURL)
+            let runtimeURL = staging.appendingPathComponent("runtime.json")
+            try writeJSON(runtime, to: runtimeURL)
+            return try PythonRunner.runOnceStreaming(
+                config: config,
+                screenshotPNGs: [frame.pngURL],
+                runtimeJSON: runtimeURL,
+                settingsJSON: Paths.settingsPath,
+                prompt: Paths.promptPath,
+                requestJSON: requestURL,
+                outputParent: Paths.runsDir,
+                hostProfileJSON: nil,
+                onRunStarted: { _ in },
+                onEvent: { _ in }
+            )
+        } catch {
+            TCCDiagnostics.log("background_capture_failed pid=\(pid) err=\(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func requestPreferences(runtime: RuntimeConfigFile) -> [String: Any] {
