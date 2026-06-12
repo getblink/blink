@@ -451,7 +451,7 @@ def _build_selection_block(selection: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_ax_tree_block(ax_text: Any) -> str:
+def _build_ax_tree_block(ax_text: Any, image_present: bool = True) -> str:
     """Build the <ax_tree> block for the user-role capture turn.
 
     The accessibility tree carries the active window's full structure —
@@ -473,12 +473,20 @@ def _build_ax_tree_block(ax_text: Any) -> str:
     if len(text) > gemini.AX_TREE_MAX_CHARS:
         text = text[: gemini.AX_TREE_MAX_CHARS].rstrip()
         truncated = True
-    header = (
-        "Accessibility tree of the active window, including content above "
-        "and below the visible viewport. The screenshot shows only what is "
-        "currently on screen; use this tree for off-screen context and exact "
-        "text, and the screenshot for layout and visual salience."
-    )
+    if image_present:
+        header = (
+            "Accessibility tree of the active window, including content above "
+            "and below the visible viewport. The screenshot shows only what is "
+            "currently on screen; use this tree for off-screen context and exact "
+            "text, and the screenshot for layout and visual salience."
+        )
+    else:
+        header = (
+            "Accessibility tree of the active window, including content above "
+            "and below the visible viewport. There is NO screenshot for this "
+            "capture — rely entirely on this tree for the window's content, "
+            "structure, and exact text."
+        )
     attrs = f" truncated={_xml_attr('true' if truncated else 'false')}"
     return f"<ax_tree{attrs}>\n{header}\n\n{text}\n</ax_tree>\n"
 
@@ -729,10 +737,10 @@ def _normalize_request_envelope(payload: Any) -> dict[str, Any]:
         )
 
     input_mode = str(payload.get("input_mode") or "screenshot").strip().lower()
-    if input_mode not in {"screenshot", "ocr", "hybrid"}:
+    if input_mode not in {"screenshot", "ocr", "hybrid", "ax"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="input_mode must be screenshot, ocr, or hybrid",
+            detail="input_mode must be screenshot, ocr, hybrid, or ax",
         )
 
     client = _dict_or_none(payload.get("client")) or {}
@@ -1397,15 +1405,15 @@ async def _run_tldr_request(
         image_bytes_list.append(image_bytes)
         images.append((image_bytes, screenshot.content_type or "image/png"))
 
-    if not images and envelope.get("input_mode") == "screenshot":
+    # AX-only mode (background catch-up): the ax_tree carries the content, so no
+    # screenshot is required — this is the only path that can summarize a window
+    # the user isn't on (e.g. on another Space, where SCK can't capture pixels).
+    # Every other mode still needs an image.
+    ax_only = envelope.get("input_mode") == "ax" and bool(envelope.get("ax_tree"))
+    if not images and not ax_only:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="screenshot mode requires a screenshot upload",
-        )
-    if not images:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="request must include a screenshot",
+            detail="request must include a screenshot (or use input_mode=ax with an ax_tree)",
         )
 
     model_envelope = dict(envelope)
@@ -1516,7 +1524,7 @@ async def _run_tldr_request(
     selection_block = _build_selection_block(envelope.get("selection")).rstrip()
     # Capture-turn text part: AX tree first (window context, incl. off-screen),
     # then the user's explicit <selection> last so the instruction keeps recency.
-    ax_tree_block = _build_ax_tree_block(envelope.get("ax_tree")).rstrip()
+    ax_tree_block = _build_ax_tree_block(envelope.get("ax_tree"), image_present=bool(images)).rstrip()
     capture_suffix = "\n\n".join(
         part for part in (ax_tree_block, selection_block) if part
     )
