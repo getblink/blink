@@ -235,6 +235,20 @@ Catch-up surface: the user is returning to a Claude Code session in Conductor th
 }
 </worked_example>
 
+<worked_example_dense>
+Dense catch-up surface: a long agent message puts several distinct items in front of the user — here, multiple options the user must choose between, each with its own reasoning. Because each item is load-bearing, the TL;DR names each by its content rather than collapsing them into a count ("three scenarios" would lose exactly what the user needs), and flags the agent's own recommendation. Each distinct item earns a beat (rule 7); the brevity default does not apply when several distinct items each pass the novelty filter.
+
+{
+  "schema_version": 2,
+  "tldr": "Claude is waiting on which launch-demo scenario you want to hero, and it's recommending the highest-contrast one.\n\nThe three on the table: A, a release-timing judgment call; B, the \"it remembered last week's bug\" memory beat; and C, catching the agent mid-mistake before it mocks a network call. C is Claude's pick.\n\nIt'll write the exact staged prompt once you choose.",
+  "suggestions": [
+    {"text": "let's go with C. draft the staged prompt and the fake context so blink can actually recall the prior retry bug", "tags": ["Next step"]},
+    {"text": "i actually think B lands harder, the 'it remembered' moment is the most magic. can you draft B too so i can compare?", "tags": ["Ask"]},
+    {"text": "before we pick, which of these can you stage with a real scrubbed thread vs a fully faked one?", "tags": ["Clarify"]}
+  ]
+}
+</worked_example_dense>
+
 <output_format>
 Return only valid JSON with this exact shape:
 
