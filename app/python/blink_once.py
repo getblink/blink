@@ -2128,8 +2128,8 @@ def _serve() -> int:
 
 
 def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
-    if args.runtime is None or args.out_dir is None or not args.screenshot:
-        raise ValueError("--runtime, --out-dir, and at least one --screenshot are required.")
+    if args.runtime is None or args.out_dir is None:
+        raise ValueError("--runtime and --out-dir are required.")
     settings = load_json(args.settings, DEFAULT_SETTINGS)
     runtime = load_json(
         args.runtime,
@@ -2177,9 +2177,18 @@ def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
     stderr_log = run_dir / "stderr.log"
     stderr_log.write_text("", encoding="utf-8")
-    screenshot_paths: list[Path] = list(args.screenshot)
-    if not screenshot_paths:
-        raise ValueError("At least one --screenshot is required.")
+    screenshot_paths: list[Path] = list(args.screenshot or [])
+    # AX-only background path: no screenshot — the ax_tree carries the content
+    # (the only way to summarize a window on another Space, where SCK can't
+    # capture pixels but AX still reads the tree).
+    ax_only = (
+        request_payload.get("input_mode") == "ax"
+        and bool(request_payload.get("ax_tree"))
+    )
+    if not screenshot_paths and not ax_only:
+        raise ValueError(
+            "At least one --screenshot is required (or input_mode=ax with an ax_tree)."
+        )
     if len(screenshot_paths) > MAX_SCREENSHOT_FRAMES:
         raise ValueError(f"At most {MAX_SCREENSHOT_FRAMES} screenshots are supported.")
     screenshot_outputs: list[Path] = []
@@ -2199,8 +2208,9 @@ def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
                 "bytes": frame_out.stat().st_size,
             }
         )
-    screenshot_out = run_dir / f"screenshot{screenshot_outputs[0].suffix}"
-    shutil.copy2(screenshot_outputs[0], screenshot_out)
+    if screenshot_outputs:
+        screenshot_out = run_dir / f"screenshot{screenshot_outputs[0].suffix}"
+        shutil.copy2(screenshot_outputs[0], screenshot_out)
     save_json(run_dir / "frames.json", frame_logs)
     save_json(run_dir / "request.json", request_payload)
     write_model_input(
@@ -2238,7 +2248,11 @@ def _run_request(args: argparse.Namespace, *, opener: Any = None) -> int:
             "recent_surface_history_count": len(stateful_context.get("recent_surface_history", [])) if stateful_context else 0,
         },
         "frame_count": len(screenshot_outputs),
-        "screenshot": {"path": screenshot_out.name, "bytes": screenshot_out.stat().st_size},
+        "screenshot": (
+            {"path": screenshot_out.name, "bytes": screenshot_out.stat().st_size}
+            if screenshot_outputs
+            else None
+        ),
         "screenshots": [
             {"path": item.name, "bytes": item.stat().st_size}
             for item in screenshot_outputs

@@ -3190,6 +3190,7 @@ final class BlinkCoordinator: @unchecked Sendable {
         axTreeNodes: Int? = nil,
         axTreeTruncated: Bool = false,
         mouseScreenPoint: CGPoint? = nil,
+        inputMode: String = "screenshot",
         captureMode: String = "frontmost_window",
         frames: [CapturedFrame] = [],
         attachmentsCatalog: [[String: Any]] = []
@@ -3204,7 +3205,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             "capture_mode": captureMode,
             "preferences": preferences,
             "frontmost_app": frontmostApp,
-            "input_mode": "screenshot",
+            "input_mode": inputMode,
             "screenshot": screenshotMeta,
             "frames": framePayloads(frames),
             "image_diagnostics": diagnostics,
@@ -3302,52 +3303,47 @@ final class BlinkCoordinator: @unchecked Sendable {
     }
 
     /// Catch-up / background capture: pre-compute a TL;DR for a window the user
-    /// is NOT looking at, REUSING the exact normal-capture pipeline —
-    /// `captureFrame` (screenshot, pinned to `pid`) + `WindowAXTreeCapture`
-    /// (AX tree of the same window via `targetPID`) + `makeRequestEnvelope`
-    /// (the real hybrid AX+screenshot envelope) + `runOnceStreaming`. No
-    /// bespoke envelope, no overlay UI.
+    /// is NOT looking at — **AX-only, no screenshot**. `WindowAXTreeCapture`
+    /// reads the target window's accessibility tree, which works even when the
+    /// window is on another macOS Space (where ScreenCaptureKit can't capture
+    /// pixels — the whole reason this exists). The request is sent with
+    /// `input_mode: "ax"` and no image; the server summarizes from the tree
+    /// alone. Reuses `makeRequestEnvelope` + `runOnceStreaming` — no bespoke
+    /// envelope, no overlay UI, no synthetic-Cmd+C selection harvest.
     ///
-    /// The foreground-only bits are deliberately skipped: no synthetic-Cmd+C
-    /// selection harvest (`harvestSelection: false`), no capture-confirmation
-    /// flash (`confirmCapture: false`), and an empty `focusedContext` / nil
-    /// `mouseScreenPoint` (markers describe where the *user's* cursor is —
-    /// meaningless for an unfocused window).
-    ///
-    /// Must run off the main queue (captureFrame asserts this). Returns nil if
-    /// the window can't be captured (minimized / on another Space) or the run
-    /// fails. Not yet wired to a trigger — the background-content observer will
-    /// drive it.
+    /// Must run off the main queue. Returns nil if the window exposes no AX
+    /// tree, or the run fails.
     private func captureBackgroundWindow(pid: pid_t) -> PythonRunner.ResultPayload? {
         dispatchPrecondition(condition: .notOnQueue(.main))
+        guard let axTree = WindowAXTreeCapture.capture(targetPID: pid),
+              !axTree.text.isEmpty else {
+            TCCDiagnostics.log("background_capture_no_ax pid=\(pid)")
+            return nil
+        }
         let (runtime, clientMetadata) = DispatchQueue.main.sync {
             (runtimeStore.snapshot, self.clientMetadata())
         }
+        let app = NSRunningApplication(processIdentifier: pid)
+        var frontmostApp: [String: Any] = ["pid": Int(pid)]
+        if let bundle = app?.bundleIdentifier { frontmostApp["bundle_id"] = bundle }
+        if let name = app?.localizedName { frontmostApp["app_name"] = name }
         let requestID = UUID().uuidString.lowercased()
         do {
             let staging = try makeStagingDir()
-            let frame = try captureFrame(
-                index: 0,
-                staging: staging,
-                preferredPID: pid,
-                confirmCapture: false,
-                harvestSelection: false,
-                setsOverlayScreen: false
-            ).frame
-            let axTree = WindowAXTreeCapture.capture(targetPID: pid)
             let envelope = makeRequestEnvelope(
                 requestID: requestID,
                 runtime: runtime,
                 clientMetadata: clientMetadata,
-                frontmostApp: frame.frontmostApp,
-                screenshotMeta: frame.screenshotMeta,
-                diagnostics: frame.imageDiagnostics,
+                frontmostApp: frontmostApp,
+                screenshotMeta: [:],
+                diagnostics: [:],
                 focusedContext: [:],
-                axTree: axTree?.text,
-                axTreeNodes: axTree?.nodeCount,
-                axTreeTruncated: axTree?.truncated ?? false,
+                axTree: axTree.text,
+                axTreeNodes: axTree.nodeCount,
+                axTreeTruncated: axTree.truncated,
+                inputMode: "ax",
                 captureMode: "background_window",
-                frames: [frame]
+                frames: []
             )
             let requestURL = staging.appendingPathComponent("request.json")
             try JSONFiles.writeObject(envelope, to: requestURL)
@@ -3355,7 +3351,7 @@ final class BlinkCoordinator: @unchecked Sendable {
             try writeJSON(runtime, to: runtimeURL)
             return try PythonRunner.runOnceStreaming(
                 config: config,
-                screenshotPNGs: [frame.pngURL],
+                screenshotPNGs: [],
                 runtimeJSON: runtimeURL,
                 settingsJSON: Paths.settingsPath,
                 prompt: Paths.promptPath,
