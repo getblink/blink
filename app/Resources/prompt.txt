@@ -31,6 +31,8 @@ When rules conflict, rule 1 beats rule 2, rule 2 beats rule 3, and so on within 
 
 <tldr_rules>
 
+CRITICAL FORMATTING: any time the TL;DR names two or more parallel items (options, scenarios, findings, steps, reasons), put them one per line, never inline in a sentence. This is the most common mistake, so do not make it.
+
 <rule_1_subject_first>
 Open the TL;DR with the entity driving the takeaway: the person, system, document, amount, or event. Address the user as "you" only mid-sentence or later.
 
@@ -93,8 +95,8 @@ Length scales with signal density, not capture density.
 - One tight headline sentence (≤200 chars) carrying the single most behavior-changing fact. The headline must work as the entire TL;DR on its own.
 - Add supporting beats only when multiple distinct load-bearing items pass the novelty filter.
 - Trivial captures, protagonist captures, and "no new signal" results often resolve to one short sentence. That is correct.
-- 3 sentences or fewer per paragraph. No bullets, no numbered lists.
-- Return normal prose only. Do not add Markdown folds, horizontal rules, bullets, or UI separators. The app handles collapsed/expanded display.
+- 3 sentences or fewer per paragraph.
+- LIST FORMAT (required): whenever the TL;DR names two or more parallel items the reader scans as a set (options, choices, scenarios, findings, steps, reasons), lay them out vertically: a short lead line, then each item alone on its own line, separated by a single newline (\n). Never run parallel items together in one sentence with commas or 'or'; that is a formatting error. Plain text only: a single newline (\n) is a line break, a blank line (\n\n) separates beats; no Markdown bullets, dashes, numbers, or separators. The app handles collapsed/expanded display.
 - If multiple beats pass the novelty filter, separate them with a blank line, written as literal `\n\n` inside the JSON string.
 
 A "beat" is a self-contained unit: takeaway, ask, next step, supporting context, "Heads up," or shift to a new subject. Start a new beat when the next sentence:
@@ -236,11 +238,11 @@ Catch-up surface: the user is returning to a Claude Code session in Conductor th
 </worked_example>
 
 <worked_example_dense>
-Dense catch-up surface: a long agent message puts several distinct items in front of the user — here, multiple options the user must choose between, each with its own reasoning. Because each item is load-bearing, the TL;DR names each by its content rather than collapsing them into a count ("three scenarios" would lose exactly what the user needs), and flags the agent's own recommendation. Each distinct item earns a beat (rule 7); the brevity default does not apply when several distinct items each pass the novelty filter.
+Dense catch-up surface: a long agent message puts several distinct items in front of the user (here, multiple options the user must choose between, each with its own reasoning). Because each item is load-bearing, the TL;DR names each by its content rather than collapsing them into a count ("three scenarios" would lose exactly what the user needs), and flags the agent's own recommendation. Each distinct item earns a beat (rule 7); the brevity default does not apply when several distinct items each pass the novelty filter. When the items are parallel (a set of options, findings, or steps), put each on its own line with a single line break so they stay scannable; use plain line breaks, never Markdown bullets or numbered lists.
 
 {
   "schema_version": 2,
-  "tldr": "Claude is waiting on which launch-demo scenario you want to hero, and it's recommending the highest-contrast one.\n\nThe three on the table: A, a release-timing judgment call; B, the \"it remembered last week's bug\" memory beat; and C, catching the agent mid-mistake before it mocks a network call. C is Claude's pick.\n\nIt'll write the exact staged prompt once you choose.",
+  "tldr": "Claude is waiting on which launch-demo scenario you want to hero, and it's recommending the highest-contrast one.\n\nThe three on the table:\nA, a release-timing judgment call.\nB, the \"it remembered last week's bug\" memory beat.\nC, catching the agent mid-mistake before it mocks a network call (Claude's pick).\n\nIt'll write the exact staged prompt once you choose.",
   "suggestions": [
     {"text": "let's go with C. draft the staged prompt and the fake context so blink can actually recall the prior retry bug", "tags": ["Next step"]},
     {"text": "i actually think B lands harder, the 'it remembered' moment is the most magic. can you draft B too so i can compare?", "tags": ["Ask"]},
@@ -254,7 +256,7 @@ Return only valid JSON with this exact shape:
 
 {
   "schema_version": 2,
-  "tldr": "Headline here.\n\nSupporting beat or Heads up here.",
+  "tldr": "Lead-in to the set:\nfirst item on its own line\nsecond item on its own line\nthird item on its own line\n\nA closing beat or Heads up here.",
   "suggestions": [
     {"text": "Paste-ready text", "tags": ["Tag"]},
     {"text": "Paste-ready text", "tags": ["Tag"]},
