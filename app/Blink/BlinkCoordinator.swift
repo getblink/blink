@@ -99,6 +99,15 @@ final class BlinkCoordinator: @unchecked Sendable {
     private let launchedAt: DispatchTime
     private let queue = DispatchQueue(label: "blink.coordinator", qos: .userInitiated)
     private let submitQueue = DispatchQueue(label: "blink.coordinator.submit", qos: .userInitiated)
+    /// Lower-priority lane for background/catch-up prefetch so it never
+    /// contends (CPU-wise) with the user-initiated hotkey capture.
+    private let backgroundQueue = DispatchQueue(label: "blink.coordinator.background", qos: .utility)
+    /// Single-slot guard: at most one background prefetch in flight. Drops new
+    /// deltas while one runs so a burst can't queue N speculative captures
+    /// ahead of the user — `PythonWorker.capture` holds a process-wide lock for
+    /// a whole round-trip, so each queued background run would delay a hotkey.
+    private let backgroundPrefetchLock = NSLock()
+    private var backgroundPrefetchActive = false
     private let overlay = SuggestionsOverlay()
     private let glassLoading = GlassCaptureLoadingController()
     // True while the glass loading lens is on screen. Glass mode suppresses the
@@ -1395,7 +1404,8 @@ final class BlinkCoordinator: @unchecked Sendable {
         shareableContent: SCShareableContent? = nil,
         preferredPID: pid_t? = nil,
         confirmCapture: Bool = true,
-        harvestSelection: Bool = true
+        harvestSelection: Bool = true,
+        setsOverlayScreen: Bool = true
     ) throws -> CapturedFrameResult {
         dispatchPrecondition(condition: .notOnQueue(.main))
         TCCDiagnostics.log(
@@ -1465,8 +1475,13 @@ final class BlinkCoordinator: @unchecked Sendable {
         // / multi-display setups, this is what prevents the overlay from
         // landing on a different display than the captured window.
         let capturedFrame = capture.windowFramePoints
-        DispatchQueue.main.async { [overlay] in
-            overlay.preferredScreen = ScreenCapture.screenForGlobalRect(capturedFrame)
+        // Background captures must NOT steer the shared overlay's screen — a
+        // speculative capture of a window on another display would briefly
+        // misplace a concurrent hotkey overlay.
+        if setsOverlayScreen {
+            DispatchQueue.main.async { [overlay] in
+                overlay.preferredScreen = ScreenCapture.screenForGlobalRect(capturedFrame)
+            }
         }
         // Selection harvest runs here — on the capture queue, after the
         // PNG has landed and before any main-thread overlay dispatch —
@@ -3230,6 +3245,33 @@ final class BlinkCoordinator: @unchecked Sendable {
         return envelope
     }
 
+    /// Entry point for the background-content observer (`BackgroundWindowObserver`):
+    /// pre-compute a TL;DR for a window the user isn't looking at, off the main
+    /// queue on the low-priority lane. For now the result is logged — the cache
+    /// + bottom-right icon are downstream; this proves the observer → capture →
+    /// summary path end to end.
+    func prefetchBackgroundWindow(pid: pid_t) {
+        backgroundPrefetchLock.lock()
+        if backgroundPrefetchActive {
+            backgroundPrefetchLock.unlock()
+            return  // single-slot: a speculative capture is already in flight; drop this delta
+        }
+        backgroundPrefetchActive = true
+        backgroundPrefetchLock.unlock()
+        backgroundQueue.async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.backgroundPrefetchLock.lock()
+                self.backgroundPrefetchActive = false
+                self.backgroundPrefetchLock.unlock()
+            }
+            guard let result = self.captureBackgroundWindow(pid: pid), result.status == "ok" else { return }
+            TCCDiagnostics.log(
+                "background_prefetch_ok pid=\(pid) tldr=\(result.tldr) suggestions=\(result.suggestions.count)"
+            )
+        }
+    }
+
     /// Catch-up / background capture: pre-compute a TL;DR for a window the user
     /// is NOT looking at, REUSING the exact normal-capture pipeline —
     /// `captureFrame` (screenshot, pinned to `pid`) + `WindowAXTreeCapture`
@@ -3260,7 +3302,8 @@ final class BlinkCoordinator: @unchecked Sendable {
                 staging: staging,
                 preferredPID: pid,
                 confirmCapture: false,
-                harvestSelection: false
+                harvestSelection: false,
+                setsOverlayScreen: false
             ).frame
             let axTree = WindowAXTreeCapture.capture(targetPID: pid)
             let envelope = makeRequestEnvelope(

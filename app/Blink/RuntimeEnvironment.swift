@@ -134,6 +134,26 @@ enum RuntimeEnvironment {
         return true
     }
 
+    /// Background-content observer (catch-up prefetch): watch a bounded set of
+    /// comms apps for content changes in windows the user isn't looking at and
+    /// pre-compute a TL;DR. OFF by default — dogfood with `BLINK_BG_OBSERVER=1`.
+    static func backgroundObserverEnabled() -> Bool {
+        let env = mergedEnvironment()
+        return isTruthy(env["BLINK_BG_OBSERVER"]) || isTruthy(env["TLDR_BG_OBSERVER"])
+    }
+
+    /// Bundle IDs the background observer watches. Defaults to common comms
+    /// apps; override (comma/space separated) with `BLINK_BG_OBSERVER_BUNDLES`.
+    static func backgroundObserverBundleIDs() -> Set<String> {
+        let env = mergedEnvironment()
+        let raw = env["BLINK_BG_OBSERVER_BUNDLES"] ?? env["TLDR_BG_OBSERVER_BUNDLES"] ?? ""
+        let custom = raw.split(whereSeparator: { $0 == "," || $0.isWhitespace })
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if !custom.isEmpty { return Set(custom) }
+        return ["com.tinyspeck.slackmacgap", "com.apple.MobileSMS", "com.apple.mail"]
+    }
+
     private static func isTruthy(_ value: String?) -> Bool {
         switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":

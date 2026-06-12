@@ -48,6 +48,7 @@
 		610D54EBF0E3177C8EF6C88B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 904AE99B338B9CB4A3594DDB /* Assets.xcassets */; };
 		614EF5D57340907D29C96DC0 /* ScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */; };
 		6236E723BC574777D616DE37 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 274CBBE4DC64F9737B66DCB6 /* Sparkle */; };
+		644E90122CC065D296B46F4E /* BackgroundWindowObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95B709DE1EA74EB78CAE55F6 /* BackgroundWindowObserver.swift */; };
 		647C68DE1CAF90DC99650812 /* PermissionsActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4214D54A0ABE9369A9BBC560 /* PermissionsActions.swift */; };
 		66FA88A067CF56A3B39B96AF /* LGProto07.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7169947353B72448A6E051 /* LGProto07.swift */; };
 		683A719911D06F63A2CD0855 /* PendingRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D09A9B49E2527834A24F7B5D /* PendingRunStore.swift */; };
@@ -195,6 +196,7 @@
 		8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Blink.entitlements; sourceTree = "<group>"; };
 		8D1D256634AE2038DF11CAF0 /* ScreenCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureTests.swift; sourceTree = "<group>"; };
 		904AE99B338B9CB4A3594DDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		95B709DE1EA74EB78CAE55F6 /* BackgroundWindowObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundWindowObserver.swift; sourceTree = "<group>"; };
 		989DBB159CA5CB427CCCADEF /* BlinkApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkApp.swift; sourceTree = "<group>"; };
 		9B33A3582DD2122539F1ABEB /* LibrarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySettingsView.swift; sourceTree = "<group>"; };
 		9BE88F8F8D46A852AA98AC42 /* SuggestionChoiceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionChoiceState.swift; sourceTree = "<group>"; };
@@ -296,6 +298,7 @@
 				111C775580802A86D963BB01 /* ArtifactWriter.swift */,
 				260535EA55A7077EF9904AB9 /* AttachmentLibrary.swift */,
 				63773B7AAD12CC1271A3F24B /* BackgroundActivityMonitor.swift */,
+				95B709DE1EA74EB78CAE55F6 /* BackgroundWindowObserver.swift */,
 				8C3FE352EB3AFEEB76ECBD6B /* Blink.entitlements */,
 				989DBB159CA5CB427CCCADEF /* BlinkApp.swift */,
 				66FABBDB2F53390DEBAB840B /* BlinkCoordinator.swift */,
@@ -532,6 +535,7 @@
 				306B885B6AAA648621E120A0 /* ArtifactWriter.swift in Sources */,
 				0C86153A76280A714D14064C /* AttachmentLibrary.swift in Sources */,
 				82E75EA185D639BCEEBBE173 /* BackgroundActivityMonitor.swift in Sources */,
+				644E90122CC065D296B46F4E /* BackgroundWindowObserver.swift in Sources */,
 				25F8E55421DC2B55922B6CC4 /* BlinkApp.swift in Sources */,
 				2539996FFB32469EA31B33EF /* BlinkCoordinator.swift in Sources */,
 				D760D941705366FB3ED8B5FC /* BlinkEventClient.swift in Sources */,

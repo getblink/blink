@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyDisplay: String = ""
     private var summaryHotkey: Hotkey = .default
     private var mainMenuController: MainMenuController?
+    private var backgroundObserver: BackgroundWindowObserver?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let launchedAt = DispatchTime.now()
@@ -82,6 +83,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         coordinator.onSuggestionPicked = { [weak self] index in
             self?.onboardingDemoCard?.noteSuggestionPicked(index: index)
+        }
+
+        // Catch-up prefetch (off by default; BLINK_BG_OBSERVER=1 to dogfood):
+        // watch a bounded set of comms apps for content changes in windows the
+        // user isn't looking at, and pre-compute a TL;DR via the normal pipeline.
+        if RuntimeEnvironment.backgroundObserverEnabled() {
+            let observer = BackgroundWindowObserver(
+                watchedBundleIDs: RuntimeEnvironment.backgroundObserverBundleIDs()
+            ) { [weak coordinator] delta in
+                coordinator?.prefetchBackgroundWindow(pid: delta.pid)
+            }
+            observer.start()
+            backgroundObserver = observer
         }
 
         menubar = MenubarController(
